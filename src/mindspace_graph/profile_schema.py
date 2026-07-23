@@ -15,6 +15,8 @@ PROFILE_TYPES = {
     "runtime_state": "runtime_state",
 }
 
+IDENTITY_GENDERS = {"男", "女"}
+
 REQUIRED_SECTIONS = {
     "user_profile": {
         "identity": dict,
@@ -68,7 +70,7 @@ def _validate_safe_json(value: Any, *, depth: int = 0) -> None:
 
 
 class ProfileSchemaRegistry:
-    current_version = "1.0.0"
+    current_version = "1.1.0"
 
     def validate_document(
         self,
@@ -100,6 +102,10 @@ class ProfileSchemaRegistry:
         for section, expected_type in REQUIRED_SECTIONS[key].items():
             if not isinstance(candidate.get(section), expected_type):
                 raise ValueError(f"{key}.{section} must be an object")
+        if key in {"user_profile", "ai_profile"}:
+            gender = candidate["identity"].get("gender")
+            if gender not in IDENTITY_GENDERS:
+                raise ValueError(f"{key}.identity.gender must be 男 or 女")
         for field in DEFAULT_MEMORY_REGISTRY.fields:
             if field.target != key:
                 continue

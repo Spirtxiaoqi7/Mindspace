@@ -632,9 +632,11 @@ def test_settings_profiles_knowledge_and_destructive_confirmations(tmp_path):
 
     profile = client.get("/api/v1/profiles/user").json()
     profile["identity"]["preferred_name"] = "小林"
+    profile["identity"]["gender"] = "女"
     updated = client.put("/api/v1/profiles/user", json=profile)
     assert updated.status_code == 200
     assert updated.json()["document"]["identity"]["preferred_name"] == "小林"
+    assert updated.json()["document"]["identity"]["gender"] == "女"
     assert updated.json()["document"]["revision"] == profile["revision"] + 1
 
     stale = client.put("/api/v1/profiles/user", json=profile)

@@ -339,6 +339,11 @@ def sanitize_profile_bootstrap(
 
 
 def _validate_path_and_operation(patch: JsonPatch, profiles: ProfileBundle) -> str | None:
+    if patch.path == "/identity/gender":
+        return (
+            f"{patch.target}: gender is user-owned and may only be changed "
+            "through a direct profile edit"
+        )
     field = DEFAULT_MEMORY_REGISTRY.resolve(patch.target, patch.path)
     if field is None:
         return f"{patch.target}: path not allowed or not a leaf: {patch.path}"

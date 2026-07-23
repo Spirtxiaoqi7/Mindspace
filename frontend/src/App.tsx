@@ -2174,7 +2174,7 @@ function MemoryDialog({ onClose, onDirty, notify }: { onClose: () => void; onDir
 }
 
 const PROFILE_FIELD_LABELS: Record<string, string> = {
-  identity: "身份", preferred_name: "常用称呼", occupation: "职业", language: "语言",
+  identity: "身份", preferred_name: "常用称呼", real_name: "真实姓名", gender: "第一认同性别", occupation: "职业", language: "语言",
   name: "角色名称", self_description: "角色自述", relationship_to_user: "与用户关系",
   communication_preferences: "交流偏好", preferred_tone: "偏好语气", response_length: "回复长度",
   explanation_depth: "解释深度", preferred_names: "喜欢的称呼", disliked_expressions: "不喜欢的表达",
@@ -2205,6 +2205,9 @@ function ProfileFieldEditor({ fieldKey, value, path, onChange }: { fieldKey: str
   }
   if (typeof value === "boolean") {
     return <label className="profile-form-field profile-form-check"><input aria-label={label} type="checkbox" checked={value} onChange={(event) => onChange(path, event.target.checked)} /><span>{label}</span></label>;
+  }
+  if (fieldKey === "gender" && path.includes("identity")) {
+    return <label className="profile-form-field"><span>{label}</span><select aria-label={label} value={String(value)} onChange={(event) => onChange(path, event.target.value)}><option value="男">男</option><option value="女">女</option></select><small>用户手动保存后作为模型最高优先级身份；AI 不能自行改写。</small></label>;
   }
   return <label className="profile-form-field"><span>{label}</span><input aria-label={label} type={typeof value === "number" ? "number" : "text"} value={value == null ? "" : String(value)} onChange={(event) => onChange(path, typeof value === "number" ? Number(event.target.value) : event.target.value)} /></label>;
 }

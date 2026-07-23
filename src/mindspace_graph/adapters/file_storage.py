@@ -26,10 +26,15 @@ from mindspace_graph.profile_schema import DEFAULT_PROFILE_SCHEMA, ProfileSchema
 
 DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
     "user_profile": {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "profile_type": "user",
         "revision": 0,
-        "identity": {"preferred_name": "用户", "occupation": "", "language": "zh-CN"},
+        "identity": {
+            "preferred_name": "用户",
+            "gender": "男",
+            "occupation": "",
+            "language": "zh-CN",
+        },
         "communication_preferences": {
             "preferred_tone": "自然",
             "response_length": "适中",
@@ -42,11 +47,12 @@ DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
         "behavior_requirements": {"always_apply": [], "avoid": [], "hard_boundaries": []},
     },
     "ai_profile": {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "profile_type": "ai",
         "revision": 0,
         "identity": {
             "name": "Mindspace",
+            "gender": "女",
             "self_description": "可靠、自然的本地 AI 伙伴",
             "relationship_to_user": "助手",
         },
@@ -70,7 +76,7 @@ DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
         },
     },
     "runtime_state": {
-        "schema_version": "1.0.0",
+        "schema_version": "1.1.0",
         "profile_type": "runtime_state",
         "revision": 0,
         "relationship_state": {

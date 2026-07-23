@@ -158,6 +158,21 @@ def test_json_baseline_precedes_history_and_dynamic_tools_remain_at_tail(tmp_pat
     assert tool_index == len(built.messages) - 2
 
 
+def test_gender_identity_is_the_first_high_priority_system_content():
+    bundle = profiles()
+    bundle.user_profile["identity"]["gender"] = "男"
+    bundle.ai_profile["identity"]["gender"] = "女"
+
+    built = build_prompt(request(1), bundle, [], [], [])
+
+    first = built.messages[0]
+    assert first["role"] == "system"
+    assert first["content"].startswith("【最高优先级：第一认同性别】")
+    assert "用户的第一认同性别是“男”" in first["content"]
+    assert "你的第一认同性别是“女”" in first["content"]
+    assert "模型不得自行推断、修改、淡化、重新定义或用其他身份覆盖" in first["content"]
+
+
 def test_face_to_face_scene_stays_after_the_stable_prefix_and_is_not_persistable():
     built = build_prompt(
         ChatRequest(

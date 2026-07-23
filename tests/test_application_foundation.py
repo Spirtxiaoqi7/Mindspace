@@ -102,6 +102,21 @@ def test_profile_schema_rejects_incomplete_advanced_document(tmp_path):
         profiles.save_document("user_profile", invalid)
 
 
+def test_profile_gender_defaults_and_validation_are_explicit(tmp_path):
+    profiles = JsonProfileRepository(tmp_path / "profiles")
+    user = profiles.load_document("user_profile")
+    assistant = profiles.load_document("ai_profile")
+
+    assert user["identity"]["gender"] == "男"
+    assert assistant["identity"]["gender"] == "女"
+    assert user["schema_version"] == "1.1.0"
+
+    invalid = deepcopy(user)
+    invalid["identity"]["gender"] = "未设置"
+    with pytest.raises(ValueError, match="must be 男 or 女"):
+        profiles.save_document("user_profile", invalid)
+
+
 def test_bm25_plus_and_rrf_keep_independent_rank_evidence():
     scorer = BM25Plus(["苹果 香蕉", "苹果 苹果 梨", "天气 晴朗"])
     scores = scorer.scores("苹果")

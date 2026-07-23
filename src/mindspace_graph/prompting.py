@@ -219,6 +219,17 @@ def build_prompt(
         f"你与 {request.user_name} 处在持续发展的关系和共同语境中，"
         "这不是通用问答或客服会话。"
     )
+    user_gender = str(
+        profiles.user_profile.get("identity", {}).get("gender") or "男"
+    ).strip()
+    ai_gender = str(profiles.ai_profile.get("identity", {}).get("gender") or "女").strip()
+    gender_identity_rule = f"""【最高优先级：第一认同性别】
+- 用户的第一认同性别是“{user_gender}”。
+- 你的第一认同性别是“{ai_gender}”。
+- 每次理解称谓、关系角色、身体归属、自我指代和互动语境时，先以这两个性别事实为准。
+- 这是用户直接维护的权威身份。模型不得自行推断、修改、淡化、重新定义或用其他身份覆盖。
+- 只有用户在人物档案中手动保存新的“男/女”选择后，后续轮次才采用新值。
+- 性别不等同于性格刻板印象；具体性格、关系和行为仍以人物档案为准。"""
     face_to_face_context: dict[str, Any] | None = None
     if request.interaction_mode == "voice":
         interaction_rule = """
@@ -270,7 +281,9 @@ def build_prompt(
 - 对话中不出现按钮、系统提示或“用户没有输入文字”等内部说明。
 - 本轮状态保持不变：trigger=none 且 patches=[]。"""
 
-    persona = f"""{role_opening}
+    persona = f"""{gender_identity_rule}
+
+{role_opening}
 
 【核心角色设定】
 {request.system_prompt.strip() or "依据当前角色档案形成稳定的性格、关系立场和表达方式。"}

@@ -336,9 +336,10 @@ kbd { margin-left: auto; padding: 2px 6px; color: var(--dim); border: 1px solid 
 .profile-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
 .profile-form-grid .profile-form-section { grid-column: 1 / -1; margin: 0; background: color-mix(in srgb, var(--panel-3) 60%, transparent); }
 .profile-form-field { display: flex; min-width: 0; flex-direction: column; gap: 6px; color: var(--dim); font-size: 0.625rem; }
-.profile-form-field input, .profile-form-field textarea { width: 100%; min-width: 0; padding: 9px 10px; color: var(--text); border: 1px solid var(--line); border-radius: 9px; outline: 0; background: color-mix(in srgb, var(--bg) 80%, transparent); }
+.profile-form-field input, .profile-form-field textarea, .profile-form-field select { width: 100%; min-width: 0; padding: 9px 10px; color: var(--text); border: 1px solid var(--line); border-radius: 9px; outline: 0; background: color-mix(in srgb, var(--bg) 80%, transparent); }
 .profile-form-field textarea { min-height: 74px; resize: vertical; line-height: 1.55; }
-.profile-form-field input:focus, .profile-form-field textarea:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+.profile-form-field input:focus, .profile-form-field textarea:focus, .profile-form-field select:focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+.profile-form-field small { color: var(--muted); font-size: 0.58rem; line-height: 1.45; }
 .profile-form-list { grid-column: 1 / -1; }
 .profile-form-check { flex-direction: row; align-items: center; }
 .profile-form-check input { width: auto; }

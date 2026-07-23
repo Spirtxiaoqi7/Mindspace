@@ -103,9 +103,9 @@ function installFetchMock(settingsOverride: Record<string, unknown> = {}) {
   let currentSettings = { ...structuredClone(settings), ...structuredClone(settingsOverride) };
   let vocabulary = { revision: "v1", manual_revision: 0, profile_revisions: {}, counts: { manual: 0, profile: 1, system: 2 }, entries: [], decoder_hotwords: ["Mindspace"], explicit: {} };
   const profiles: Record<string, Record<string, unknown>> = {
-    user: { schema_version: "1.0.0", profile_type: "user", revision: 0, identity: { preferred_name: "用户", occupation: "", language: "zh-CN" }, stable_preferences: { likes: [], dislikes: [], interests: [], habits: [] } },
-    assistant: { schema_version: "1.0.0", profile_type: "ai", revision: 0, identity: { name: "Mindspace", self_description: "可靠的本地伙伴", relationship_to_user: "助手" }, personality: { core_traits: ["可靠", "克制"], speech_style: ["自然"] } },
-    state: { schema_version: "1.0.0", profile_type: "runtime_state", revision: 0, relationship_state: { current_stage: "", current_tone: "", recent_conflicts: [], recent_positive_events: [], unresolved_issues: [] }, user_state: { current_goal: "", current_task: "", current_topic: "", temporary_preferences: [], current_emotional_cues: [] }, ai_state: { pending_responses: [], current_emotional_cues: [], current_intentions: [] } },
+    user: { schema_version: "1.1.0", profile_type: "user", revision: 0, identity: { preferred_name: "用户", gender: "男", occupation: "", language: "zh-CN" }, stable_preferences: { likes: [], dislikes: [], interests: [], habits: [] } },
+    assistant: { schema_version: "1.1.0", profile_type: "ai", revision: 0, identity: { name: "Mindspace", gender: "女", self_description: "可靠的本地伙伴", relationship_to_user: "助手" }, personality: { core_traits: ["可靠", "克制"], speech_style: ["自然"] } },
+    state: { schema_version: "1.1.0", profile_type: "runtime_state", revision: 0, relationship_state: { current_stage: "", current_tone: "", recent_conflicts: [], recent_positive_events: [], unresolved_issues: [] }, user_state: { current_goal: "", current_task: "", current_topic: "", temporary_preferences: [], current_emotional_cues: [] }, ai_state: { pending_responses: [], current_emotional_cues: [], current_intentions: [] } },
   };
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const url = String(input);
@@ -424,6 +424,23 @@ describe("Mindspace product interactions", () => {
       expect(call).toBeDefined();
       const payload = JSON.parse(String(call?.[1]?.body));
       expect(payload.personality.core_traits).toEqual(["可靠", "很容易满足"]);
+    });
+  });
+
+  it("lets the user select user and AI gender through the profile form", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+    await user.click(screen.getByRole("button", { name: /人物与状态档案/ }));
+    const userGender = await screen.findByLabelText("第一认同性别");
+    expect(userGender).toHaveValue("男");
+    await user.selectOptions(userGender, "女");
+    await user.click(screen.getByRole("button", { name: "保存档案" }));
+
+    await waitFor(() => {
+      const call = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url) === "/api/v1/profiles/user" && init?.method === "PUT");
+      expect(call).toBeDefined();
+      const payload = JSON.parse(String(call?.[1]?.body));
+      expect(payload.identity.gender).toBe("女");
     });
   });
 

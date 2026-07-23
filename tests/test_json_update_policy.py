@@ -193,3 +193,19 @@ def test_current_agent_cannot_modify_user_fields_or_remove_memory():
 
     assert validate_json_update(user_patch, profiles, current_response="阿澈").is_valid is False
     assert validate_json_update(remove_patch, profiles, current_response="可靠").is_valid is False
+
+
+def test_model_patch_cannot_modify_user_owned_gender():
+    profiles = bundle()
+    candidate = plan(
+        patch(path="/identity/gender", value="女"),
+    )
+
+    result = validate_json_update(
+        candidate,
+        profiles,
+        current_user="我的性别是女",
+    )
+
+    assert result.is_valid is False
+    assert any("gender is user-owned" in error for error in result.errors)
