@@ -24,10 +24,12 @@ import type {
   StreamEnvelope,
   VoicePhase,
   VoiceDeliveryState,
+  VoiceInteractionContext,
+  VoiceInteractionMode,
   VoiceSessionState,
 } from "./types";
 
-type ModalName = "settings" | "knowledge" | "memory" | "profile" | "diagnostics" | null;
+type ModalName = "settings" | "knowledge" | "memory" | "profile" | "diagnostics" | "voice-entry" | null;
 
 interface SpeechQueueItem {
   id: string;
@@ -97,6 +99,15 @@ const bool = (value: unknown) => Boolean(value);
 const num = (value: unknown, fallback = 0) =>
   Number.isFinite(Number(value)) ? Number(value) : fallback;
 const str = (value: unknown) => String(value ?? "");
+
+function savedVoiceInteraction(settings: ProductSettings | null): VoiceInteractionContext {
+  const interaction = settings?.interaction || {};
+  const configuredMode = str(interaction.voice_entry_mode);
+  return {
+    mode: configuredMode === "face_to_face" ? "face_to_face" : "call",
+    scene: str(interaction.face_to_face_scene).trim().slice(0, 2000),
+  };
+}
 
 export function companionContinuationPlan(
   interaction: Record<string, unknown>,
@@ -291,8 +302,12 @@ function App() {
   const [retrieval, setRetrieval] = useState<Record<string, unknown>[]>([]);
   const [toast, setToast] = useState("");
   const [voice, setVoice] = useState<VoiceSessionState>({ open: false, phase: "idle", transcript: "", reply: "", level: 0, error: "" });
+  const [voiceEntryMode, setVoiceEntryMode] = useState<VoiceInteractionMode>("call");
+  const [voiceEntryScene, setVoiceEntryScene] = useState("");
+  const [voiceEntryBusy, setVoiceEntryBusy] = useState(false);
   const [companionRound, setCompanionRound] = useState(0);
   const voiceOpenRef = useRef(false);
+  const voiceInteractionRef = useRef<VoiceInteractionContext>({ mode: "call", scene: "" });
   const companionRoundRef = useRef(0);
   const companionArmedRef = useRef(false);
   const activeInitiativeRef = useRef<{ trigger: InitiativeTrigger; sequence: number }>({ trigger: "none", sequence: 0 });
@@ -1013,6 +1028,7 @@ function App() {
       client_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
       client_utc_offset_minutes: -new Date().getTimezoneOffset(),
       voice_delivery: voiceOpenRef.current ? voiceDeliveryRef.current : null,
+      voice_context: voiceOpenRef.current ? voiceInteractionRef.current : null,
       voice_emotion_tokens: voiceOpenRef.current ? voiceEmotionTokens.slice(0, 8) : [],
       input_evidence: asrEvidence ? {
         asr: {
@@ -1470,7 +1486,7 @@ function App() {
     }
   }, [cancelIdleContinuation, cancelRun, captureVoiceInterruption, queueVoiceSegment, scheduleIdleContinuation, setPlaybackDucked, settings?.audio.asr_adaptive_noise_enabled, settings?.audio.asr_noise_calibration_ms, settings?.audio.asr_noise_gate_db, stopAudio, stopListening]);
 
-  const enterVoice = useCallback(() => {
+  const enterVoice = useCallback((context: VoiceInteractionContext) => {
     cancelIdleContinuation();
     idleContinuationSentRef.current = false;
     companionRoundRef.current = 0;
@@ -1478,6 +1494,7 @@ function App() {
     voiceInputLockedRef.current = false;
     setCompanionRound(0);
     voiceOpenRef.current = true;
+    voiceInteractionRef.current = context;
     voiceSegmentsRef.current = [];
     deferredVoiceSegmentsRef.current = [];
     voiceEmotionTokensRef.current = [];
@@ -1489,6 +1506,43 @@ function App() {
     setVoice({ open: true, phase: "connecting", transcript: "", reply: "", level: 0, error: "" });
     void startListening();
   }, [cancelIdleContinuation, startListening]);
+
+  const openVoiceEntry = useCallback(() => {
+    const saved = savedVoiceInteraction(settings);
+    setVoiceEntryMode(saved.mode);
+    setVoiceEntryScene(saved.scene);
+    setVoiceEntryBusy(false);
+    setModalDirty(false);
+    setModal("voice-entry");
+  }, [settings]);
+
+  const startVoiceFromEntry = useCallback(async () => {
+    if (voiceEntryBusy) return;
+    const context: VoiceInteractionContext = {
+      mode: voiceEntryMode,
+      scene: voiceEntryScene.trim().slice(0, 2000),
+    };
+    setVoiceEntryBusy(true);
+    try {
+      const result = await request<{ settings: ProductSettings }>("/api/v1/settings", {
+        method: "PUT",
+        body: JSON.stringify({
+          interaction: {
+            voice_entry_mode: context.mode,
+            face_to_face_scene: context.scene,
+          },
+        }),
+      });
+      setSettings(result.settings);
+      setModalDirty(false);
+      setModal(null);
+      enterVoice(context);
+    } catch (error) {
+      notify((error as Error).message);
+    } finally {
+      setVoiceEntryBusy(false);
+    }
+  }, [enterVoice, notify, voiceEntryBusy, voiceEntryMode, voiceEntryScene]);
 
   const exitVoice = useCallback(() => {
     cancelIdleContinuation();
@@ -1595,11 +1649,11 @@ function App() {
         else if (generating) void cancelRun();
       }
       if (ctrl && event.key.toLowerCase() === "n") { event.preventDefault(); newSession(); }
-      if (ctrl && event.shiftKey && event.key.toLowerCase() === "m") { event.preventDefault(); voiceOpenRef.current ? exitVoice() : enterVoice(); }
+      if (ctrl && event.shiftKey && event.key.toLowerCase() === "m") { event.preventDefault(); voiceOpenRef.current ? exitVoice() : openVoiceEntry(); }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [cancelRun, closeModal, enterVoice, exitVoice, generating, modal, newSession, profileCardRole]);
+  }, [cancelRun, closeModal, exitVoice, generating, modal, newSession, openVoiceEntry, profileCardRole]);
 
   useEffect(() => () => { closingVoiceRef.current = true; stopListening(false); stopAudio(); }, [stopAudio, stopListening]);
 
@@ -1627,7 +1681,7 @@ function App() {
         {!messages.length && <div className="welcome-panel"><span className="eyebrow">PRIVATE · LOCAL · STATEFUL</span><h2>让每一次对话<br />都成为连续的记忆</h2><p>双源检索、角色一致性、状态写回与实时语音，都由可观察的 LangGraph 流程调度。</p><div className="prompt-grid">{["解释当前 LangGraph 节点如何调度", "总结知识库中最重要的三点", "检查当前角色和状态档案", "设计一个低延迟语音对话流程"].map((value) => <button key={value} onClick={() => void sendMessage(value)}><span>↗</span>{value}</button>)}</div></div>}
         <MessageList messages={messages} avatars={avatars} userName={userName} characterName={characterName} onProfile={setProfileCardRole} onCopy={(text) => { void navigator.clipboard.writeText(text); notify("已复制回复"); }} onSpeak={speakMessage} onRegenerate={(value, targetRound) => void sendMessage(value, "regenerate", targetRound)} onInitiative={(targetRound) => void sendMessage("", "regenerate", targetRound, true)} onDelete={(messageId) => void deleteReply(messageId)} />
       </section>
-      <section className="composer-wrap">{generating && <div className="run-strip"><span><i /> 正在流式执行 · {runId.slice(0, 8)}</span><button onClick={() => void cancelRun()}>停止生成</button></div>}<div className="composer"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} placeholder="输入消息，或开启实时语音…" rows={1} /><div className="composer-row"><div><button className="voice-entry" onClick={enterVoice}>● 实时语音</button><button className="initiative-entry" disabled={generating} onClick={() => void sendMessage("", "primary", round, true)} title="不输入文字，让角色根据当前关系主动说点什么">✦ 让 AI 说点什么</button><button onClick={() => openModal("knowledge")}>＋ 知识</button><button onClick={showContext}>本轮引用 <b>{retrieval.length}</b></button></div><button className="send" onClick={() => generating ? void cancelRun() : void sendMessage()} disabled={!generating && !input.trim()} aria-label={generating ? "停止生成" : "发送消息"}>{generating ? "■" : "↑"}</button></div></div><div className="composer-meta"><span>Enter 发送 · Shift+Enter 换行 · Esc 打断</span><button onClick={() => void clearCurrent()}>清空当前上下文</button></div></section>
+      <section className="composer-wrap">{generating && <div className="run-strip"><span><i /> 正在流式执行 · {runId.slice(0, 8)}</span><button onClick={() => void cancelRun()}>停止生成</button></div>}<div className="composer"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} placeholder="输入消息，或开启实时语音…" rows={1} /><div className="composer-row"><div><button className="voice-entry" onClick={openVoiceEntry}>● 实时语音</button><button className="initiative-entry" disabled={generating} onClick={() => void sendMessage("", "primary", round, true)} title="不输入文字，让角色根据当前关系主动说点什么">✦ 让 AI 说点什么</button><button onClick={() => openModal("knowledge")}>＋ 知识</button><button onClick={showContext}>本轮引用 <b>{retrieval.length}</b></button></div><button className="send" onClick={() => generating ? void cancelRun() : void sendMessage()} disabled={!generating && !input.trim()} aria-label={generating ? "停止生成" : "发送消息"}>{generating ? "■" : "↑"}</button></div></div><div className="composer-meta"><span>Enter 发送 · Shift+Enter 换行 · Esc 打断</span><button onClick={() => void clearCurrent()}>清空当前上下文</button></div></section>
     </main>
 
     <Inspector open={inspectorOpen} tab={inspectorTab} onTab={setInspectorTab} onClose={() => setInspectorOpen(false)} events={events} retrieval={retrieval} runId={inspectionRunId} />
@@ -1636,8 +1690,9 @@ function App() {
     {modal === "memory" && <MemoryDialog onClose={closeModal} onDirty={setModalDirty} notify={notify} />}
     {modal === "profile" && <ProfileDialog initialName={profileEditorRole} onClose={closeModal} onDirty={setModalDirty} notify={notify} />}
     {modal === "diagnostics" && <DiagnosticsDialog onClose={closeModal} notify={notify} onCleared={() => { newSession(); void loadSessions(); }} />}
+    {modal === "voice-entry" && <VoiceEntryDialog mode={voiceEntryMode} scene={voiceEntryScene} busy={voiceEntryBusy} onModeChange={(next) => { setVoiceEntryMode(next); setModalDirty(true); }} onSceneChange={(next) => { setVoiceEntryScene(next); setModalDirty(true); }} onClose={closeModal} onStart={() => void startVoiceFromEntry()} />}
     {profileCardRole && <ProfileCardDialog role={profileCardRole} avatars={avatars} displayName={profileCardRole === "user" ? userName : characterName} onClose={() => setProfileCardRole(null)} onEdit={(role) => { setProfileCardRole(null); setProfileEditorRole(role); setModal("profile"); }} />}
-    {voice.open && <VoiceMode state={voice} avatar={avatars.assistant} characterName={characterName} companion={{ enabled: bool(settings?.interaction?.unlimited_reply_enabled), round: companionRound, limit: Math.max(1, Math.min(50, num(settings?.interaction?.unlimited_reply_max_rounds, 10))) }} onExit={exitVoice} onRetry={retryVoice} />}
+    {voice.open && <VoiceMode state={voice} avatar={avatars.assistant} characterName={characterName} context={voiceInteractionRef.current} companion={{ enabled: bool(settings?.interaction?.unlimited_reply_enabled), round: companionRound, limit: Math.max(1, Math.min(50, num(settings?.interaction?.unlimited_reply_max_rounds, 10))) }} onExit={exitVoice} onRetry={retryVoice} />}
     {toast && <div className="toast" role="status">{toast}</div>}
   </div>;
 }
@@ -1715,8 +1770,30 @@ function WebTraceData({ data }: { data: Record<string, unknown> }) {
   </div>;
 }
 
-function Modal({ title, kicker, onClose, children, footer, compact = false }: { title: string; kicker: string; onClose: () => void; children: ReactNode; footer?: ReactNode; compact?: boolean }) {
-  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) event.preventDefault(); }}><section className={`modal-card ${compact ? "compact" : ""}`} role="dialog" aria-modal="true" aria-label={title}><header><div><span className="eyebrow">{kicker}</span><h2>{title}</h2></div><button onClick={onClose} aria-label={`关闭${title}`}>×</button></header><div className="modal-body">{children}</div>{footer && <footer>{footer}</footer>}</section></div>;
+function VoiceEntryDialog({ mode, scene, busy, onModeChange, onSceneChange, onClose, onStart }: {
+  mode: VoiceInteractionMode;
+  scene: string;
+  busy: boolean;
+  onModeChange: (mode: VoiceInteractionMode) => void;
+  onSceneChange: (scene: string) => void;
+  onClose: () => void;
+  onStart: () => void;
+}) {
+  return <Modal title="选择互动方式" kicker="LIVE INTERACTION" onClose={onClose} compact className="voice-entry-card" footer={<><button className="secondary" disabled={busy} onClick={onClose}>取消</button><button className="primary" disabled={busy} onClick={onStart}>{busy ? "正在保存…" : mode === "face_to_face" ? "开始面对面互动" : "开始通话"}</button></>}>
+    <div className="voice-entry-setup">
+      <p className="notice">选择会保存为下次默认值。通话保持原有语音逻辑；面对面会在每轮语音中加载你保存的场景，但不会把场景自动写成人物事实或长期记忆。</p>
+      <div className="voice-entry-options" role="group" aria-label="互动方式">
+        <button type="button" className={mode === "call" ? "active" : ""} aria-pressed={mode === "call"} onClick={() => onModeChange("call")}><span>通话</span><small>默认 · 保持现有实时语音逻辑</small></button>
+        <button type="button" className={mode === "face_to_face" ? "active" : ""} aria-pressed={mode === "face_to_face"} onClick={() => onModeChange("face_to_face")}><span>面对面</span><small>通过语言呈现角色的外观、动作、距离与体感互动</small></button>
+      </div>
+      {mode === "face_to_face" && <label className="voice-scene-field"><span>当前场景</span><textarea aria-label="当前场景" value={scene} maxLength={2000} rows={6} placeholder="例如：深夜的客厅，只开着落地灯，窗外正在下雨；我们坐在沙发两端。" onChange={(event) => onSceneChange(event.target.value)} /><small>{scene.length} / 2000 · 可留空，角色会使用未指定的普通面对面场景</small></label>}
+      <p className="voice-entry-boundary">{mode === "face_to_face" ? "用户默认看不到角色画面；角色会在合适时自然说出自身动作和可感知线索，但不会擅自替用户决定动作、反应或感受。" : "AI 只会知道当前正在实时语音通话，不会额外描述共同所处的物理场景。"}</p>
+    </div>
+  </Modal>;
+}
+
+function Modal({ title, kicker, onClose, children, footer, compact = false, className = "" }: { title: string; kicker: string; onClose: () => void; children: ReactNode; footer?: ReactNode; compact?: boolean; className?: string }) {
+  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) event.preventDefault(); }}><section className={`modal-card ${compact ? "compact" : ""} ${className}`.trim()} role="dialog" aria-modal="true" aria-label={title}><header><div><span className="eyebrow">{kicker}</span><h2>{title}</h2></div><button onClick={onClose} aria-label={`关闭${title}`}>×</button></header><div className="modal-body">{children}</div>{footer && <footer>{footer}</footer>}</section></div>;
 }
 
 function Field({ label, value, type = "text", onChange, min, max, step, placeholder }: { label: string; value: unknown; type?: string; onChange: (value: unknown) => void; min?: number; max?: number; step?: number; placeholder?: string }) {
@@ -2159,9 +2236,10 @@ function DiagnosticsDialog({ onClose, notify, onCleared }: { onClose: () => void
   return <Modal title="系统诊断与数据管理" kicker="SYSTEM HEALTH" onClose={onClose}>{loading ? <div className="empty-mini">正在检查服务状态…</div> : <><div className="diagnostic-grid"><article><span>主服务</span><strong>{report?.ok ? "正常" : "异常"}</strong><small>{str(report?.app.version)}</small></article><article><span>会话</span><strong>{num(report?.counts.sessions)}</strong><small>SQLite 权威存储 · JSON 投影</small></article><article><span>知识块</span><strong>{num(report?.counts.chunks)}</strong><small>{num(report?.counts.characters)} 字符</small></article><article><span>语音</span><strong>{bool(report?.audio.asr_ready) ? "ASR 就绪" : "ASR 降级"}</strong><small>{str(report?.audio.asr_provider)}</small></article></div><details className="report-json"><summary>查看完整诊断报告</summary><pre>{JSON.stringify(report, null, 2)}</pre></details><section className="danger-zone"><h3>危险数据操作</h3><p>这些操作只影响当前新项目的 runtime，不会修改原 Mindscape 数据。</p><div><button onClick={() => void clear("knowledge")}>清空知识库</button><button onClick={() => void clear("sessions")}>清空会话</button><button className="danger" onClick={() => void clear("all")}>清空全部运行数据</button></div></section></>}</Modal>;
 }
 
-function VoiceMode({ state, avatar, characterName, companion, onExit, onRetry }: { state: VoiceSessionState; avatar: AvatarEntry; characterName: string; companion: { enabled: boolean; round: number; limit: number }; onExit: () => void; onRetry: () => void }) {
+function VoiceMode({ state, avatar, characterName, context, companion, onExit, onRetry }: { state: VoiceSessionState; avatar: AvatarEntry; characterName: string; context: VoiceInteractionContext; companion: { enabled: boolean; round: number; limit: number }; onExit: () => void; onRetry: () => void }) {
   const intensity = Math.max(0.08, state.level);
-  return <section className={`voice-mode phase-${state.phase}`} style={{ "--voice-level": intensity, "--voice-avatar": `url("${avatar.src}")` } as CSSProperties} aria-label="沉浸式实时语音"><div className="voice-background" /><div className="voice-shade" /><button className="voice-exit" onClick={onExit}>退出语音</button><div className="voice-stage"><span className="voice-kicker">LIVE CONVERSATION</span>{companion.enabled && <div className={`voice-companion ${companion.round >= companion.limit ? "complete" : ""}`} role="status"><span>连续陪伴</span><strong>{companion.round} / {companion.limit}</strong><small>{companion.round >= companion.limit ? "已到本次上限" : "朗读结束 10 秒后继续 · 可随时插话"}</small></div>}<div className="voice-portrait-shell"><i className="voice-ring ring-one" /><i className="voice-ring ring-two" /><div className="voice-portrait portrait-avatar" style={avatarStyle(avatar)}><img src={avatar.src} alt={`${characterName}头像`} /></div></div><h1>{characterName}</h1><div className="voice-status"><i />{VOICE_LABELS[state.phase]}</div><div className="voice-wave" aria-hidden="true">{Array.from({ length: 18 }, (_, index) => <i key={index} style={{ "--bar": (index % 5) + 1 } as CSSProperties} />)}</div><div className="voice-caption"><small>{state.reply ? `${characterName} 正在回应` : "你刚刚说"}</small><p>{state.reply || state.transcript || (state.phase === "error" ? state.error : "直接开始说话，我会自动识别、发送并回应。")}</p></div>{state.phase === "error" && <div className="voice-error"><span>{state.error}</span><button onClick={onRetry}>重新连接</button></div>}<span className="voice-tip">连续说话确认后才会打断 · 插话会重定向话题 · Ctrl+Shift+M 切换 · Esc 退出</span></div></section>;
+  const faceToFace = context.mode === "face_to_face";
+  return <section className={`voice-mode phase-${state.phase}`} style={{ "--voice-level": intensity, "--voice-avatar": `url("${avatar.src}")` } as CSSProperties} aria-label="沉浸式实时语音"><div className="voice-background" /><div className="voice-shade" /><button className="voice-exit" onClick={onExit}>退出语音</button><div className="voice-stage"><span className="voice-kicker">{faceToFace ? "FACE TO FACE" : "LIVE CONVERSATION"}</span>{faceToFace && <div className="voice-scene-chip" title={context.scene || "普通面对面场景"}><span>面对面</span><small>{context.scene || "未指定具体场景"}</small></div>}{companion.enabled && <div className={`voice-companion ${companion.round >= companion.limit ? "complete" : ""}`} role="status"><span>连续陪伴</span><strong>{companion.round} / {companion.limit}</strong><small>{companion.round >= companion.limit ? "已到本次上限" : "朗读结束 10 秒后继续 · 可随时插话"}</small></div>}<div className="voice-portrait-shell"><i className="voice-ring ring-one" /><i className="voice-ring ring-two" /><div className="voice-portrait portrait-avatar" style={avatarStyle(avatar)}><img src={avatar.src} alt={`${characterName}头像`} /></div></div><h1>{characterName}</h1><div className="voice-status"><i />{VOICE_LABELS[state.phase]}</div><div className="voice-wave" aria-hidden="true">{Array.from({ length: 18 }, (_, index) => <i key={index} style={{ "--bar": (index % 5) + 1 } as CSSProperties} />)}</div><div className="voice-caption"><small>{state.reply ? `${characterName} 正在回应` : "你刚刚说"}</small><p>{state.reply || state.transcript || (state.phase === "error" ? state.error : "直接开始说话，我会自动识别、发送并回应。")}</p></div>{state.phase === "error" && <div className="voice-error"><span>{state.error}</span><button onClick={onRetry}>重新连接</button></div>}<span className="voice-tip">连续说话确认后才会打断 · 插话会重定向话题 · Ctrl+Shift+M 切换 · Esc 退出</span></div></section>;
 }
 
 export default App;

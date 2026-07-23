@@ -1,11 +1,18 @@
 # Mindspace
 
-> 当前源码版本：**0.5.7**  
+> 当前源码版本：**0.5.8**
 > 面向 Windows 的本地优先 AI 角色陪伴框架，使用 LangGraph 编排对话、检索、工具、记忆、档案与语音链路。
 
 Mindspace 将模型调用、RAG、结构化人物档案、长期记忆、ASR、TTS 和桌面 Launcher 组合成一套可检查、可恢复、可扩展的应用框架。项目重点不是“把所有内容都塞进 Prompt”，而是明确每类信息的来源、可信等级、生命周期和写入权限。
 
-## 0.5.7 重点
+## 0.5.8 重点
+
+- 实时语音入口新增“通话 / 面对面”选择，默认保持原通话逻辑。
+- 面对面模式可保存当前场景，并在后续每轮语音中持续加载。
+- 面对面场景通过临时高优先级 Prompt 层提供现场感，不作为人物事实、长期记忆或 JSON Patch 证据。
+- `interaction.voice_entry_mode` 与 `interaction.face_to_face_scene` 保存用户上次选择和内容。
+
+## 0.5.7 成熟化改造
 
 - 模型调用按 `planner`、`research_review`、`generation`、`protocol_repair` 和 `memory_extract` 独立计数，单轮总上限为 5。
 - 普通闲聊只进行正文生成；时间词本身不会误触联网规划。
@@ -157,7 +164,7 @@ pwsh -NoProfile -File .\scripts\verify-source-integrity.ps1
 生成 Core 更新包：
 
 ```powershell
-pwsh -NoProfile -File .\scripts\build-update.ps1 -Version 0.5.7
+pwsh -NoProfile -File .\scripts\build-update.ps1 -Version 0.5.8
 ```
 
 生成 Electron Launcher：
@@ -180,6 +187,7 @@ npm --prefix desktop run package:app
 - [模型输入和 JSON 编排](docs/LLM_JSON_ORCHESTRATION.md)
 - [七项成熟化改造](docs/MATURITY_HARDENING.md)
 - [ASR 最终复核与仲裁](docs/ASR_FINAL_REFINEMENT.md)
+- [语音通话与面对面互动](docs/VOICE_INTERACTION_MODES.md)
 - [运行手册](docs/RUNTIME_RUNBOOK.md)
 - [验证手册](docs/VERIFICATION.md)
 

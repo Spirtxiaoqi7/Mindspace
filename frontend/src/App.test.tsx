@@ -76,7 +76,7 @@ const settings = {
   knowledge: {},
   protocol: {},
   audio: { tts_provider: "siliconflow", tts_speed: 1, asr_ws_url: "ws://127.0.0.1:8766", tts_reference_configured: false },
-  interaction: { idle_continuation_enabled: false, text_idle_seconds: 180, voice_idle_seconds: 30, unlimited_reply_enabled: false, unlimited_reply_interval_seconds: 10, unlimited_reply_max_rounds: 10 },
+  interaction: { voice_entry_mode: "call", face_to_face_scene: "", idle_continuation_enabled: false, text_idle_seconds: 180, voice_idle_seconds: 30, unlimited_reply_enabled: false, unlimited_reply_interval_seconds: 10, unlimited_reply_max_rounds: 10 },
   appearance: { theme: "mindscape", density: "chat", font_scale: 1.3 },
 };
 
@@ -113,11 +113,12 @@ function installFetchMock(settingsOverride: Record<string, unknown> = {}) {
       const payload = JSON.parse(String(init.body));
       const llm = { ...currentSettings.llm, ...payload.llm };
       const audio = { ...currentSettings.audio, ...payload.audio };
+      const interaction = { ...currentSettings.interaction, ...payload.interaction };
       llm.credentials_configured = Boolean(llm.api_key) || Boolean(llm.credentials_configured);
       audio.tts_siliconflow_credentials_configured = Boolean(audio.tts_siliconflow_api_key) || Boolean(audio.tts_siliconflow_credentials_configured);
       delete llm.api_key;
       delete audio.tts_siliconflow_api_key;
-      currentSettings = { ...currentSettings, ...payload, llm, audio };
+      currentSettings = { ...currentSettings, ...payload, llm, audio, interaction };
       return json({ settings: currentSettings });
     }
     if (url === "/api/v1/settings") return json(currentSettings);
@@ -348,8 +349,48 @@ describe("Mindspace product interactions", () => {
 
     await user.click(screen.getByRole("button", { name: "取消" }));
     await user.click(screen.getByRole("button", { name: /实时语音/ }));
+    await user.click(screen.getByRole("button", { name: "开始通话" }));
     expect(await screen.findByText("0 / 12")).toBeInTheDocument();
     expect(screen.getByText(/可随时插话/)).toBeInTheDocument();
+  });
+
+  it("restores and persists the face-to-face voice mode and scene", async () => {
+    installFetchMock({
+      interaction: {
+        ...settings.interaction,
+        voice_entry_mode: "face_to_face",
+        face_to_face_scene: "傍晚的阳台",
+      },
+    });
+    const user = userEvent.setup();
+    await renderReady();
+
+    await user.click(screen.getByRole("button", { name: /实时语音/ }));
+    expect(screen.getByRole("button", { name: /^面对面/ })).toHaveAttribute("aria-pressed", "true");
+    const scene = screen.getByLabelText("当前场景");
+    expect(scene).toHaveValue("傍晚的阳台");
+    await user.clear(scene);
+    await user.type(scene, "深夜客厅，窗外正在下雨");
+    await user.click(screen.getByRole("button", { name: "开始面对面互动" }));
+
+    expect(await screen.findByText("FACE TO FACE")).toBeInTheDocument();
+    expect(screen.getByText("深夜客厅，窗外正在下雨")).toBeInTheDocument();
+    await waitFor(() => {
+      const saveCall = vi.mocked(fetch).mock.calls.find(([url, init]) => {
+        if (String(url) !== "/api/v1/settings" || init?.method !== "PUT") return false;
+        const payload = JSON.parse(String(init.body));
+        return payload.interaction?.voice_entry_mode === "face_to_face";
+      });
+      expect(JSON.parse(String(saveCall?.[1]?.body)).interaction).toEqual({
+        voice_entry_mode: "face_to_face",
+        face_to_face_scene: "深夜客厅，窗外正在下雨",
+      });
+    });
+
+    await user.click(document.querySelector(".voice-exit")!);
+    await user.click(screen.getByRole("button", { name: /实时语音/ }));
+    expect(screen.getByRole("button", { name: /^面对面/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("当前场景")).toHaveValue("深夜客厅，窗外正在下雨");
   });
 
   it("shows explainable memories and saves user edits", async () => {
@@ -473,6 +514,7 @@ describe("Mindspace product interactions", () => {
     const user = userEvent.setup();
     await renderReady();
     await user.click(document.querySelector(".voice-entry")!);
+    await user.click(screen.getByRole("button", { name: "开始通话" }));
     await waitFor(() => expect(document.querySelector(".voice-mode.phase-error")).toBeInTheDocument());
     expect(document.querySelector(".voice-exit")).toBeInTheDocument();
     fireEvent.click(document.querySelector(".voice-exit")!);
@@ -492,6 +534,7 @@ describe("Mindspace product interactions", () => {
     try {
       await renderReady();
       fireEvent.click(document.querySelector(".voice-entry")!);
+      fireEvent.click(screen.getByRole("button", { name: "开始通话" }));
       await waitFor(() => expect(navigator.mediaDevices.getUserMedia).toHaveBeenCalledOnce());
       fireEvent.click(document.querySelector(".voice-exit")!);
       expect(document.querySelector(".voice-mode")).not.toBeInTheDocument();

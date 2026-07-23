@@ -1,6 +1,6 @@
 [project]
 name = "mindspace-langgraph"
-version = "0.5.7"
+version = "0.5.8"
 description = "Service-oriented LangGraph product shell for Mindspace chat, RAG, TTS, and ASR"
 readme = "README.md"
 requires-python = ">=3.11"

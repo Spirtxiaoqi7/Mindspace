@@ -96,6 +96,23 @@ class InputEvidence(BaseModel):
     asr: ASRInputEvidence | None = None
 
 
+class VoiceInteractionContext(BaseModel):
+    """User-selected presentation context for one live voice session.
+
+    The scene is transport-only context. It may shape the current response, but
+    it is never authoritative profile evidence and must not become durable
+    conversation history by itself.
+    """
+
+    mode: Literal["call", "face_to_face"] = "call"
+    scene: str = Field(default="", max_length=2_000)
+
+    @field_validator("scene")
+    @classmethod
+    def trim_scene(cls, value: str) -> str:
+        return value.strip()
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10_000)
     session_id: str = Field(default_factory=lambda: str(uuid4()))
@@ -113,6 +130,7 @@ class ChatRequest(BaseModel):
     client_utc_offset_minutes: int = Field(default=0, ge=-840, le=840)
     server_received_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     voice_delivery: VoiceDeliveryState | None = None
+    voice_context: VoiceInteractionContext | None = None
     voice_emotion_tokens: list[str] = Field(default_factory=list, max_length=8)
     input_evidence: InputEvidence | None = None
     user_name: str = "用户"

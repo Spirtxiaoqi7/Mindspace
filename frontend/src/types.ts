@@ -14,6 +14,12 @@ export interface Message {
 }
 
 export type InitiativeTrigger = "none" | "manual" | "idle_continuation" | "continuous_companionship";
+export type VoiceInteractionMode = "call" | "face_to_face";
+
+export interface VoiceInteractionContext {
+  mode: VoiceInteractionMode;
+  scene: string;
+}
 
 export interface SessionSummary {
   session_id: string;

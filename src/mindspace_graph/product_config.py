@@ -50,12 +50,16 @@ class ProductConfigStore:
                 self._config["llm"]["mode"] = "openai"
             if self._config["appearance"].get("theme") == "system":
                 self._config["appearance"]["theme"] = "mindscape"
-            if str(self._config.get("schema_version") or "") == "1.0.0":
+            loaded_schema_version = str(self._config.get("schema_version") or "")
+            if loaded_schema_version == "1.0.0":
                 # 250 ms was the old fixed endpoint and truncated hesitant Chinese.
                 # Migrate only that exact legacy default; explicit custom values stay intact.
                 if self._config["audio"].get("asr_silence_ms") == 250:
                     self._config["audio"]["asr_silence_ms"] = 600
-                self._config["schema_version"] = "1.1.0"
+            if loaded_schema_version in {"1.0.0", "1.1.0"}:
+                # 1.2 adds a user-owned, persistent voice entry choice and scene.
+                # Missing values were already filled by _merge_known above.
+                self._config["schema_version"] = "1.2.0"
             if loaded != self._config:
                 _atomic_json(path, self._config)
         else:
@@ -64,7 +68,7 @@ class ProductConfigStore:
 
     def _defaults(self) -> dict[str, Any]:
         return {
-            "schema_version": "1.1.0",
+            "schema_version": "1.2.0",
             "llm": {
                 "mode": self.settings.llm_mode,
                 "base_url": self.settings.llm_base_url,
@@ -177,6 +181,8 @@ class ProductConfigStore:
                 "emotion_deadline_ms": self.settings.emotion_deadline_ms,
             },
             "interaction": {
+                "voice_entry_mode": "call",
+                "face_to_face_scene": "",
                 "idle_continuation_enabled": False,
                 "text_idle_seconds": 180,
                 "voice_idle_seconds": 30,
@@ -424,6 +430,14 @@ class ProductConfigStore:
             300, min(2500, int(audio["emotion_deadline_ms"]))
         )
         interaction = self._config["interaction"]
+        interaction["voice_entry_mode"] = str(
+            interaction["voice_entry_mode"]
+        ).strip().lower()
+        if interaction["voice_entry_mode"] not in {"call", "face_to_face"}:
+            raise ValueError("interaction.voice_entry_mode must be call or face_to_face")
+        interaction["face_to_face_scene"] = str(
+            interaction["face_to_face_scene"]
+        ).strip()[:2000]
         interaction["idle_continuation_enabled"] = bool(
             interaction["idle_continuation_enabled"]
         )

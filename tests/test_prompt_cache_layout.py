@@ -156,3 +156,32 @@ def test_json_baseline_precedes_history_and_dynamic_tools_remain_at_tail(tmp_pat
 
     assert json_index < history_index < retrieval_index < tool_index < input_index
     assert tool_index == len(built.messages) - 2
+
+
+def test_face_to_face_scene_stays_after_the_stable_prefix_and_is_not_persistable():
+    built = build_prompt(
+        ChatRequest(
+            message="继续说",
+            session_id="face-scene",
+            interaction_mode="voice",
+            voice_context={"mode": "face_to_face", "scene": "雨夜客厅"},
+        ),
+        profiles(),
+        [],
+        [],
+        [],
+    )
+
+    scene_event = next(
+        item for item in built.pending_events if item["kind"] == "voice_face_to_face_context"
+    )
+    scene_index = next(
+        index
+        for index, item in enumerate(built.messages)
+        if "【面对面互动一级规则】" in item["content"]
+    )
+    assert scene_index >= 3
+    assert scene_event["role"] == "system"
+    assert scene_event["ephemeral"] is True
+    assert scene_event["persistence_eligible"] is False
+    assert scene_event["metadata"]["eligible_for_json_evidence"] is False

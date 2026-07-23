@@ -343,6 +343,42 @@ def test_prompt_explicitly_distinguishes_voice_and_text_interaction_modes():
     assert "用户没有打开实时语音" not in text_system
 
 
+def test_face_to_face_voice_context_is_a_high_priority_ephemeral_scene():
+    face_deps = demo_dependencies()
+    face_model = CapturingModel()
+    face_deps.llm = face_model
+
+    invoke(
+        face_deps,
+        interaction_mode="voice",
+        voice_context={
+            "mode": "face_to_face",
+            "scene": "深夜客厅，窗外下雨，我们坐在沙发两端。",
+        },
+    )
+
+    face_system = "\n".join(
+        item["content"] for item in face_model.captured if item["role"] == "system"
+    )
+    assert "【面对面互动一级规则】" in face_system
+    assert "默认用户看不到角色画面" in face_system
+    assert "深夜客厅，窗外下雨" in face_system
+    assert "不得替用户断言" in face_system
+    assert "不得据此提交人物档案或 runtime_state Patch" in face_system
+
+    call_deps = demo_dependencies()
+    call_model = CapturingModel()
+    call_deps.llm = call_model
+    invoke(
+        call_deps,
+        interaction_mode="voice",
+        voice_context={"mode": "call", "scene": "这段保留但通话模式不加载"},
+    )
+    call_prompt = "\n".join(item["content"] for item in call_model.captured)
+    assert "【面对面互动一级规则】" not in call_prompt
+    assert "这段保留但通话模式不加载" not in call_prompt
+
+
 def test_initiative_uses_actual_profile_name_without_visible_user_message_or_writeback():
     deps = demo_dependencies()
     deps.profiles.bundle.user_profile["identity"]["preferred_name"] = "阿澈"

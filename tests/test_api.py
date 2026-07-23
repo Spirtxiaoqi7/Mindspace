@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from mindspace_graph.api import _voice_energy_threshold_db, create_app
@@ -79,6 +80,8 @@ def test_voice_phase_thresholds_and_idle_continuation_settings_are_migrated_and_
     assert snapshot["audio"]["asr_dynamic_endpointing"] is True
     assert snapshot["audio"]["asr_final_refinement_enabled"] is True
     assert snapshot["interaction"]["idle_continuation_enabled"] is False
+    assert snapshot["interaction"]["voice_entry_mode"] == "call"
+    assert snapshot["interaction"]["face_to_face_scene"] == ""
     assert snapshot["interaction"]["unlimited_reply_enabled"] is False
     assert snapshot["interaction"]["unlimited_reply_interval_seconds"] == 10
     assert snapshot["interaction"]["unlimited_reply_max_rounds"] == 10
@@ -123,10 +126,34 @@ def test_legacy_fixed_endpoint_migrates_without_overwriting_custom_value(tmp_pat
     legacy_snapshot = ProductConfigStore(legacy, settings).snapshot()
     custom_snapshot = ProductConfigStore(custom, settings).snapshot()
 
-    assert legacy_snapshot["schema_version"] == "1.1.0"
+    assert legacy_snapshot["schema_version"] == "1.2.0"
     assert legacy_snapshot["audio"]["asr_silence_ms"] == 600
-    assert custom_snapshot["schema_version"] == "1.1.0"
+    assert custom_snapshot["schema_version"] == "1.2.0"
     assert custom_snapshot["audio"]["asr_silence_ms"] == 720
+
+
+def test_voice_entry_mode_and_scene_are_validated_and_persisted(tmp_path):
+    settings = make_settings(tmp_path)
+    path = settings.runtime_dir / "config" / "settings.json"
+    store = ProductConfigStore(path, settings)
+
+    updated = store.update(
+        {
+            "interaction": {
+                "voice_entry_mode": "face_to_face",
+                "face_to_face_scene": "  深夜客厅，窗外正在下雨。  ",
+            }
+        }
+    )
+
+    assert updated["interaction"]["voice_entry_mode"] == "face_to_face"
+    assert updated["interaction"]["face_to_face_scene"] == "深夜客厅，窗外正在下雨。"
+    restored = ProductConfigStore(path, settings).snapshot()
+    assert restored["interaction"]["voice_entry_mode"] == "face_to_face"
+    assert restored["interaction"]["face_to_face_scene"] == "深夜客厅，窗外正在下雨。"
+
+    with pytest.raises(ValueError, match="voice_entry_mode"):
+        store.update({"interaction": {"voice_entry_mode": "telepathy"}})
 
 
 def test_playback_candidate_gate_does_not_double_apply_frontend_noise_margin(tmp_path):
