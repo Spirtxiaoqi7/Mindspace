@@ -1,0 +1,50 @@
+# Python environments and caches
+.venv/
+.venv-*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# JavaScript dependencies and build output
+**/node_modules/
+**/.builder-cache/
+*.tsbuildinfo
+frontend/dist/
+desktop/dist/
+
+# Product build and packaging output
+dist/
+dist-*/
+build/
+artifacts/
+backups/
+desktop/bootstrap/
+*.zip
+*.exe
+*.blockmap
+
+# Runtime state, downloads, logs, signing keys and user data
+runtime/
+logs/
+.env
+.env.*
+!.env.example
+*.log
+*.partial
+
+# Models and local voice material are distributed separately
+assets/models/
+assets/audio/**/*.wav
+
+# CosyVoice is pinned as a Git submodule rather than vendored into this repository
+vendor/CosyVoice/
+
+# IDE and operating-system metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini

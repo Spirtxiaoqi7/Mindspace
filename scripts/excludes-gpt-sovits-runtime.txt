@@ -1,0 +1,5 @@
+# CUDA Torch is supplied by the verified ASR environment through a read-only
+# Python path. Excluding it prevents uv from replacing or writing through it.
+torch
+torchaudio
+torchvision

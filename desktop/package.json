@@ -1,0 +1,105 @@
+{
+  "name": "mindspace-desktop",
+  "version": "0.5.7",
+  "description": "Mindspace local AI desktop application",
+  "author": "Mindspace",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "node --test *.test.cjs",
+    "build": "tsc --noEmit && vite build",
+    "dev": "vite",
+    "electron": "electron .",
+    "predist": "node prepare-bootstrap.cjs",
+    "dist": "npm run build && electron-builder --win dir",
+    "prepackage:app": "node prepare-bootstrap.cjs",
+    "package:app": "npm run build && electron-builder --win nsis"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "electron-updater": "^6.8.9",
+    "extract-zip": "^2.0.1",
+    "react": "latest",
+    "react-dom": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "electron": "latest",
+    "electron-builder": "latest",
+    "typescript": "latest"
+  },
+  "build": {
+    "appId": "com.mindspace.desktop",
+    "productName": "Mindspace",
+    "directories": {
+      "output": "../dist-launcher"
+    },
+    "files": [
+      "dist/**/*",
+      "assets/**/*",
+      "main.cjs",
+      "preload.cjs",
+      "update-manager.cjs",
+      "launcher-updater.cjs",
+      "component-manager.cjs",
+      "gpt-sovits-catalog.cjs",
+      "runtime-manager.cjs",
+      "service-policy.cjs",
+      "announcement-policy.cjs",
+      "app-paths.cjs",
+      "storage-location.cjs",
+      "bootstrap-core.cjs",
+      "root-hint.json",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "bootstrap/mindspace-core.zip",
+        "to": "bootstrap/mindspace-core.zip"
+      },
+      {
+        "from": "bootstrap/manifest.json",
+        "to": "bootstrap/manifest.json"
+      },
+      {
+        "from": "assets/runtime-manifest.json",
+        "to": "runtime/runtime-manifest.json"
+      },
+      {
+        "from": "bootstrap/runtime-bundle",
+        "to": "runtime/bundled"
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        "dir",
+        "nsis"
+      ],
+      "icon": "assets/mindspace-icon.ico",
+      "executableName": "Mindspace",
+      "artifactName": "Mindspace-${version}-${arch}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://douyinqijun.cn/downloads/mindspace/launcher/stable/"
+      }
+    ],
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Mindspace",
+      "installerIcon": "assets/mindspace-icon.ico",
+      "uninstallerIcon": "assets/mindspace-icon.ico",
+      "include": "build/installer.nsh"
+    }
+  }
+}

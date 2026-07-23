@@ -1,0 +1,46 @@
+flowchart TD
+    UI["React App<br/>App.tsx::sendMessage"] -->|"POST /api/v1/chat/stream<br/>ChatRequest + X-Request-ID"| API["FastAPI<br/>api.py::chat_stream"]
+    API --> SVC["ConversationService<br/>buffered SSE / resume / cancel"]
+    SVC --> VR["validate_request"]
+    VR --> LC["load_context<br/>profiles + history + deletion events"]
+
+    LC --> RK["retrieve_knowledge"]
+    LC --> RC["retrieve_chat + structured memory"]
+    RK --> RANK["rank_context<br/>temporal decay + fairness"]
+    RC --> RANK
+
+    RANK --> ROUTE["capability_route<br/>deterministic rules"]
+    ROUTE -->|"direct or deterministic"| EXEC["execute_capabilities"]
+    ROUTE -->|"needs planner or any web call"| PREFLIGHT["private LLM: preflight"]
+    PREFLIGHT --> EXEC
+    EXEC -->|"weak web coverage only"| REVIEW["private LLM: research review"]
+    EXEC -->|"no review"| PROMPT["compose_prompt"]
+    REVIEW -->|"optional second read-only wave"| PROMPT
+
+    PROMPT --> INPUT["Main model messages<br/>persona → contract → authoritative JSON<br/>→ ledger history → turn control → retrieval<br/>→ tool state → research plan? → current user<br/>→ capability results? → emotion state?"]
+    INPUT --> MAIN["OpenAI-compatible POST /chat/completions<br/>stream=true; no provider-native tools field"]
+    MAIN --> PARSE["parse_protocol<br/>stream only text inside response tag"]
+    PARSE -->|"valid"| ROLE["deterministic role validation"]
+    PARSE -->|"invalid and repair budget remains"| REPAIR["private LLM: protocol repair"]
+    REPAIR --> PARSE
+    PARSE -->|"invalid and no repair budget"| ERROR["finalize_error"]
+
+    ROLE --> JSON["validate_json_update"]
+    JSON -->|"main output has no patches<br/>and memory regex gate matches"| MEM["private LLM: memory extraction"]
+    MEM --> POLICY["normalize + evidence/path/revision policy"]
+    JSON -->|"otherwise"| POLICY
+    POLICY --> PERSIST["single transaction: persist_turn<br/>profile patch + session + memory + context ledger"]
+    PERSIST --> DONE["run.completed"]
+
+    DONE -. "active foreground runs = 0" .-> COMPACT["background LLM: context compaction"]
+    DONE -. "enabled and active foreground runs = 0" .-> AUDIT["background LLM: role audit"]
+
+    classDef foreground fill:#e8f1ff,stroke:#3973b7,color:#12263a;
+    classDef model fill:#fff2cc,stroke:#a67c00,color:#3b2d00;
+    classDef storage fill:#e8f5e9,stroke:#3e8e41,color:#173a19;
+    classDef error fill:#fdecec,stroke:#b83a3a,color:#4a1717;
+
+    class UI,API,SVC,VR,LC,RK,RC,RANK,ROUTE,EXEC,PROMPT,PARSE,ROLE,JSON,POLICY,DONE foreground;
+    class PREFLIGHT,REVIEW,MAIN,REPAIR,MEM,COMPACT,AUDIT model;
+    class PERSIST storage;
+    class ERROR error;

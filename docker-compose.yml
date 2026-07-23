@@ -1,0 +1,15 @@
+services:
+  mindspace-graph:
+    build: .
+    ports:
+      - "127.0.0.1:8765:8765"
+    environment:
+      MINDSPACE_LLM_MODE: ${MINDSPACE_LLM_MODE:-demo}
+      MINDSPACE_LLM_BASE_URL: ${MINDSPACE_LLM_BASE_URL:-https://api.deepseek.com}
+      MINDSPACE_LLM_API_KEY: ${MINDSPACE_LLM_API_KEY:-}
+      MINDSPACE_LLM_MODEL: ${MINDSPACE_LLM_MODEL:-deepseek-chat}
+      MINDSPACE_TTS_PROVIDER: ${MINDSPACE_TTS_PROVIDER:-siliconflow}
+      MINDSPACE_ASR_PROVIDER: ${MINDSPACE_ASR_PROVIDER:-browser}
+    volumes:
+      - ./runtime:/data
+    restart: unless-stopped

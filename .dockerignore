@@ -1,0 +1,14 @@
+.venv*
+assets
+desktop
+frontend/node_modules
+vendor
+dist-launcher
+runtime
+dist
+build
+__pycache__
+.pytest_cache
+.ruff_cache
+.git
+docs/assets

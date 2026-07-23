@@ -1,0 +1,103 @@
+{
+  "schema_version": "1.0.0",
+  "runtime_version": "0.4.0",
+  "platform": "win32",
+  "arch": "x64",
+  "components": [
+    {
+      "id": "powershell",
+      "name": "PowerShell 7",
+      "description": "应用私有脚本运行时，不注册系统 PATH",
+      "version": "7.6.3",
+      "kind": "archive",
+      "bundled": "powershell/7.6.3",
+      "required": true,
+      "dependencies": [],
+      "size": 116931488,
+      "sha256": "07ddb0d00b660459560ef82a9841da7705b27cd5dcca5a0d7b025a98eca29eca",
+      "executable": "pwsh.exe",
+      "probe": [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "$PSVersionTable.PSVersion.ToString()"
+      ],
+      "urls": [
+        "https://downloads.douyinqijun.cn/mindspace/runtime/PowerShell-7.6.3-win-x64.zip",
+        "https://github.com/PowerShell/PowerShell/releases/download/v7.6.3/PowerShell-7.6.3-win-x64.zip"
+      ]
+    },
+    {
+      "id": "git",
+      "name": "MinGit",
+      "description": "应用私有 Git 工具，不写注册表和系统 PATH",
+      "version": "2.53.0",
+      "kind": "archive",
+      "bundled": "git/2.53.0",
+      "required": true,
+      "dependencies": [],
+      "size": 41293746,
+      "sha256": "82b562c918ec87b2ef5316ed79bb199e3a25719bb871a0f10294acf21ebd08cd",
+      "executable": "cmd/git.exe",
+      "probe": [
+        "--version"
+      ],
+      "urls": [
+        "https://downloads.douyinqijun.cn/mindspace/runtime/MinGit-2.53.0-64-bit.zip",
+        "https://github.com/git-for-windows/git/releases/download/v2.53.0.windows.1/MinGit-2.53.0-64-bit.zip"
+      ]
+    },
+    {
+      "id": "uv",
+      "name": "uv",
+      "description": "应用私有 Python 环境与依赖管理器",
+      "version": "0.11.26",
+      "kind": "archive",
+      "bundled": "uv/0.11.26",
+      "required": true,
+      "dependencies": [],
+      "size": 24928660,
+      "sha256": "4e1278ede866be6c0bf32d2f466cc6de7a9fb399ecf20c9ce2d186e52424be47",
+      "executable": "uv.exe",
+      "probe": [
+        "--version"
+      ],
+      "urls": [
+        "https://downloads.douyinqijun.cn/mindspace/runtime/uv-x86_64-pc-windows-msvc-0.11.26.zip",
+        "https://github.com/astral-sh/uv/releases/download/0.11.26/uv-x86_64-pc-windows-msvc.zip"
+      ]
+    },
+    {
+      "id": "python",
+      "name": "Python",
+      "description": "应用私有 CPython，不注册系统解释器",
+      "version": "3.11.15",
+      "kind": "python",
+      "bundled": "python/cpython-3.11.15-windows-x86_64-none",
+      "required": true,
+      "dependencies": [
+        "uv"
+      ],
+      "mirror": "https://downloads.douyinqijun.cn/mindspace/python"
+    },
+    {
+      "id": "core-venv",
+      "name": "Mindspace 核心环境",
+      "description": "固定锁文件依赖、pip 与本地 RAG 运行环境",
+      "version": "0.4.0",
+      "kind": "venv",
+      "environment": "core",
+      "required": true,
+      "dependencies": [
+        "python",
+        "powershell",
+        "git",
+        "uv"
+      ]
+    }
+  ],
+  "signature": {
+    "algorithm": "ed25519",
+    "value": "VBFfTPhub4kDnxXVBLpw3V+2WBWnjvWMQV/p0yQS+ceBxm0uh712/3deA+qvGtgNjuN9Pl8sr+ksrv2e+KehAg=="
+  }
+}
