@@ -851,7 +851,7 @@ function App() {
   }, [playQueue, prepareNextSpeech, settings]);
 
   const acceptSpeechDelta = useCallback((delta: string, flush = false) => {
-    const sentences = speechSegmenterRef.current.feed(delta, flush);
+    const sentences = speechSegmenterRef.current.feed(delta, flush, voiceOpenRef.current);
     sentences.forEach((sentence) => enqueueSpeech(sentence));
   }, [enqueueSpeech]);
 
@@ -1817,7 +1817,7 @@ function App() {
 
   const speakMessage = (text: string) => {
     stopAudio();
-    segmentSpeechText(text).forEach((sentence) => enqueueSpeech(sentence, true));
+    segmentSpeechText(text, voiceOpenRef.current).forEach((sentence) => enqueueSpeech(sentence, true));
   };
   const openModal = (name: Exclude<ModalName, null>) => { setModalDirty(false); setModal(name); };
   const closeModal = useCallback(() => {
@@ -2296,9 +2296,9 @@ function SettingsDialog({ value, avatars, onClose, onDirty, onSaved, onSettingsC
       <h3>语音合成</h3>
       <div className="form-grid"><SelectField label="TTS 链路" value={draft.audio.tts_provider} disabled={providerBusy} options={[["siliconflow", "SiliconFlow 云端流式 TTS（上线推荐）"], ["cosyvoice", "本地 CosyVoice（可选）"], ["gpt-sovits", "本地 GPT-SoVITS（独立可选）"]]} onChange={(next) => void switchTtsProvider(next)} /><Field label="速度" value={draft.audio.tts_speed} type="number" min={0.5} max={2} step={0.1} onChange={(next) => update("audio", "tts_speed", next)} /></div>
       <p className={`notice ${providerStatus.startsWith("切换失败") ? "warning" : ""}`}>{providerStatus}</p>
-      {ttsProvider === "cosyvoice" && <><div className="form-grid"><Field label="CosyVoice Worker" value={draft.audio.tts_worker_url} onChange={(next) => update("audio", "tts_worker_url", next)} /><Field label="识别出的参考文本（请校对）" value={draft.audio.tts_reference_text} type="textarea" onChange={(next) => update("audio", "tts_reference_text", next)} placeholder="上传后自动识别；必须与参考音频实际说出的内容一致" /></div><p className="notice warning">本地 CosyVoice 是可选链路，上线安装包不包含其模型。参考文本必须与音频逐字匹配；回复中的（括号动作）只显示，不会朗读。</p><div className="reference-panel"><div><strong>本地参考音频</strong><small>{audioStatus}</small></div><div><label className="secondary upload-button">{audioBusy === "upload" ? "上传中…" : bool(draft.audio.tts_reference_configured) ? "替换音频" : "选择并上传"}<input hidden disabled={Boolean(audioBusy)} type="file" accept=".wav,.mp3,.flac,.m4a,.ogg,audio/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadReference(file); event.currentTarget.value = ""; }} /></label><button className="secondary" disabled={Boolean(audioBusy) || !bool(draft.audio.tts_reference_configured)} onClick={() => void recognizeReference()}>{audioBusy === "recognize" ? "识别中…" : "识别音频文字"}</button><button className="secondary" disabled={Boolean(audioBusy) || !bool(draft.audio.tts_reference_configured)} onClick={() => void clearReference()}>清除</button></div></div></>}
+      {ttsProvider === "cosyvoice" && <><div className="form-grid"><Field label="CosyVoice Worker" value={draft.audio.tts_worker_url} onChange={(next) => update("audio", "tts_worker_url", next)} /><Field label="识别出的参考文本（请校对）" value={draft.audio.tts_reference_text} type="textarea" onChange={(next) => update("audio", "tts_reference_text", next)} placeholder="上传后自动识别；必须与参考音频实际说出的内容一致" /></div><p className="notice warning">本地 CosyVoice 是可选链路，上线安装包不包含其模型。参考文本必须与音频逐字匹配；实时语音会朗读回复中的括号动作与体感内容。</p><div className="reference-panel"><div><strong>本地参考音频</strong><small>{audioStatus}</small></div><div><label className="secondary upload-button">{audioBusy === "upload" ? "上传中…" : bool(draft.audio.tts_reference_configured) ? "替换音频" : "选择并上传"}<input hidden disabled={Boolean(audioBusy)} type="file" accept=".wav,.mp3,.flac,.m4a,.ogg,audio/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadReference(file); event.currentTarget.value = ""; }} /></label><button className="secondary" disabled={Boolean(audioBusy) || !bool(draft.audio.tts_reference_configured)} onClick={() => void recognizeReference()}>{audioBusy === "recognize" ? "识别中…" : "识别音频文字"}</button><button className="secondary" disabled={Boolean(audioBusy) || !bool(draft.audio.tts_reference_configured)} onClick={() => void clearReference()}>清除</button></div></div></>}
       {ttsProvider === "gpt-sovits" && <><div className="form-grid"><SelectField label="GPT-SoVITS 音色" value={draft.audio.tts_gpt_sovits_voice || gptVoices.active_voice} disabled={providerBusy} options={gptVoices.items.length ? gptVoices.items.map((voice) => [voice.id, `${voice.label}${voice.installed ? " · 已安装" : " · 需在启动器安装"}`] as [string, string]) : [["v4-changli", "V4-长离"], ["v4-yae-miko", "V4-八重神子"], ["v2proplus-kafka", "V2ProPlus-卡芙卡"]]} onChange={(next) => void switchGptVoice(next)} /><Field label="GPT-SoVITS Worker" value={draft.audio.tts_gpt_sovits_worker_url || "http://127.0.0.1:5055"} onChange={(next) => update("audio", "tts_gpt_sovits_worker_url", next)} /></div><p className="notice warning">音色模型与原 CosyVoice 完全分离，由启动器按需安装。V4 原生输出 48 kHz；卡芙卡实际为 V2ProPlus。第三方角色音色仅用于本地非商业验证，正式上线前必须取得对应权利方授权。</p></>}
-      {ttsProvider === "siliconflow" && <p className="notice">云端 API 参数已集中到“模型与角色”。此处只选择链路与播放速度；逐句流式播放、首句抢跑、插话打断和括号过滤逻辑与本地链路一致。</p>}
+      {ttsProvider === "siliconflow" && <p className="notice">云端 API 参数已集中到“模型与角色”。此处只选择链路与播放速度；逐句流式播放、首句抢跑和插话打断与本地链路一致，实时语音会朗读括号内容。</p>}
       <div className="row-actions"><button className="primary" disabled={Boolean(audioBusy)} onClick={() => void testTts()}>{audioBusy === "test" ? "生成中…" : "生成并试听 TTS"}</button></div>
       <Field label="回复时逐句自动朗读" value={draft.audio.auto_tts} type="checkbox" onChange={(next) => update("audio", "auto_tts", next)} />
       <h3>实时识别与环境噪声</h3>

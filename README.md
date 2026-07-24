@@ -1,11 +1,17 @@
 # Mindspace
 
-> 当前源码版本：**0.5.11**
+> 当前源码版本：**0.5.12**
 > 面向 Windows 的本地优先 AI 角色陪伴框架，使用 LangGraph 编排对话、检索、工具、记忆、档案与语音链路。
 
 Mindspace 将模型调用、RAG、结构化人物档案、长期记忆、ASR、TTS 和桌面 Launcher 组合成一套可检查、可恢复、可扩展的应用框架。项目重点不是“把所有内容都塞进 Prompt”，而是明确每类信息的来源、可信等级、生命周期和写入权限。
 
-## 0.5.11 重点
+## 0.5.12 重点
+
+- 实时语音完整朗读括号中的动作、神态、触感与语气内容。
+- 流式回复等待拆分括号闭合后再分句，不漏读后续 token。
+- 普通文字页朗读仍过滤括号内容，改动只作用于实时语音。
+
+## 0.5.11 角色自主性
 
 - AI 人物 JSON 作为首条 System 内的权威角色卡加载，角色首先忠于自身设定。
 - 当前聊天不能永久改写角色；只有用户在 AI 档案编辑器中保存的新版本才生效。
@@ -186,7 +192,7 @@ pwsh -NoProfile -File .\scripts\verify-source-integrity.ps1
 生成 Core 更新包：
 
 ```powershell
-pwsh -NoProfile -File .\scripts\build-update.ps1 -Version 0.5.11
+pwsh -NoProfile -File .\scripts\build-update.ps1 -Version 0.5.12
 ```
 
 生成 Electron Launcher：

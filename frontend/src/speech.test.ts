@@ -9,6 +9,12 @@ describe("TTS speech segmentation", () => {
     ]);
   });
 
+  it("reads every parenthetical action as its own spoken segment in voice mode", () => {
+    expect(
+      segmentSpeechText("（轻轻靠近）你好。(低声说)今天过得好吗？", true),
+    ).toEqual(["轻轻靠近。", "你好。", "低声说。", "今天过得好吗？"]);
+  });
+
   it("emits complete sentences for punctuation and ellipsis across chunks", () => {
     const segmenter = new SpeechSegmenter();
     expect(segmenter.feed("第一句。第二句还没")).toEqual(["第一句。"]);
@@ -20,6 +26,17 @@ describe("TTS speech segmentation", () => {
     const segmenter = new SpeechSegmenter();
     expect(segmenter.feed("你好（她停顿。", false)).toEqual([]);
     expect(segmenter.feed("然后笑了）今天下雨。", false)).toEqual(["你好今天下雨。"]);
+  });
+
+  it("waits for a split parenthetical and then reads all of it in voice mode", () => {
+    const segmenter = new SpeechSegmenter();
+    expect(segmenter.feed("你好（她停顿。", false, true)).toEqual([]);
+    expect(segmenter.feed("然后笑了）今天下雨。", false, true)).toEqual([
+      "你好。",
+      "她停顿。",
+      "然后笑了。",
+      "今天下雨。",
+    ]);
   });
 
   it("keeps closing quotation marks with the sentence", () => {

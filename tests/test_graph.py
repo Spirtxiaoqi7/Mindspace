@@ -348,6 +348,8 @@ def test_prompt_explicitly_distinguishes_voice_and_text_interaction_modes():
 
     assert "用户已经打开实时语音" in voice_prompt
     assert "本轮正文会由当前角色音色逐句播放" in voice_prompt
+    assert "全角括号中的动作、神态、触感和语气内容也会被 TTS 朗读" in voice_prompt
+    assert "括号内容不会被 TTS 朗读" not in voice_prompt
     assert "用户没有打开实时语音" not in voice_prompt
     assert "用户已经打开实时语音" not in voice_system
 
@@ -387,6 +389,7 @@ def test_face_to_face_voice_context_is_a_high_priority_ephemeral_scene():
     assert "默认用户看不到角色画面" in face_system
     assert "深夜客厅，窗外下雨" in face_system
     assert "不得替用户断言" in face_system
+    assert "括号中的动作、体感和神态同样会被 TTS 朗读" in face_system
     assert "不得据此提交人物档案或 runtime_state Patch" in face_system
 
     call_deps = demo_dependencies()

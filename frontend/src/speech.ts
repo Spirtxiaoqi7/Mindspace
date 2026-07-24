@@ -1,5 +1,6 @@
 const SENTENCE_BOUNDARY = /(?:[。！？!?；;]+|…{2,}|\.{3,}|\n+)/g;
 const TRAILING_CLOSERS = new Set(["”", "’", "」", "』", "】", '"', "'"]);
+const SPOKEN_BOUNDARY = /[。！？!?；;，,：:…~～\s]$/;
 
 export function normalizeSpeechSegment(value: string): string {
   return value
@@ -35,24 +36,49 @@ function extractCompleteSentences(value: string) {
 
 export class SpeechSegmenter {
   private buffer = "";
-  private parentheses: string[] = [];
+  private parentheses: Array<{ closer: string; spokenStart: number }> = [];
 
   reset() {
     this.buffer = "";
     this.parentheses = [];
   }
 
-  feed(chunk: string, flush = false): string[] {
+  feed(chunk: string, flush = false, speakParentheticalContent = false): string[] {
     for (const character of chunk) {
       if (character === "（" || character === "(") {
-        this.parentheses.push(character === "（" ? "）" : ")");
+        if (
+          speakParentheticalContent
+          && !this.parentheses.length
+          && this.buffer
+          && !SPOKEN_BOUNDARY.test(this.buffer)
+        ) {
+          this.buffer += "。";
+        }
+        this.parentheses.push({
+          closer: character === "（" ? "）" : ")",
+          spokenStart: this.buffer.length,
+        });
         continue;
       }
       if (this.parentheses.length) {
-        if (character === this.parentheses[this.parentheses.length - 1]) {
-          this.parentheses.pop();
+        const current = this.parentheses[this.parentheses.length - 1];
+        if (character === current.closer) {
+          const completed = this.parentheses.pop()!;
+          if (
+            speakParentheticalContent
+            && !this.parentheses.length
+            && this.buffer.length > completed.spokenStart
+            && !SPOKEN_BOUNDARY.test(this.buffer)
+          ) {
+            this.buffer += "。";
+          }
         } else if (character === "（" || character === "(") {
-          this.parentheses.push(character === "（" ? "）" : ")");
+          this.parentheses.push({
+            closer: character === "（" ? "）" : ")",
+            spokenStart: this.buffer.length,
+          });
+        } else if (speakParentheticalContent) {
+          this.buffer += character;
         }
         continue;
       }
@@ -60,6 +86,11 @@ export class SpeechSegmenter {
       this.buffer += character;
     }
 
+    if (speakParentheticalContent && this.parentheses.length && !flush) return [];
+    if (speakParentheticalContent && flush && this.parentheses.length) {
+      if (this.buffer && !SPOKEN_BOUNDARY.test(this.buffer)) this.buffer += "。";
+      this.parentheses = [];
+    }
     const extracted = extractCompleteSentences(this.buffer);
     this.buffer = extracted.remainder;
     if (!flush) return extracted.sentences;
@@ -70,8 +101,8 @@ export class SpeechSegmenter {
   }
 }
 
-export function segmentSpeechText(text: string): string[] {
-  return new SpeechSegmenter().feed(text, true);
+export function segmentSpeechText(text: string, speakParentheticalContent = false): string[] {
+  return new SpeechSegmenter().feed(text, true, speakParentheticalContent);
 }
 
 export function estimateDeliveredPrefix(text: string, progress: number): string {
