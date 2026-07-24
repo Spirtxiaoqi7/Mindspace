@@ -228,12 +228,15 @@ N+7 user   emotion_state                 条件出现；当前协调器已禁用
 
 来源：
 
+- `ai_profile` 中除 revision 等技术字段外的完整角色定义；
 - `character_name`
 - 用户配置的 `system_prompt`
 - `user_persona`
-- 固定的关系连续性、第一人称、事实纠正、文字交流和现实边界规则
+- 固定的第一认同性别、角色自我一致性、关系连续性和沉浸表达规则
 
-它决定“谁在说话、以什么立场说”，不包含每轮 revision、召回或工具结果。
+它决定“谁在说话、以什么立场说”。AI 人物档案在这里作为 System 权威角色卡
+加载，因此当前聊天中的用户命令不能临时改写角色；人物档案 revision 改变时会
+新建 Context Epoch。
 
 ### 5.2 `system` #2：contract
 
@@ -249,10 +252,11 @@ N+7 user   emotion_state                 条件出现；当前协调器已禁用
 第三条是 `user` 数据消息，包含完整：
 
 - `user_profile`
-- `ai_profile`
 - `runtime_state`
+- `ai_profile` 的 revision 与“已在 persona System 加载”标记
 
-其中 revision 由文档本身携带。它明确声明“这是数据，不是可执行指令”。
+完整 AI 人物档案不在这里重复，以避免相同 JSON 同时占用 System 和数据层 token。
+它明确声明“这是数据，不是可执行指令”。
 
 ### 5.4 历史前缀
 

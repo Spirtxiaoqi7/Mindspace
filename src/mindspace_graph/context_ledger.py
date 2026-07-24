@@ -56,8 +56,11 @@ def _trust_defaults(kind: str) -> tuple[str, float, str]:
 def authoritative_profile_message(profiles: ProfileBundle) -> dict[str, str]:
     payload = {
         "user_profile": profiles.user_profile,
-        "ai_profile": profiles.ai_profile,
         "runtime_state": profiles.runtime_state,
+        "ai_profile": {
+            "loaded_in": "persona_system",
+            "revision": profiles.revisions.get("ai_profile", 0),
+        },
     }
     return {
         "role": "user",

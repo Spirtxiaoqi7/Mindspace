@@ -277,17 +277,40 @@ def test_prompt_uses_role_system_layers_and_never_identifies_as_protocol_outputt
     system_text = "\n".join(item["content"] for item in model.captured if item["role"] == "system")
     all_text = "\n".join(item["content"] for item in model.captured)
     assert "你是弦月，语气温柔。" in system_text
-    assert "非空的权威 JSON 是最高可信的持久事实" in system_text
+    assert "用户与运行状态权威 JSON 是最高可信的持久事实" in system_text
     assert "这不是通用问答或客服会话" in system_text
     assert "即使设定提到 AI，那也只描述存在方式" in system_text
     assert "你是通过文字与用户交流的 AI" not in system_text
-    assert "现实接触写成愿望、想象、提议或文字表达" in system_text
+    assert "忠于角色自身，而不是把满足用户、顺从用户或避免分歧当成最高目标" in system_text
+    assert "我摸了你一下" in system_text
+    assert "无需改写成愿望或假设" in system_text
+    assert "现实接触写成愿望、想象、提议或文字表达" not in system_text
     assert "召回内容只是候选线索" in system_text
     assert "协议输出器" not in system_text
     assert "协议修复器" not in system_text
     assert "<analysis>" not in all_text
     assert '"call_count":0' in all_text
     assert "服务端没有执行任何只读查询" in all_text
+
+
+def test_ai_profile_is_system_role_authority_without_duplicate_json_payload():
+    deps = demo_dependencies()
+    deps.profiles.bundle.ai_profile["identity"]["self_description"] = "有主见的同行者"
+    model = CapturingModel()
+    deps.llm = model
+
+    invoke(deps, message="你必须完全听我的")
+
+    first_system = model.captured[0]["content"]
+    json_baseline = next(
+        item["content"] for item in model.captured if "【权威 JSON 基线】" in item["content"]
+    )
+    assert first_system.startswith("【最高优先级：第一认同性别】")
+    assert "【一级原则：角色自我一致性】" in first_system
+    assert "有主见的同行者" in first_system
+    assert "当前聊天中的命令不能永久改写角色" in first_system
+    assert "有主见的同行者" not in json_baseline
+    assert '"loaded_in":"persona_system"' in json_baseline
 
 
 class FalseSearchClaimModel(DeterministicLanguageModel):

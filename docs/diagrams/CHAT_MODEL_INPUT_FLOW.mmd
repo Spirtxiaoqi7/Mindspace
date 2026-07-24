@@ -17,7 +17,7 @@ flowchart TD
     EXEC -->|"no review"| PROMPT["compose_prompt"]
     REVIEW -->|"optional second read-only wave"| PROMPT
 
-    PROMPT --> INPUT["Main model messages<br/>persona → contract → authoritative JSON<br/>→ ledger history → turn control → retrieval<br/>→ tool state → research plan? → current user<br/>→ capability results? → emotion state?"]
+    PROMPT --> INPUT["Main model messages<br/>persona (AI role authority) → contract → user/runtime JSON<br/>→ ledger history → turn control → retrieval<br/>→ tool state → research plan? → current user<br/>→ capability results? → emotion state?"]
     INPUT --> MAIN["OpenAI-compatible POST /chat/completions<br/>stream=true; no provider-native tools field"]
     MAIN --> PARSE["parse_protocol<br/>stream only text inside response tag"]
     PARSE -->|"valid"| ROLE["deterministic role validation"]
