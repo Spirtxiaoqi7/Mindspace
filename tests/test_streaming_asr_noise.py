@@ -41,6 +41,27 @@ def test_low_confidence_playback_text_remains_draft_only() -> None:
     ]
 
 
+def test_short_vad_confirmed_playback_phrase_can_interrupt_after_duration_check() -> None:
+    event = apply_asr_decision(
+        {
+            "event": "asr.final",
+            "data": {
+                "text": "不对",
+                "playback_active": True,
+                "playback_text": "我们继续说刚才的话题",
+                "vad_confirmed": True,
+                "stable_partial": False,
+                "voiced_ms": 480,
+            },
+        }
+    )
+
+    assert event["data"]["quality"] == "accepted"
+    assert event["data"]["confirmed_text"] == "不对"
+    assert event["data"]["barge_in_eligible"] is True
+    assert "vad_duration_confirmed" in event["data"]["decision_reasons"]
+
+
 def test_tts_echo_is_rejected_even_when_vad_detects_a_voice() -> None:
     event = apply_asr_decision(
         {

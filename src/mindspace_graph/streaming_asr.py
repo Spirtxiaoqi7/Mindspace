@@ -97,6 +97,7 @@ def apply_asr_decision(event: dict[str, Any]) -> dict[str, Any]:
     playback_active = bool(data.get("playback_active"))
     vad_confirmed = bool(data.get("vad_confirmed"))
     stable_partial = bool(data.get("stable_partial"))
+    voiced_ms = max(0, int(data.get("voiced_ms") or 0))
     explicit_stop = compact in STOP_COMMANDS
     reasons: list[str] = []
     if vad_confirmed:
@@ -105,6 +106,9 @@ def apply_asr_decision(event: dict[str, Any]) -> dict[str, Any]:
         reasons.append("stable_partial")
     if explicit_stop:
         reasons.append("explicit_stop")
+    duration_confirmed = playback_active and vad_confirmed and voiced_ms >= 420
+    if duration_confirmed:
+        reasons.append("vad_duration_confirmed")
     if data.get("correction_matches"):
         reasons.append("vocabulary_match")
 
@@ -139,7 +143,9 @@ def apply_asr_decision(event: dict[str, Any]) -> dict[str, Any]:
                 confirmed_text = ""
             quality = "uncertain"
             reasons.append("stream_final_disagreement")
-        elif playback_active and not (explicit_stop or stable_partial):
+        elif playback_active and not (
+            explicit_stop or stable_partial or duration_confirmed
+        ):
             # A plausible final remains draft-only when playback prevented a
             # stable partial and the final pass was skipped for echo safety.
             quality, confirmed_text = "uncertain", ""
@@ -913,8 +919,10 @@ class FunASRStreamSession:
                 compact = _compact_speech_text(self.transcript)
                 stable_partial = self._stable_partial()
                 explicit_stop = compact in STOP_COMMANDS
+                # 两个稳定 partial + VAD + 回声排除已经是三重确认。不能再用
+                # “至少四个字”拒绝“不对”“不是”这类真实的中文短插话。
                 can_confirm_early = explicit_stop or (
-                    stable_partial and len(compact) >= 4
+                    stable_partial and len(compact) >= 2
                 )
                 if (
                     self.options.playback_active

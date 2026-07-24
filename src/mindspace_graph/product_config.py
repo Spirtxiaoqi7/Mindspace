@@ -60,6 +60,11 @@ class ProductConfigStore:
                 # 1.2 adds a user-owned, persistent voice entry choice and scene.
                 # Missing values were already filled by _merge_known above.
                 self._config["schema_version"] = "1.2.0"
+            # 350 ms (and the frontend's former 160 ms punctuation shortcut)
+            # committed natural Chinese pauses too early. Migrate only the exact
+            # shipped default; longer user-selected windows remain untouched.
+            if self._config["audio"].get("asr_utterance_merge_ms") == 350:
+                self._config["audio"]["asr_utterance_merge_ms"] = 1100
             if loaded != self._config:
                 _atomic_json(path, self._config)
         else:
@@ -169,7 +174,7 @@ class ProductConfigStore:
                 "asr_noise_calibration_ms": 1500,
                 "asr_listening_noise_margin_db": 10.0,
                 "asr_barge_in_noise_margin_db": 16.0,
-                "asr_utterance_merge_ms": 350,
+                "asr_utterance_merge_ms": 1100,
                 "asr_deferred_during_playback": True,
                 "asr_hotwords_enabled": True,
                 "asr_dynamic_endpointing": True,
@@ -403,7 +408,7 @@ class ProductConfigStore:
             min(30.0, float(audio["asr_barge_in_noise_margin_db"])),
         )
         audio["asr_utterance_merge_ms"] = max(
-            300, min(3000, int(audio["asr_utterance_merge_ms"]))
+            650, min(3000, int(audio["asr_utterance_merge_ms"]))
         )
         audio["asr_deferred_during_playback"] = bool(
             audio["asr_deferred_during_playback"]

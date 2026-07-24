@@ -75,7 +75,7 @@ def test_voice_phase_thresholds_and_idle_continuation_settings_are_migrated_and_
     assert snapshot["audio"]["asr_listening_min_speech_ms"] == 160
     assert snapshot["audio"]["asr_barge_in_min_speech_ms"] == 420
     assert snapshot["audio"]["asr_adaptive_noise_enabled"] is True
-    assert snapshot["audio"]["asr_utterance_merge_ms"] == 350
+    assert snapshot["audio"]["asr_utterance_merge_ms"] == 1100
     assert snapshot["audio"]["asr_silence_ms"] == 600
     assert snapshot["audio"]["asr_dynamic_endpointing"] is True
     assert snapshot["audio"]["asr_final_refinement_enabled"] is True
@@ -130,6 +130,30 @@ def test_legacy_fixed_endpoint_migrates_without_overwriting_custom_value(tmp_pat
     assert legacy_snapshot["audio"]["asr_silence_ms"] == 600
     assert custom_snapshot["schema_version"] == "1.2.0"
     assert custom_snapshot["audio"]["asr_silence_ms"] == 720
+
+
+def test_legacy_fast_voice_merge_window_migrates_without_overwriting_custom_value(
+    tmp_path,
+):
+    settings = make_settings(tmp_path)
+    legacy = settings.runtime_dir / "legacy-merge.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        json.dumps({"schema_version": "1.2.0", "audio": {"asr_utterance_merge_ms": 350}}),
+        encoding="utf-8",
+    )
+    custom = settings.runtime_dir / "custom-merge.json"
+    custom.write_text(
+        json.dumps({"schema_version": "1.2.0", "audio": {"asr_utterance_merge_ms": 1450}}),
+        encoding="utf-8",
+    )
+
+    assert ProductConfigStore(legacy, settings).snapshot()["audio"][
+        "asr_utterance_merge_ms"
+    ] == 1100
+    assert ProductConfigStore(custom, settings).snapshot()["audio"][
+        "asr_utterance_merge_ms"
+    ] == 1450
 
 
 def test_voice_entry_mode_and_scene_are_validated_and_persisted(tmp_path):

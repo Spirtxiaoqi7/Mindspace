@@ -10,9 +10,12 @@ import App, {
   voiceMergeDelay,
 } from "./App";
 
-it("submits punctuated voice turns through the fast merge path", () => {
-  expect(voiceMergeDelay("这句话说完了。", 900)).toBe(160);
-  expect(voiceMergeDelay("我还没说完", 350)).toBe(350);
+it("keeps a natural continuation window after ASR punctuation and short clauses", () => {
+  expect(voiceMergeDelay("这句话说完了。", 900)).toBe(800);
+  expect(voiceMergeDelay("我还没说完", 350)).toBe(900);
+  expect(voiceMergeDelay("不对", 1100)).toBe(1300);
+  expect(voiceMergeDelay("然后", 1100)).toBe(1700);
+  expect(voiceMergeDelay("我打断一下", 1100, true)).toBe(1500);
 });
 
 it("only schedules continuous companionship ten seconds after TTS and below its cap", () => {
@@ -154,7 +157,7 @@ function installFetchMock(settingsOverride: Record<string, unknown> = {}) {
     if (url === "/api/v1/audio/asr/vocabulary/test" && init.method === "POST") return json({ corrected_text: "我想换成长离的声音", matches: [{ from: "长利", to: "长离" }] });
     if (url === "/api/v1/chat/stream" && init.method === "POST") return initiativeStream();
     if (url === "/api/v1/settings/test" && init.method === "POST") return json({ ok: true, mode: "openai", detail: "真实最小生成请求成功" });
-    if (url === "/api/v1/audio/status") return json({ tts_ready: true });
+    if (url === "/api/v1/audio/status") return json({ tts_ready: true, asr_ready: true });
     if (url === "/api/v1/audio/tts" && init.method === "POST") return new Response(new Uint8Array([82, 73, 70, 70]), { headers: { "Content-Type": "audio/wav" } });
     if (url.startsWith("/api/v1/memory/items") && init.method === "PUT") return json({ success: true });
     if (url.startsWith("/api/v1/memory/items")) return json({ items: [{ memory_key: "user:user.preference:berry", field_code: "user.preference.likes", display_name: "喜欢", category: "偏好", value: "草莓", scope: "user", lifecycle: "persistent", status: "active", created_at: "2026-07-19T00:00:00Z", updated_at: "2026-07-19T00:00:00Z", source_text: "用户：我喜欢草莓" }] });
@@ -171,6 +174,15 @@ describe("Mindspace product interactions", () => {
   beforeEach(() => {
     localStorage.clear();
     installFetchMock();
+    class TestAudioContext {
+      state: AudioContextState = "running";
+      destination = {} as AudioDestinationNode;
+      audioWorklet = { addModule: vi.fn(async () => undefined) };
+      onstatechange: ((this: BaseAudioContext, ev: Event) => unknown) | null = null;
+      resume = vi.fn(async () => undefined);
+      close = vi.fn(async () => { this.state = "closed"; });
+    }
+    vi.stubGlobal("AudioContext", TestAudioContext);
   });
 
   it("binds every rendered button to explicit behavior", () => {
@@ -536,6 +548,34 @@ describe("Mindspace product interactions", () => {
     expect(document.querySelector(".voice-exit")).toBeInTheDocument();
     fireEvent.click(document.querySelector(".voice-exit")!);
     expect(document.querySelector(".voice-mode")).not.toBeInTheDocument();
+  });
+
+  it("always lets the user cancel a stalled voice-entry request", async () => {
+    const baseFetch = vi.mocked(fetch).getMockImplementation()!;
+    const stalled = { signal: null as AbortSignal | null };
+    vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      if (String(input) === "/api/v1/settings" && init.method === "PUT") {
+        stalled.signal = init.signal || null;
+        return await new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Cancelled", "AbortError")),
+            { once: true },
+          );
+        });
+      }
+      return await baseFetch(input, init);
+    });
+
+    await renderReady();
+    fireEvent.click(document.querySelector(".voice-entry")!);
+    fireEvent.click(screen.getByRole("button", { name: "开始通话" }));
+    const cancel = await screen.findByRole("button", { name: "取消连接" });
+    expect(cancel).toBeEnabled();
+    fireEvent.click(cancel);
+
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "选择互动方式" })).not.toBeInTheDocument());
+    expect(stalled.signal?.aborted).toBe(true);
   });
 
   it("releases a microphone that resolves after voice mode has already closed", async () => {
