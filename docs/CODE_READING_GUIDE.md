@@ -215,14 +215,19 @@ N+4 user   research_plan                 条件出现
 N+5 user   current_user
 N+6 user   capability_results            条件出现
 N+7 user   emotion_state                 条件出现；当前协调器已禁用
+LAST system roleplay_post_history         每轮出现；仅当前请求有效
 ```
 
 这几个顺序细节很重要：
 
 - persona 在 contract 之前；部分旧文档曾按“契约 → persona”描述，但代码不是该顺序。
-- `tool_context` 每轮都会存在。即使能力全部关闭，也会写入 `call_count=0` 和“不得谎称已经搜索”的约束。
+- `tool_context` 每轮都会存在。没有查询时只有精简 `call_count=0` 与真实性约束；
+  真实规划或执行查询时才附带能力目录、策略和执行状态。
 - `capability_results` 当前位于 `current_user` 后，而不是用户输入之前。
-- Context Ledger 会把以前非 ephemeral 的动态事件继续放进下一轮前缀，因此旧的 `turn_control/retrieval_context/tool_context/current_user/capability_results` 可能仍在历史中，直到新 Epoch 或压缩。
+- `roleplay_post_history` 是距离生成最近的 System 校准，借鉴 Post-History
+  Instructions：它只决定本轮怎样演，不进入历史、RAG、档案或长期记忆。
+- Context Ledger 只把确认后的用户原话、最终助手回复和已提交权威增量带入下一轮；
+  `turn_control/retrieval_context/tool_context/roleplay_post_history` 只审计或临时使用。
 
 ### 5.1 `system` #1：persona
 
@@ -292,15 +297,19 @@ N+7 user   emotion_state                 条件出现；当前协调器已禁用
 - `text`
 
 不会发送 `memory_key`、曝光次数、冲突族、内部标签和完整融合 metadata。
+如果同一条聊天消息已经作为当前 Epoch 的原始历史存在，会按 message id 和规范化
+正文去重，不再把它作为 RAG 片段重复发送。旧于当前原始历史的聊天和独立知识仍可召回。
 
 `tool_context` 包含：
 
-- 当前可用能力定义；
-- 能力策略；
-- 计划调用数、实际完成数、成功网页数；
-- 防止“没搜却说搜了”的确定性自然语言约束。
+- 无查询轮：精简 `call_count=0` 和“不得谎称已经搜索”的确定性约束；
+- 查询轮：当前可用能力、策略、计划调用数、实际完成数和成功网页数。
 
 `capability_results` 包含服务端已经执行的只读观测正文。搜索摘要只能发现来源；主模型被要求只把成功打开的原始页面当作已核实依据。
+
+`roleplay_post_history` 最后重申角色本轮应如何行动：角色自主不等于故意唱反调，
+正向展示角色卡要求，已经满足情境条件的 contextual rules 直接激活，当前输入明确
+承接同一互动时不重复询问。该层不复制整张角色卡，避免再次膨胀 Prompt。
 
 ## 6. 发给模型 Provider 的真实 HTTP Body
 

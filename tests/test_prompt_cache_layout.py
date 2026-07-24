@@ -118,7 +118,7 @@ def test_compatibility_split_never_performs_a_fixed_five_turn_rebase():
     assert tail == []
 
 
-def test_json_baseline_precedes_history_and_dynamic_tools_remain_at_tail(tmp_path):
+def test_json_baseline_precedes_history_and_post_history_calibration_is_last(tmp_path):
     retrieval = [
         RetrievedChunk(
             chunk_id="knowledge-1",
@@ -148,14 +148,85 @@ def test_json_baseline_precedes_history_and_dynamic_tools_remain_at_tail(tmp_pat
         index for index, value in enumerate(contents) if "【低可信召回】" in value
     )
     tool_index = next(
-        index for index, value in enumerate(contents) if "【本轮可用工具、Skill 与 MCP】" in value
+        index for index, value in enumerate(contents) if "【本轮能力状态】" in value
     )
     input_index = next(
         index for index, value in enumerate(contents) if "【当前用户明确输入】" in value
     )
+    calibration_index = next(
+        index for index, value in enumerate(contents) if "【本轮角色演绎校准｜最后执行】" in value
+    )
 
     assert json_index < history_index < retrieval_index < tool_index < input_index
-    assert tool_index == len(built.messages) - 2
+    assert input_index < calibration_index
+    assert tool_index == len(built.messages) - 3
+    assert calibration_index == len(built.messages) - 1
+    assert built.messages[-1]["role"] == "system"
+
+
+def test_recent_raw_chat_is_not_duplicated_inside_retrieval_context():
+    history = history_through(2)
+    context = [
+        RetrievedChunk(
+            chunk_id="a2",
+            text="角色第2轮",
+            source="chat",
+            score=0.9,
+            weighted_score=0.9,
+        ),
+        RetrievedChunk(
+            chunk_id="knowledge-1",
+            text="只出现一次的知识资料",
+            source="knowledge",
+            score=0.8,
+            weighted_score=0.8,
+        ),
+    ]
+
+    built = build_prompt(request(3), profiles(), history, context, [])
+    retrieval = next(
+        item for item in built.pending_events if item["kind"] == "retrieval_context"
+    )
+
+    assert '"chunk_id":"a2"' not in retrieval["content"]
+    assert '"chunk_id":"knowledge-1"' in retrieval["content"]
+    assert retrieval["metadata"]["deduplicated_chunk_count"] == 1
+
+
+def test_adult_roleplay_context_activates_profile_rules_in_final_calibration():
+    bundle = profiles()
+    bundle.ai_profile["behavior_rules"]["contextual_rules"] = [
+        "仅在 R18 情境中启用的角色规则"
+    ]
+    bundle.ai_profile["relationship_rules"]["preferred_interactions"] = ["NSFW续写"]
+    built = build_prompt(
+        ChatRequest(
+            message="不会的，来吧。",
+            session_id="adult-roleplay",
+            round=3,
+            interaction_mode="voice",
+            user_name="林澈",
+            character_name="弦月",
+            voice_context={"mode": "face_to_face", "scene": "两人在卧室延续亲密互动"},
+        ),
+        bundle,
+        [
+            {"message_id": "u2", "role": "user", "round": 2, "content": "继续刚才的亲密场景"},
+            {"message_id": "a2", "role": "assistant", "round": 2, "content": "我已经主动靠近你。"},
+        ],
+        [],
+        [],
+    )
+
+    calibration = built.messages[-1]
+    assert calibration["role"] == "system"
+    assert "成人/亲密情境规则的启用条件" in calibration["content"]
+    assert "明确继续信号" in calibration["content"]
+    assert "不要再次询问同一个选择" in calibration["content"]
+    event = built.pending_events[-1]
+    assert event["kind"] == "roleplay_post_history"
+    assert event["ephemeral"] is True
+    assert event["persistence_eligible"] is False
 
 
 def test_gender_identity_is_the_first_high_priority_system_content():

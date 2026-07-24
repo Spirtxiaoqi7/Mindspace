@@ -273,7 +273,9 @@ def test_prompt_uses_role_system_layers_and_never_identifies_as_protocol_outputt
     invoke(deps, system_prompt="你是弦月，语气温柔。")
 
     assert [item["role"] for item in model.captured[:2]] == ["system", "system"]
-    assert all(item["role"] == "user" for item in model.captured[2:])
+    assert all(item["role"] == "user" for item in model.captured[2:-1])
+    assert model.captured[-1]["role"] == "system"
+    assert "【本轮角色演绎校准｜最后执行】" in model.captured[-1]["content"]
     system_text = "\n".join(item["content"] for item in model.captured if item["role"] == "system")
     all_text = "\n".join(item["content"] for item in model.captured)
     assert "你是弦月，语气温柔。" in system_text
@@ -417,7 +419,10 @@ def test_initiative_uses_actual_profile_name_without_visible_user_message_or_wri
     )
 
     assert result["request"].message == "阿澈不想说什么，但是想让你说点什么。"
-    assert "阿澈不想说什么，但是想让你说点什么。" in result["prompt_messages"][-1]["content"]
+    assert any(
+        "阿澈不想说什么，但是想让你说点什么。" in item["content"]
+        for item in result["prompt_messages"]
+    )
     assert result["response"].writeback_applied is False
     assert deps.profiles.applied_plans == []
     stored = deps.sessions.sessions["demo"]

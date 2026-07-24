@@ -74,13 +74,17 @@ JSON 基线紧跟 system，用确定性键排序和紧凑序列化生成。它�
 每轮动态内容按固定顺序追加：
 
 1. `turn_control`：`turn_id`、`base_revisions`、交互模式、删除事件、bootstrap 和本轮 Patch 上限。
-2. `retrieval_context`：低可信知识、聊天与结构化记忆召回。
-3. `tool_context`：仅在本轮存在真实 Skill/MCP/工具能力时出现。
+2. `retrieval_context`：低可信知识、聊天与结构化记忆召回；已经位于原始历史中的
+   同一聊天消息会按 ID 和正文去重。
+3. `tool_context`：无查询时只保留精简真实性状态，真实查询时才附带完整能力信息。
 4. `current_user`：当前用户明确输入。
-5. `assistant_message`：模型最终可见正文。
-6. `authoritative_json_patch`：仅在服务端真正提交 Patch 后追加，记录新 revision 和已提交变更。
+5. `capability_results` / ASR 临时证据：仅在本轮确实存在时出现。
+6. `roleplay_post_history`：最后一条临时 System 角色演绎校准，不持久化。
+7. `assistant_message`：模型最终可见正文。
+8. `authoritative_json_patch`：仅在服务端真正提交 Patch 后追加，记录新 revision 和已提交变更。
 
-第 `N+1` 轮在同一 Epoch 中使用第 `N` 轮完整 Prompt 作为字节级前缀，再追加新一轮动态尾部。工具位于动态尾部，未来工具集合变化不会破坏前面的 system、JSON 和既有对话前缀。
+第 `N+1` 轮复用同一 Epoch 的稳定 System、JSON 和已经确认的原始对话前缀；
+工具、召回、轮次控制和尾部演绎校准只属于当前轮，不污染长期模型历史。
 
 这替代了旧的“冻结 10 轮、每 5 轮重排”算法。常规轮次不重构前缀；只有以下事件建立新 Epoch：
 
