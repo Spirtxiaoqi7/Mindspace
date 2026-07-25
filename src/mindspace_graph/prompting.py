@@ -50,7 +50,7 @@ def _deduplicate_retrieval_context(
     context: list[RetrievedChunk],
     history: list[dict[str, Any]],
 ) -> list[RetrievedChunk]:
-    """Do not send a recent raw chat message twice as both history and RAG."""
+    """Do not send a directly visible raw chat message twice as history and RAG."""
 
     history_ids = {
         str(item.get("message_id") or "").strip()
@@ -492,7 +492,12 @@ def build_prompt(
 <json_update>符合本轮动态控制的 JSON 对象</json_update>
 输出从 <response> 开始，并在 </json_update> 结束；标签外不添加内容。"""
 
-    filtered_context = _deduplicate_retrieval_context(context, history)
+    # Full history remains available to persistence and retrieval, but only the
+    # latest eight visible rounds are sent as raw dialogue. Deduplicating RAG
+    # against the complete transcript would silently discard older semantic
+    # hits precisely when retrieval is supposed to bring them back.
+    direct_history, _ = split_history_for_cache(history, request.round)
+    filtered_context = _deduplicate_retrieval_context(context, direct_history)
     context_payload = [
         {
             "chunk_id": item.chunk_id,

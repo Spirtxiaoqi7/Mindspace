@@ -274,6 +274,35 @@ def test_recent_raw_chat_is_not_duplicated_inside_retrieval_context():
     assert retrieval["metadata"]["deduplicated_chunk_count"] == 1
 
 
+def test_old_raw_chat_can_return_through_rag_outside_direct_history_window():
+    history = history_through(12)
+    context = [
+        RetrievedChunk(
+            chunk_id="u1",
+            text="用户第1轮",
+            source="chat",
+            score=0.95,
+            weighted_score=0.95,
+        ),
+        RetrievedChunk(
+            chunk_id="a12",
+            text="角色第12轮",
+            source="chat",
+            score=0.9,
+            weighted_score=0.9,
+        ),
+    ]
+
+    built = build_prompt(request(13), profiles(), history, context, [])
+    retrieval = next(
+        item for item in built.pending_events if item["kind"] == "retrieval_context"
+    )
+
+    assert '"chunk_id":"u1"' in retrieval["content"]
+    assert '"chunk_id":"a12"' not in retrieval["content"]
+    assert retrieval["metadata"]["deduplicated_chunk_count"] == 1
+
+
 def test_adult_roleplay_context_activates_profile_rules_in_final_calibration():
     bundle = profiles()
     bundle.ai_profile["behavior_rules"]["contextual_rules"] = [

@@ -75,7 +75,8 @@ JSON 基线紧跟 system，用确定性键排序和紧凑序列化生成。它�
 
 1. `turn_control`：`turn_id`、`base_revisions`、交互模式、删除事件、bootstrap 和本轮 Patch 上限。
 2. `retrieval_context`：低可信知识、聊天与结构化记忆召回；已经位于原始历史中的
-   同一聊天消息会按 ID 和正文去重。
+   同一聊天消息会按 ID 和正文去重。这里的“原始历史”严格指模型直接可见的最近
+   8 轮，不是数据库中的完整会话。
 3. `tool_context`：无查询时只保留精简真实性状态，真实查询时才附带完整能力信息。
 4. `current_user`：当前用户明确输入。
 5. `capability_results` / ASR 临时证据：仅在本轮确实存在时出现。
