@@ -33,8 +33,13 @@ AUDIT_ONLY_KINDS = {
     "retrieval_context",
     "tool_context",
     "capability_results",
+    "authoritative_json_patch",
+    "deletion_correction",
+    "role_correction",
 }
 EPHEMERAL_KINDS = {"research_plan", "emotion_state", "asr_uncertain_evidence"}
+MODEL_HISTORY_ROUNDS = 8
+MODEL_DIALOGUE_KINDS = {"current_user", "user_message", "assistant_message"}
 
 
 def _trust_defaults(kind: str) -> tuple[str, float, str]:
@@ -42,12 +47,12 @@ def _trust_defaults(kind: str) -> tuple[str, float, str]:
 
     if kind in EPHEMERAL_KINDS:
         return "turn_ephemeral", 0.0, "ephemeral"
+    if kind in {"authoritative_json_patch", "deletion_correction", "role_correction"}:
+        return "server_validated", 1.0, "audit"
     if kind in AUDIT_ONLY_KINDS:
         return "server_observation", 0.5, "audit"
-    if kind in {"current_user", "user_message", "deletion_correction"}:
+    if kind in {"current_user", "user_message"}:
         return "user_explicit", 1.0, "model"
-    if kind in {"authoritative_json_patch", "role_correction"}:
-        return "server_validated", 1.0, "model"
     if kind == "assistant_message":
         return "model_output", 1.0, "model"
     return "server_internal", 0.0, "audit"
@@ -90,6 +95,43 @@ def authoritative_patch_message(
             f"【服务端权威 JSON 增量】\n{_json(payload)}"
         ),
     }
+
+
+def _recent_dialogue_events(
+    events: list[sqlite3.Row],
+    *,
+    max_rounds: int = MODEL_HISTORY_ROUNDS,
+) -> list[sqlite3.Row]:
+    """Return only visible user/assistant dialogue from the latest round window.
+
+    The ledger remains append-only for UI recovery and audit. Model visibility is
+    a separate bounded view: operational corrections, JSON patches and hidden
+    initiative triggers never become conversational history.
+    """
+
+    candidates: list[tuple[sqlite3.Row, int]] = []
+    round_order: list[int] = []
+    for row in events:
+        kind = str(row["kind"] or "")
+        if kind not in MODEL_DIALOGUE_KINDS:
+            continue
+        if kind == "current_user" and not bool(row["ui_visible"]):
+            continue
+        try:
+            metadata = json.loads(str(row["metadata_json"] or "{}"))
+        except json.JSONDecodeError:
+            metadata = {}
+        try:
+            round_num = int(metadata.get("round") or 0)
+        except (TypeError, ValueError):
+            round_num = 0
+        if round_num <= 0:
+            continue
+        candidates.append((row, round_num))
+        if not round_order or round_order[-1] != round_num:
+            round_order.append(round_num)
+    keep = set(round_order[-max(1, max_rounds) :])
+    return [row for row, round_num in candidates if round_num in keep]
 
 
 @dataclass(slots=True)
@@ -662,13 +704,18 @@ class ContextLedger:
                 ).fetchone()
             events = db.execute(
                 """
-                SELECT sequence, kind, role, content FROM context_events
+                SELECT sequence, kind, role, content, metadata_json, ui_visible
+                FROM context_events
                 WHERE epoch_id = ? AND model_visible = 1 ORDER BY sequence
                 """,
                 (epoch["epoch_id"],),
             ).fetchall()
+            dialogue_events = _recent_dialogue_events(events)
             messages = json.loads(epoch["base_messages_json"])
-            messages.extend({"role": row["role"], "content": row["content"]} for row in events)
+            messages.extend(
+                {"role": row["role"], "content": row["content"]}
+                for row in dialogue_events
+            )
             head = max((int(row["sequence"]) for row in events), default=0)
             estimated_tokens = self.estimate_tokens(messages)
             emergency_truncated = bool(
@@ -696,14 +743,7 @@ class ContextLedger:
                 )
                 selected: list[dict[str, str]] = []
                 used = 0
-                for row in reversed(events):
-                    if row["kind"] not in {
-                        "user_message",
-                        "current_user",
-                        "assistant_message",
-                        "deletion_correction",
-                    }:
-                        continue
+                for row in reversed(dialogue_events):
                     item = {"role": row["role"], "content": row["content"]}
                     item_tokens = self.estimate_tokens([item])
                     if selected and used + item_tokens > budget:

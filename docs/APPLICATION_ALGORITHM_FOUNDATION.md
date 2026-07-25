@@ -23,7 +23,8 @@ BM25+ 候选 ─┐
 
 前台链路仍只运行毫秒级正则硬边界。复杂语义审计在 `run.completed` 后由独立低优先级任务执行，因此不会阻塞首字、首句 TTS，也不会替换已经播放的文本。
 
-审计只允许输出：一致性、严重度、置信度、证据和下一轮纠偏句。`style` 只记录；只有 `identity / boundary / reality` 且置信度至少 `0.85` 才会在下一轮 Context Ledger 追加服务端纠偏事件。审计永远不能修改三份权威 JSON。
+审计只允许输出：一致性、严重度、置信度、证据和建议纠偏句。结果与纠偏句只保存为审计记录，
+不再进入下一轮模型历史；审计永远不能修改三份权威 JSON。
 
 任务持久化在 `role_audit_jobs`，具备租约、最多三次重试和结果表 `role_audits`。进程重启后可继续处理。
 
@@ -72,4 +73,3 @@ HTTP 对应 `POST /api/v1/memory/rebuild`，默认 `dry_run=true`；实际执行
 - 缓存计量、别名、召回分数组件和审计元数据不进入主 Prompt。
 - 新能力通过新 adapter、表或版本化字段加入；不能绕过统一事务、Schema Registry、Entity Registry 和分数审计链。
 - `GET /api/v1/diagnostics` 的 `foundation` 必须保持 `ok=true` 后才能发布。
-

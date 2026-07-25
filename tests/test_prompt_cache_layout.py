@@ -91,21 +91,16 @@ def test_next_turn_keeps_confirmed_messages_but_excludes_audit_context(tmp_path)
         context_ledger=ledger,
     )
     assert round_thirteen.context_snapshot is not None
-    confirmed_user = next(
-        {
-            "role": str(item["role"]),
-            "content": str(item["content"]),
-        }
-        for item in round_twelve.pending_events
-        if item["kind"] == "current_user"
-    )
-    expected_prefix = [
-        *round_twelve.context_snapshot.messages,
-        confirmed_user,
-        {"role": "assistant", "content": "角色第12轮"},
+    snapshot_contents = [
+        item["content"] for item in round_thirteen.context_snapshot.messages
     ]
-    assert round_thirteen.context_snapshot.messages == expected_prefix
-    assert round_thirteen.messages[: len(expected_prefix)] == expected_prefix
+    assert any("用户第5轮" in value for value in snapshot_contents)
+    assert any("角色第12轮" in value for value in snapshot_contents)
+    assert not any("用户第4轮" in value for value in snapshot_contents)
+    assert not any("角色第4轮" in value for value in snapshot_contents)
+    assert round_thirteen.messages[
+        : len(round_thirteen.context_snapshot.messages)
+    ] == round_thirteen.context_snapshot.messages
     restored_contents = [item["content"] for item in round_thirteen.context_snapshot.messages]
     assert not any("【低可信召回】" in value for value in restored_contents)
     assert not any("【本轮可用工具、Skill 与 MCP】" in value for value in restored_contents)
@@ -113,10 +108,58 @@ def test_next_turn_keeps_confirmed_messages_but_excludes_audit_context(tmp_path)
     assert diagnostics["event_count"] > diagnostics["model_visible_event_count"]
 
 
-def test_compatibility_split_never_performs_a_fixed_five_turn_rebase():
+def test_compatibility_split_keeps_exactly_the_latest_eight_rounds():
     base, tail = split_history_for_cache(history_through(15), 16)
-    assert {item["round"] for item in base} == set(range(1, 16))
+    assert {item["round"] for item in base} == set(range(8, 16))
+    assert len(base) == 16
     assert tail == []
+
+
+def test_hidden_initiative_trigger_is_not_persisted_as_dialogue_history(tmp_path):
+    ledger = ContextLedger(tmp_path / "context.db")
+    bundle = profiles()
+    proactive = ChatRequest(
+        message="服务端主动续话触发占位",
+        session_id="initiative-history",
+        round=1,
+        initiative=True,
+        initiative_trigger="idle_continuation",
+    )
+    built = build_prompt(
+        proactive,
+        bundle,
+        [],
+        [],
+        [],
+        context_ledger=ledger,
+    )
+    assert built.context_snapshot is not None
+    ledger.append_turn(
+        request_id="initiative-run",
+        session_id="initiative-history",
+        round_num=1,
+        epoch_id=built.context_snapshot.epoch_id,
+        pending_events=built.pending_events,
+        response="角色主动说出的可见正文",
+        user_message_id="hidden-u1",
+        assistant_message_id="a1",
+        receipt=JsonWriteReceipt(turn_id="round_1"),
+        profiles=bundle,
+    )
+
+    next_turn = build_prompt(
+        ChatRequest(message="继续", session_id="initiative-history", round=2),
+        bundle,
+        [],
+        [],
+        [],
+        context_ledger=ledger,
+    )
+    history_text = "\n".join(
+        item["content"] for item in next_turn.context_snapshot.messages
+    )
+    assert "服务端主动续话触发占位" not in history_text
+    assert "角色主动说出的可见正文" in history_text
 
 
 def test_json_baseline_precedes_history_and_post_history_calibration_is_last(tmp_path):
@@ -144,7 +187,7 @@ def test_json_baseline_precedes_history_and_post_history_calibration_is_last(tmp
     json_index = next(
         index for index, value in enumerate(contents) if "【权威 JSON 基线】" in value
     )
-    history_index = next(index for index, value in enumerate(contents) if "用户第1轮" in value)
+    history_index = next(index for index, value in enumerate(contents) if "用户第4轮" in value)
     retrieval_index = next(
         index for index, value in enumerate(contents) if "【低可信召回】" in value
     )

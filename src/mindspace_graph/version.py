@@ -1,3 +1,3 @@
 """Build version synchronized from the project release source."""
 
-APP_VERSION = "0.5.14"
+APP_VERSION = "0.5.15"

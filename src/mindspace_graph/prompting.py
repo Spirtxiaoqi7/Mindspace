@@ -241,13 +241,27 @@ def split_history_for_cache(
     history: list[dict[str, Any]],
     current_round: int,
 ) -> tuple[list[dict[str, Any]], list[tuple[int, list[dict[str, Any]]]]]:
-    """Compatibility helper returning one append-only history and no rolling rewrite.
+    """Return at most the latest eight rounds of visible dialogue.
 
-    Context epochs now own compaction. This helper remains for extensions that
-    imported the old rolling-cache API, but it never performs the former five-turn rebase.
+    Full transcripts remain in persistence. This is only the model-visible raw
+    dialogue window, so hidden triggers and operational events cannot accumulate
+    in the provider request.
     """
 
-    return [item for item in history if (_history_round(item) or 0) < current_round], []
+    eligible = [
+        item
+        for item in history
+        if not item.get("hidden")
+        and item.get("role") in {"user", "assistant"}
+        and 0 < (_history_round(item) or 0) < current_round
+    ]
+    round_order: list[int] = []
+    for item in eligible:
+        round_num = _history_round(item)
+        if round_num is not None and (not round_order or round_order[-1] != round_num):
+            round_order.append(round_num)
+    keep = set(round_order[-8:])
+    return [item for item in eligible if _history_round(item) in keep], []
 
 
 def resolve_initiative_request(
@@ -568,6 +582,7 @@ def build_prompt(
         )
         messages = list(context_snapshot.messages)
     else:
+        recent_history, _ = split_history_for_cache(history, request.round)
         messages = [
             *static_messages,
             {
@@ -578,8 +593,7 @@ def build_prompt(
         ]
         messages.extend(
             {"role": str(item.get("role")), "content": str(item.get("content") or "")}
-            for item in history
-            if not item.get("hidden") and item.get("role") in {"user", "assistant"}
+            for item in recent_history
         )
 
     # 本轮尾部先放不可覆盖的控制信息，再放低可信召回。后面的能力状态、用户输入
@@ -715,6 +729,8 @@ def build_prompt(
             },
             "ui_visible": not request.initiative,
             "retrieval_eligible": not request.initiative,
+            "visibility": "ephemeral" if request.initiative else "model",
+            "persistence_eligible": not request.initiative,
         }
     )
     asr_evidence = request.input_evidence.asr if request.input_evidence else None

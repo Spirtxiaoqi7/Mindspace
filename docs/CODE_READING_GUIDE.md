@@ -204,7 +204,7 @@ review 只可要求最多 2 个不重复的 `web.search/web.open`，执行完就
 01 system  persona
 02 system  contract
 03 user    authoritative JSON baseline
-04..N      Context Ledger 中以前已经提交、model_visible=1 的事件
+04..N      Context Ledger 中最近 8 个 round 的可见用户/助手正文
 N+1 user   turn_control
 N+2 user   retrieval_context
 N+3 user   tool_context
@@ -223,7 +223,8 @@ LAST system roleplay_post_history         每轮出现；仅当前请求有效
 - `capability_results` 当前位于 `current_user` 后，而不是用户输入之前。
 - `roleplay_post_history` 是距离生成最近的 System 校准，借鉴 Post-History
   Instructions：它只决定本轮怎样演，不进入历史、RAG、档案或长期记忆。
-- Context Ledger 只把确认后的用户原话、最终助手回复和已提交权威增量带入下一轮；
+- Context Ledger 完整保存确认后的用户原话和最终助手回复，但模型视图只带最近 8 轮；
+- 权威增量、角色纠偏、删除校正与隐藏主动续话触发只留审计，不混入对话历史；
   `turn_control/retrieval_context/tool_context/roleplay_post_history` 只审计或临时使用。
 
 ### 5.1 `system` #1：persona
@@ -269,7 +270,9 @@ LAST system roleplay_post_history         每轮出现；仅当前请求有效
 - 会话还没有活动 Epoch；
 - 其他代码显式 invalidate，例如删除或 regenerate。
 
-正常情况下，它载入 Epoch 基线后，按 sequence 追加所有 `model_visible=1` 事件。达到硬限制时，不同步等待压缩模型，而是临时只保留基线、容量警告和最近原始对话。
+正常情况下，它载入 Epoch 基线后，只选择最新 8 个 round 的可见 `current_user /
+user_message / assistant_message`。完整事件仍在账本中；达到硬限制时，再在这 8 轮内从后向前缩减，
+不等待压缩模型。
 
 ### 5.5 本轮动态尾部
 

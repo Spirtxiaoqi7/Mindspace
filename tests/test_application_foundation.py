@@ -146,7 +146,7 @@ def test_openai_usage_extracts_standard_cached_tokens():
     assert usage.cache_source == "prompt_tokens_details.cached_tokens"
 
 
-def test_role_audit_only_appends_next_turn_correction(tmp_path):
+def test_role_audit_correction_stays_audit_only_and_out_of_model_history(tmp_path):
     database = ProductDatabase(tmp_path / "context.db")
     ledger = ContextLedger(tmp_path / "context.db", database=database)
     profiles = ProfileBundle(
@@ -180,4 +180,6 @@ def test_role_audit_only_appends_next_turn_correction(tmp_path):
         profiles=profiles,
         history=[],
     )
-    assert any("保持纯文字交流" in item["content"] for item in snapshot.messages)
+    assert not any("保持纯文字交流" in item["content"] for item in snapshot.messages)
+    diagnostics = ledger.diagnostics("role")
+    assert diagnostics["event_count"] > diagnostics["model_visible_event_count"]
