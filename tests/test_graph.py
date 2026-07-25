@@ -291,8 +291,9 @@ def test_prompt_uses_role_system_layers_and_never_identifies_as_protocol_outputt
     assert "协议输出器" not in system_text
     assert "协议修复器" not in system_text
     assert "<analysis>" not in all_text
-    assert '"call_count":0' in all_text
-    assert "服务端没有执行任何只读查询" in all_text
+    assert '"call_count":0' not in all_text
+    assert "【本轮能力状态】" not in all_text
+    assert "服务端没有执行任何只读查询" not in all_text
 
 
 def test_ai_profile_is_system_role_authority_without_duplicate_json_payload():

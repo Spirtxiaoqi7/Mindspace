@@ -167,12 +167,6 @@ class NodeFactory:
             result["emotion_state"] = previous_emotion_state
         return result
 
-    def capture_local_snapshot(self, state: TurnState) -> dict[str, Any]:
-        self._check_cancelled(state)
-        service = self.deps.capabilities
-        snapshot = service.capture_local_snapshot() if service is not None else {}
-        return {"local_snapshot": snapshot, "trace": ["capture_local_snapshot"]}
-
     def retrieve_knowledge(self, state: TurnState) -> dict[str, Any]:
         """知识库召回分支；与 retrieve_chat 并行，分支内保持只读。"""
 
@@ -246,7 +240,7 @@ class NodeFactory:
         """先用确定性规则路由能力，再判断是否值得支付一次私有规划调用。
 
         任何 web.* 计划都会进入 preflight，用于消解口语、省略指代和搜索词；
-        本机状态、健康检查等明确请求通常可直接进入执行器。
+        明确的网页或知识请求通常可直接进入执行器。
         """
 
         self._check_cancelled(state)
@@ -437,7 +431,6 @@ class NodeFactory:
             )
         results = service.execute(
             plan,
-            local_snapshot=state.get("local_snapshot", {}),
             ranked_context=state.get("ranked_context", []),
         )
         for result in results:
@@ -520,7 +513,6 @@ class NodeFactory:
                     )
                 extra = service.execute(
                     follow_up,
-                    local_snapshot=state.get("local_snapshot", {}),
                     ranked_context=state.get("ranked_context", []),
                 )
                 results.extend(extra)

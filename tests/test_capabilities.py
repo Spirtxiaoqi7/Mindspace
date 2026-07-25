@@ -20,8 +20,6 @@ from mindspace_graph.models import ApiConfig, ChatRequest
 def capability_config(**overrides):
     values = {
         "master_enabled": True,
-        "local_status_enabled": True,
-        "mindspace_health_enabled": True,
         "local_knowledge_enabled": True,
         "web_search_enabled": False,
         "realtime_topics_enabled": False,
@@ -37,46 +35,10 @@ def capability_config(**overrides):
     return {"capabilities": values}
 
 
-def test_read_only_capabilities_execute_serially_and_keep_plan_order(tmp_path):
-    service = ReadOnlyCapabilityService(
-        config_provider=lambda: capability_config(), runtime_dir=tmp_path
-    )
-
-    def slow_snapshot():
-        time.sleep(0.15)
-        return {"kind": "snapshot"}
-
-    def slow_health():
-        time.sleep(0.15)
-        return {"kind": "health"}
-
-    service.capture_local_snapshot = slow_snapshot
-    service._mindspace_health = slow_health
-    plan = CapabilityPlan(
-        decision="use_capabilities",
-        calls=[
-            CapabilityCall(
-                call_id="first", capability="local.system_snapshot", arguments={}
-            ),
-            CapabilityCall(
-                call_id="second", capability="local.mindspace_health", arguments={}
-            ),
-        ],
-    )
-
-    started = time.perf_counter()
-    results = service.execute(plan, local_snapshot={}, ranked_context=[])
-    elapsed = time.perf_counter() - started
-    service.close()
-
-    assert elapsed >= 0.29
-    assert [item.call_id for item in results] == ["first", "second"]
-    assert [item.data["kind"] for item in results] == ["snapshot", "health"]
-
-
 def test_every_capability_call_waits_for_the_previous_result(tmp_path):
     service = ReadOnlyCapabilityService(
-        config_provider=lambda: capability_config(), runtime_dir=tmp_path
+        config_provider=lambda: capability_config(web_search_enabled=True),
+        runtime_dir=tmp_path,
     )
     timeline: list[tuple[str, str, float]] = []
 
@@ -90,51 +52,60 @@ def test_every_capability_call_waits_for_the_previous_result(tmp_path):
     plan = CapabilityPlan(
         decision="use_capabilities",
         calls=[
-            CapabilityCall(call_id="parallel-a", capability="local.system_snapshot"),
             CapabilityCall(call_id="parallel-b", capability="knowledge.search_local"),
-            CapabilityCall(call_id="exclusive", capability="local.mindspace_health"),
+            CapabilityCall(
+                call_id="parallel-a",
+                capability="web.search",
+                arguments={"query": "Mindspace"},
+            ),
+            CapabilityCall(
+                call_id="exclusive",
+                capability="web.open",
+                arguments={"url": "https://example.com"},
+            ),
         ],
     )
 
     started = time.perf_counter()
-    results = service.execute(plan, local_snapshot={}, ranked_context=[])
+    results = service.execute(plan, ranked_context=[])
     elapsed = time.perf_counter() - started
     service.close()
 
     moments = {(call_id, phase): at for call_id, phase, at in timeline}
     assert elapsed >= 0.23
-    assert moments[("parallel-b", "start")] >= moments[("parallel-a", "end")]
-    assert moments[("exclusive", "start")] >= moments[("parallel-b", "end")]
-    assert [item.call_id for item in results] == ["parallel-a", "parallel-b", "exclusive"]
+    assert moments[("parallel-a", "start")] >= moments[("parallel-b", "end")]
+    assert moments[("exclusive", "start")] >= moments[("parallel-a", "end")]
+    assert [item.call_id for item in results] == ["parallel-b", "parallel-a", "exclusive"]
 
 
-def test_graph_does_not_collect_local_state_without_a_local_capability_call(tmp_path):
+def test_ai_registry_and_authorizer_exclude_local_status_and_health(tmp_path):
     service = ReadOnlyCapabilityService(
-        config_provider=lambda: capability_config(), runtime_dir=tmp_path
+        config_provider=lambda: capability_config(
+            web_search_enabled=True,
+            realtime_topics_enabled=True,
+        ),
+        runtime_dir=tmp_path,
     )
-
-    def fail_if_sampled():
-        raise AssertionError("local status must be demand driven")
-
-    service.capture_local_snapshot = fail_if_sampled
-    dependencies = demo_dependencies()
-    dependencies.capabilities = service
-
-    result = build_graph(dependencies).invoke(
-        {
-            "request": ChatRequest(
-                message="陪我聊一句普通的话",
-                session_id="conditional-local",
-                round=1,
-                retrieval={"rag_enabled": False},
-            ),
-            "request_id": "conditional-local-run",
-        }
+    names = {item["name"] for item in service.definitions()}
+    assert names == {
+        "knowledge.search_local",
+        "web.open",
+        "web.search",
+        "web.trending",
+    }
+    denied = service.authorize(
+        CapabilityPlan(
+            decision="use_capabilities",
+            calls=[
+                CapabilityCall(call_id="local", capability="local.system_snapshot"),
+                CapabilityCall(call_id="health", capability="local.mindspace_health"),
+            ],
+        )
     )
     service.close()
 
-    assert result["response"].status == "success"
-    assert "capture_local_snapshot" not in result["trace"]
+    assert denied.decision == "direct_answer"
+    assert denied.calls == []
 
 
 def rss_transport(request: httpx.Request) -> httpx.Response:
@@ -190,10 +161,8 @@ def test_permissions_route_only_enabled_read_capabilities(tmp_path):
         config_provider=lambda: capability_config(), runtime_dir=tmp_path
     )
     local = service.route(ChatRequest(message="看看本机 CPU 和 Mindspace 服务状态"))
-    assert [call.capability for call in local.calls] == [
-        "local.system_snapshot",
-        "local.mindspace_health",
-    ]
+    assert local.decision == "direct_answer"
+    assert local.calls == []
 
     web_disabled = service.route(ChatRequest(message="联网搜索今天的实时热点"))
     assert web_disabled.decision == "direct_answer"
@@ -288,7 +257,7 @@ def test_web_search_is_get_only_public_and_never_json_evidence(tmp_path):
         http_transport=httpx.MockTransport(rss_transport),
     )
     plan = service.route(ChatRequest(message="联网搜索今天的实时热点"))
-    results = service.execute(plan, local_snapshot={}, ranked_context=[])
+    results = service.execute(plan, ranked_context=[])
 
     assert len(results) == 1
     assert results[0].status == "success"
@@ -308,7 +277,7 @@ def test_direct_url_is_opened_and_related_original_sources_are_collected(tmp_pat
     plan = service.route(ChatRequest(message="https://arxiv.org/abs/2605.14802"))
 
     assert [call.capability for call in plan.calls] == ["web.open"]
-    results = service.execute(plan, local_snapshot={}, ranked_context=[])
+    results = service.execute(plan, ranked_context=[])
 
     assert results[0].status == "success"
     assert results[0].data["coverage"]["direct_page_opened"] is True
@@ -317,7 +286,7 @@ def test_direct_url_is_opened_and_related_original_sources_are_collected(tmp_pat
     assert results[0].data["document"]["authors"] == ["Ada Example"]
 
 
-def test_local_capability_progress_is_not_persisted_as_assistant_reply(tmp_path):
+def test_local_status_request_cannot_create_an_ai_tool_call(tmp_path):
     deps = demo_dependencies()
     deps.capabilities = ReadOnlyCapabilityService(
         config_provider=lambda: capability_config(),
@@ -328,7 +297,8 @@ def test_local_capability_progress_is_not_persisted_as_assistant_reply(tmp_path)
     result = build_graph(deps).invoke({"request": request}, config={"recursion_limit": 30})
 
     reply = result["response"].reply
-    assert not reply.startswith("我先看一下这台电脑现在的状态。")
+    assert result["capability_plan"].calls == []
+    assert result["capability_results"] == []
     stored = deps.sessions.sessions["single-turn"][-1]
     assert stored["content"] == reply
     assistant_messages = [

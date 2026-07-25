@@ -465,8 +465,6 @@ class ProductConfigStore:
         capabilities = self._config["capabilities"]
         for key in (
             "master_enabled",
-            "local_status_enabled",
-            "mindspace_health_enabled",
             "local_knowledge_enabled",
             "web_search_enabled",
             "realtime_topics_enabled",

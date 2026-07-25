@@ -7,17 +7,10 @@ inside that category do not require per-call approval.
 
 from __future__ import annotations
 
-import csv
-import io
 import ipaddress
 import json
-import os
-import platform
 import re
-import shutil
 import socket
-import subprocess
-import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -64,8 +57,6 @@ class CapabilityResult(BaseModel):
 
 DEFAULT_CAPABILITY_SETTINGS: dict[str, Any] = {
     "master_enabled": True,
-    "local_status_enabled": True,
-    "mindspace_health_enabled": True,
     "local_knowledge_enabled": True,
     "web_search_enabled": False,
     "realtime_topics_enabled": False,
@@ -79,14 +70,6 @@ DEFAULT_CAPABILITY_SETTINGS: dict[str, Any] = {
 }
 
 
-_LOCAL_HINTS = re.compile(
-    r"(本机|电脑|系统|设备|显卡|GPU|CPU|内存|磁盘|硬盘|进程|服务状态|运行状态|端口|CUDA)",
-    re.IGNORECASE,
-)
-_MINDSPACE_HINTS = re.compile(
-    r"(Mindspace|ASR|TTS|CosyVoice|GPT.?SoVITS|LLM|模型服务|语音服务|核心服务)",
-    re.IGNORECASE,
-)
 _EXPLICIT_WEB_HINTS = re.compile(
     r"(联网|网上|上网|搜索|搜一下|查一下|查查|检索网页|找资料|官网|新闻|热搜|热点)",
     re.IGNORECASE,
@@ -228,24 +211,6 @@ class ReadOnlyCapabilityService:
         if not settings["master_enabled"]:
             return []
         definitions: list[dict[str, Any]] = []
-        if settings["local_status_enabled"]:
-            definitions.append(
-                {
-                    "name": "local.system_snapshot",
-                    "description": "读取经过脱敏的操作系统、CPU、内存、GPU、磁盘和设备状态",
-                    "read_only": True,
-                    "supports_parallel_calls": False,
-                }
-            )
-        if settings["mindspace_health_enabled"]:
-            definitions.append(
-                {
-                    "name": "local.mindspace_health",
-                    "description": "读取 Mindspace、ASR、TTS 与本地模型服务的端口健康状态",
-                    "read_only": True,
-                    "supports_parallel_calls": False,
-                }
-            )
         if settings["local_knowledge_enabled"]:
             definitions.append(
                 {
@@ -306,159 +271,6 @@ class ReadOnlyCapabilityService:
             ),
         }
 
-    def capture_local_snapshot(self) -> dict[str, Any]:
-        if not self.enabled("local_status_enabled"):
-            return {}
-        root = self.runtime_dir.anchor or str(self.runtime_dir)
-        disk = shutil.disk_usage(root)
-        snapshot: dict[str, Any] = {
-            "observed_at": datetime.now(UTC).isoformat(),
-            "platform": platform.platform(),
-            "windows_release": platform.release(),
-            "architecture": platform.machine(),
-            "cpu_logical_count": os.cpu_count() or 0,
-            "cpu_usage_percent": self._cpu_usage_percent(),
-            "memory": self._memory_status(),
-            "runtime_disk": {
-                "total_gib": round(disk.total / 1024**3, 2),
-                "free_gib": round(disk.free / 1024**3, 2),
-                "used_percent": round((disk.used / max(1, disk.total)) * 100, 1),
-            },
-            "mindspace_processes": self._mindspace_processes(),
-        }
-        gpu = self._gpu_status()
-        if gpu:
-            snapshot["gpu"] = gpu
-        return snapshot
-
-    @staticmethod
-    def _memory_status() -> dict[str, Any]:
-        if os.name != "nt":
-            return {"available": False}
-        try:
-            import ctypes
-
-            class MemoryStatus(ctypes.Structure):
-                _fields_ = [
-                    ("length", ctypes.c_ulong),
-                    ("memory_load", ctypes.c_ulong),
-                    ("total_physical", ctypes.c_ulonglong),
-                    ("available_physical", ctypes.c_ulonglong),
-                    ("total_page_file", ctypes.c_ulonglong),
-                    ("available_page_file", ctypes.c_ulonglong),
-                    ("total_virtual", ctypes.c_ulonglong),
-                    ("available_virtual", ctypes.c_ulonglong),
-                    ("available_extended_virtual", ctypes.c_ulonglong),
-                ]
-
-            status = MemoryStatus()
-            status.length = ctypes.sizeof(MemoryStatus)
-            if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
-                return {"available": False}
-            return {
-                "available": True,
-                "total_gib": round(status.total_physical / 1024**3, 2),
-                "available_gib": round(status.available_physical / 1024**3, 2),
-                "used_percent": int(status.memory_load),
-            }
-        except (AttributeError, OSError, ValueError):
-            return {"available": False}
-
-    @staticmethod
-    def _cpu_usage_percent() -> float | None:
-        if os.name != "nt":
-            return None
-        try:
-            import ctypes
-
-            class FileTime(ctypes.Structure):
-                _fields_ = [("low", ctypes.c_ulong), ("high", ctypes.c_ulong)]
-
-            def sample() -> tuple[int, int, int]:
-                idle = FileTime()
-                kernel = FileTime()
-                user = FileTime()
-                ok = ctypes.windll.kernel32.GetSystemTimes(
-                    ctypes.byref(idle), ctypes.byref(kernel), ctypes.byref(user)
-                )
-                if not ok:
-                    raise OSError("GetSystemTimes failed")
-
-                def value(item: FileTime) -> int:
-                    return (int(item.high) << 32) | int(item.low)
-
-                return value(idle), value(kernel), value(user)
-
-            first = sample()
-            time.sleep(0.05)
-            second = sample()
-            idle_delta = second[0] - first[0]
-            total_delta = second[1] - first[1] + second[2] - first[2]
-            if total_delta <= 0:
-                return None
-            return round(max(0.0, min(100.0, (total_delta - idle_delta) * 100 / total_delta)), 1)
-        except (AttributeError, OSError, ValueError):
-            return None
-
-    @staticmethod
-    def _mindspace_processes() -> list[str]:
-        if os.name != "nt":
-            return []
-        allowed = ("mindspace", "python", "uvicorn", "pwsh", "ffmpeg", "electron")
-        try:
-            completed = subprocess.run(
-                ["tasklist.exe", "/fo", "csv", "/nh"],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=2,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            rows = csv.reader(io.StringIO(completed.stdout))
-            names = {
-                row[0]
-                for row in rows
-                if row and any(key in row[0].lower() for key in allowed)
-            }
-            return sorted(names)[:20]
-        except (OSError, subprocess.SubprocessError):
-            return []
-
-    @staticmethod
-    def _gpu_status() -> list[dict[str, Any]]:
-        executable = shutil.which("nvidia-smi")
-        if not executable:
-            return []
-        try:
-            completed = subprocess.run(
-                [
-                    executable,
-                    "--query-gpu=name,memory.total,memory.used,utilization.gpu,driver_version",
-                    "--format=csv,noheader,nounits",
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=3,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-            items: list[dict[str, Any]] = []
-            for row in csv.reader(io.StringIO(completed.stdout)):
-                if len(row) < 5:
-                    continue
-                items.append(
-                    {
-                        "name": row[0].strip(),
-                        "memory_total_mib": int(row[1].strip()),
-                        "memory_used_mib": int(row[2].strip()),
-                        "utilization_percent": int(row[3].strip()),
-                        "driver_version": row[4].strip(),
-                    }
-                )
-            return items[:4]
-        except (OSError, ValueError, subprocess.SubprocessError):
-            return []
-
     def route(
         self,
         request: ChatRequest,
@@ -471,22 +283,6 @@ class ReadOnlyCapabilityService:
         text = request.message.strip()
         calls: list[CapabilityCall] = []
         direct_urls = self._extract_urls(text)
-
-        local_match = bool(_LOCAL_HINTS.search(text))
-        if local_match and settings["local_status_enabled"]:
-            calls.append(
-                CapabilityCall(
-                    call_id="cap_local_01",
-                    capability="local.system_snapshot",
-                )
-            )
-        if local_match and _MINDSPACE_HINTS.search(text) and settings["mindspace_health_enabled"]:
-            calls.append(
-                CapabilityCall(
-                    call_id="cap_health_01",
-                    capability="local.mindspace_health",
-                )
-            )
 
         wants_trends = bool(_TREND_HINTS.search(text)) or (
             request.initiative
@@ -502,12 +298,11 @@ class ReadOnlyCapabilityService:
         wants_web = (
             bool(direct_urls)
             or bool(_EXPLICIT_WEB_HINTS.search(text))
-            or (wants_fresh_information and not local_match)
+            or wants_fresh_information
         )
         if (
             settings["web_search_enabled"]
             and not direct_urls
-            and not local_match
             and _ELLIPTICAL_WEB_REQUEST.fullmatch(text)
         ):
             return CapabilityPlan(decision="needs_planner", reason="elliptical_web_request")
@@ -528,7 +323,7 @@ class ReadOnlyCapabilityService:
                         arguments={"url": url},
                     )
                 )
-        elif settings["web_search_enabled"] and wants_web and not local_match:
+        elif settings["web_search_enabled"] and wants_web:
             calls.append(
                 CapabilityCall(
                     call_id="cap_web_01",
@@ -613,7 +408,7 @@ class ReadOnlyCapabilityService:
                             "capability_plan": {
                                 "decision": "direct_answer | use_capabilities",
                                 "reason": (
-                                    "freshness | local_state | local_knowledge | "
+                                    "freshness | local_knowledge | "
                                     "topic_expansion | none"
                                 ),
                                 "calls": [
@@ -888,8 +683,6 @@ class ReadOnlyCapabilityService:
             if "web.trending" in names:
                 return "我去网上看看最近有什么值得聊的，等我一下。"
             return "我去网上查一下最新信息，等我一下。"
-        if any(name.startswith("local.") for name in names):
-            return "我先看一下这台电脑现在的状态。"
         if "knowledge.search_local" in names:
             return "我先翻一下现有资料和记忆。"
         return ""
@@ -898,7 +691,6 @@ class ReadOnlyCapabilityService:
         self,
         plan: CapabilityPlan,
         *,
-        local_snapshot: dict[str, Any],
         ranked_context: list[Any],
     ) -> list[CapabilityResult]:
         authorized = self.authorize(plan)
@@ -913,7 +705,6 @@ class ReadOnlyCapabilityService:
             results.append(
                 self._execute_call(
                     call,
-                    local_snapshot=local_snapshot,
                     ranked_context=ranked_context,
                 )
             )
@@ -934,21 +725,9 @@ class ReadOnlyCapabilityService:
         self,
         call: CapabilityCall,
         *,
-        local_snapshot: dict[str, Any],
         ranked_context: list[Any],
     ) -> CapabilityResult:
         try:
-            if call.capability == "local.system_snapshot":
-                data = local_snapshot or self.capture_local_snapshot()
-                return CapabilityResult(
-                    call_id=call.call_id, capability=call.capability, data=data
-                )
-            if call.capability == "local.mindspace_health":
-                return CapabilityResult(
-                    call_id=call.call_id,
-                    capability=call.capability,
-                    data=self._mindspace_health(),
-                )
             if call.capability == "knowledge.search_local":
                 items = []
                 for chunk in ranked_context[:8]:
@@ -1006,29 +785,6 @@ class ReadOnlyCapabilityService:
                     else "local_observation"
                 ),
             )
-
-    def _mindspace_health(self) -> dict[str, Any]:
-        services = {
-            "api": ("127.0.0.1", 8765),
-            "asr": ("127.0.0.1", 8766),
-            "gpt_sovits": ("127.0.0.1", 5055),
-        }
-        states: dict[str, Any] = {}
-        for name, address in services.items():
-            started = datetime.now(UTC)
-            try:
-                with socket.create_connection(address, timeout=0.35):
-                    available = True
-            except OSError:
-                available = False
-            elapsed = (datetime.now(UTC) - started).total_seconds() * 1000
-            states[name] = {
-                "available": available,
-                "host": address[0],
-                "port": address[1],
-                "probe_ms": round(elapsed, 1),
-            }
-        return {"observed_at": datetime.now(UTC).isoformat(), "services": states}
 
     @staticmethod
     def _trend_query(user_query: str) -> str:

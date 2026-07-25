@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from mindspace_graph.adapters.file_storage import DEFAULT_PROFILES
+from mindspace_graph.capabilities import CapabilityCall, CapabilityPlan, CapabilityResult
 from mindspace_graph.context_ledger import ContextLedger
 from mindspace_graph.models import (
     ChatRequest,
@@ -147,9 +148,6 @@ def test_json_baseline_precedes_history_and_post_history_calibration_is_last(tmp
     retrieval_index = next(
         index for index, value in enumerate(contents) if "【低可信召回】" in value
     )
-    tool_index = next(
-        index for index, value in enumerate(contents) if "【本轮能力状态】" in value
-    )
     input_index = next(
         index for index, value in enumerate(contents) if "【当前用户明确输入】" in value
     )
@@ -157,11 +155,51 @@ def test_json_baseline_precedes_history_and_post_history_calibration_is_last(tmp
         index for index, value in enumerate(contents) if "【本轮角色演绎校准｜最后执行】" in value
     )
 
-    assert json_index < history_index < retrieval_index < tool_index < input_index
+    assert json_index < history_index < retrieval_index < input_index
     assert input_index < calibration_index
-    assert tool_index == len(built.messages) - 3
+    assert not any(item["kind"] == "tool_context" for item in built.pending_events)
     assert calibration_index == len(built.messages) - 1
     assert built.messages[-1]["role"] == "system"
+
+
+def test_executed_capability_prompt_omits_registry_and_settings() -> None:
+    plan = CapabilityPlan(
+        decision="use_capabilities",
+        calls=[
+            CapabilityCall(
+                call_id="web-1",
+                capability="web.search",
+                arguments={"query": "测试"},
+            )
+        ],
+    )
+    results = [
+        CapabilityResult(
+            call_id="web-1",
+            capability="web.search",
+            data={"query": "测试", "items": []},
+            trust="external_untrusted",
+        )
+    ]
+    built = build_prompt(
+        request(1),
+        profiles(),
+        [],
+        [],
+        [],
+        available_capabilities=[
+            {"name": "local.system_snapshot", "description": "不应进入主 Prompt"}
+        ],
+        capability_results=results,
+        capability_policy={"web_search_enabled": True, "internal_setting": "hidden"},
+        capability_plan=plan,
+    )
+    tool = next(item for item in built.pending_events if item["kind"] == "tool_context")
+
+    assert "【本轮查询状态】" in tool["content"]
+    assert "local.system_snapshot" not in tool["content"]
+    assert "internal_setting" not in tool["content"]
+    assert "可用工具" not in tool["content"]
 
 
 def test_recent_raw_chat_is_not_duplicated_inside_retrieval_context():

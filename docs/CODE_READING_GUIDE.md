@@ -145,7 +145,6 @@ flowchart TD
 
 `ReadOnlyCapabilityService.route` 先用确定性规则检查：
 
-- 本机状态/Mindspace 健康提示；
 - URL；
 - 明确联网、最新、趋势提示；
 - 本地知识提示；
@@ -177,8 +176,6 @@ flowchart TD
 
 `ReadOnlyCapabilityService.execute` 只接受授权后的白名单调用。当前能力包括：
 
-- `local.system_snapshot`
-- `local.mindspace_health`
 - `knowledge.search_local`
 - `web.search`
 - `web.open`
@@ -531,9 +528,9 @@ llm_call_count < 2
 ## 12. 容易误读或尚未接线的代码
 
 - `NodeFactory.repair_role` 和 `route_role` 存在，但当前 `graph.py` 没有注册角色修复节点或条件边；实际路径是角色检查失败后保留正文、禁止 JSON 写回。
-- `capture_local_snapshot` 方法存在，但当前图没有 `capture_local_snapshot` 节点；不能因为有函数就认定每轮会采集本机状态。
+- AI 能力注册表不含本机状态或服务健康工具；Launcher 探测与后端健康 API 属于运行管理，不进入对话模型。
 - Emotion 接口仍保留，但 `build_container` 装配的是 `DisabledEmotionCoordinator`，当前不会产生真实情绪模型输入。
-- 主模型没有 provider-native tools；文档或 UI 中出现“Skill/MCP”字样，只表示服务端能力描述和结果注入。
+- 主模型没有 provider-native tools；能力由服务端先执行，零调用轮不注入工具目录或能力状态。
 - `context-diagnostics` 返回统计，不返回完整模型消息。
 - `call_count` 在能力执行状态中表示计划的只读能力调用数；`llm_call_count` 是图内私有/主模型调用预算，二者不是同一个指标。
 
@@ -544,7 +541,7 @@ llm_call_count < 2
 | 前端提交字段 | `frontend/src/App.tsx::sendMessage` |
 | SSE 续传 | `frontend/src/api.ts`、`service.py::BufferedStreamRun` |
 | 图节点/条件边 | `graph.py` |
-| 是否调用网页/本机/知识能力 | `capabilities.py::route/authorize` |
+| 是否调用网页/知识能力 | `capabilities.py::route/authorize` |
 | 工具串行调度与网页抓取 | `capabilities.py::execute/_web_search/_web_open` |
 | Prompt 文案与消息顺序 | `prompting.py::build_prompt` |
 | Provider HTTP body/连接复用 | `adapters/openai_compatible.py` |

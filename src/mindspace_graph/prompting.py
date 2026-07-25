@@ -655,44 +655,17 @@ def build_prompt(
             else "只有下方本轮只读观测结果中的成功网页调用可被描述为已经查询。"
         )
     )
-    detailed_capability_context = bool(
-        capability_results
-        or execution_state["call_count"] > 0
-        or (
-            capability_plan is not None
-            and (
-                capability_plan.decision != "direct_answer"
-                or capability_plan.requires_clarification
-            )
-        )
-    )
-    if detailed_capability_context and (available_capabilities or capability_policy):
-        pending_events.append(
-            {
-                "kind": "tool_context",
-                "role": "user",
-                "content": "以下是服务端允许的只读能力与本轮策略。能力是否执行已由服务端决定；"
-                "不要输出工具调用、不要虚构结果，也不要要求用户逐次确认。"
-                "启用话题扩展时，应在回答当前问题后自然延伸一个相关方向，但不得虚构用户偏好。\n\n"
-                f"【本轮可用工具、Skill 与 MCP】\n{_json(available_capabilities)}\n\n"
-                f"【能力策略】\n{_json(capability_policy or {})}\n\n"
-                f"【能力执行状态】\n{_json(execution_state)}\n"
-                f"【确定性约束】\n{execution_rule}",
-                "metadata": {
-                    "round": request.round,
-                    "call_count": execution_state["call_count"],
-                },
-            }
-        )
-    else:
+    # Capability selection is complete before the main generation. The answer model
+    # does not need the full registry or settings, and zero-call turns need no tool
+    # message at all. Truthfulness remains enforced deterministically after generation.
+    if capability_results or execution_state["call_count"] > 0:
         pending_events.append(
             {
                 "kind": "tool_context",
                 "role": "user",
                 "content": (
-                    '【本轮能力状态】{"call_count":0,"status":"not_executed"}\n'
-                    "服务端没有执行任何只读查询。"
-                    "不要声称已经搜索、查询、打开网页或读取设备状态。"
+                    f"【本轮查询状态】{_json(execution_state)}\n"
+                    f"{execution_rule} 不要虚构未成功的结果。"
                 ),
                 "metadata": {
                     "round": request.round,

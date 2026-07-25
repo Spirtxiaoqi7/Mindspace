@@ -36,7 +36,6 @@ class TurnState(TypedDict, total=False):
     profile_bootstrap: ProfileBootstrap
     available_capabilities: list[dict[str, Any]]
     capability_policy: dict[str, Any]
-    local_snapshot: dict[str, Any]
     capability_plan: CapabilityPlan
     capability_results: list[CapabilityResult]
     capability_notice: str

@@ -38,7 +38,6 @@ from mindspace_graph.settings import AppSettings
 NODE_LABELS = {
     "validate_request": "校验请求",
     "load_context": "加载会话与档案",
-    "capture_local_snapshot": "采集本机只读状态",
     "retrieve_knowledge": "检索知识库",
     "retrieve_chat": "检索会话记忆",
     "rank_context": "重排上下文",
