@@ -289,13 +289,18 @@ SQLite 开启 WAL、外键、`synchronous=FULL` 和 busy timeout。任一步抛�
 
 VAD final 触发正常聊天 SSE。`asr.speech_start` 会取消当前 LangGraph run、TTS 请求和播放队列，形成插话。退出语音模式必须释放媒体轨、Worklet、AudioContext、WebSocket、AbortController 和音频缓冲。
 
-TTS 客户端按完整自然句切分；实时语音保留括号动作并调用
-`/api/v1/audio/tts/stream`。当前句播放期间继续生成下一句。云端 SiliconFlow 和
-本地 TTS 共用分句、队列、取消和错误语义。响应、首包、流空闲、播放器启动与
-结束都必须有看门狗，任何失败路径都要清空队列并解除输入门，禁止异常时偷偷切换浏览器音色。
+TTS 客户端只把第一条完整自然句用于低延迟起播；实时语音把括号动作作为独立段，
+其余普通正文跨句、跨段累计到下一个括号或本轮结束，并调用
+`/api/v1/audio/tts/stream`。Core 保证同一时刻只有一个请求进入本地 Worker，
+前端只在当前合成完成后准备一个后续段。云端 SiliconFlow 和本地 TTS 共用分段、
+队列、取消和错误语义。响应、首包、流空闲、播放器启动与结束都必须有看门狗，
+任何失败路径都要清空队列并解除输入门，禁止异常时偷偷切换浏览器音色。
 
-ASR 连接异常时前端最多重连四次，每次重连前必须释放旧媒体资源。Launcher 对
-自己启动的服务只做三次有界退避恢复；用户主动停止、退出和更新期间不得自动复活。
+ASR 连接异常时前端先释放旧媒体资源，再以最高五秒间隔持续重连；每次取得麦克风
+前必须确认 Worker 就绪，用户退出语音时停止恢复。Launcher 对自己启动的服务只做
+三次有界退避恢复；用户主动停止、退出和更新期间不得自动复活。
+ASR CUDA 的依赖导入必须通过 `process-check.cjs` 异步执行，不允许在 Electron
+主线程使用 `spawnSync` 做 Torch 冷启动校验。
 
 ## 14. API 分类
 

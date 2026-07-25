@@ -41,13 +41,14 @@ it("drops speech events while a committed voice turn is waiting for TTS", () => 
   expect(shouldIgnoreASREvent(false, "asr.speech_start")).toBe(false);
 });
 
-it("uses bounded automatic voice reconnect backoff", () => {
-  expect([0, 1, 2, 3, 4].map(voiceReconnectDelay)).toEqual([
+it("keeps recovering voice with a capped reconnect backoff", () => {
+  expect([0, 1, 2, 3, 4, 12].map(voiceReconnectDelay)).toEqual([
     800,
     1600,
     3200,
     5000,
-    null,
+    5000,
+    5000,
   ]);
 });
 

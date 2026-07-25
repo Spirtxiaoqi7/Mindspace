@@ -45,7 +45,16 @@ def sanitize_tts_text(text: str) -> str:
 class AudioService:
     def __init__(self, settings: AppSettings) -> None:
         self.settings = settings
-        self._tasks: dict[str, asyncio.Task] = {}
+        # A single assistant run can contain several spoken segments.  Keep
+        # every task instead of letting the latest segment overwrite the
+        # previous one under the same request id.
+        self._tasks: dict[str, set[asyncio.Task]] = {}
+        # Local TTS models are resident but not concurrently re-entrant.  Queue
+        # requests here, before they reach the worker process, so cancellation
+        # can remove a waiting request without leaving a stale inference thread
+        # behind in GPT-SoVITS.
+        self._local_tts_lock = asyncio.Lock()
+        self._local_tts_waiters = 0
         self._http = httpx.AsyncClient(
             timeout=httpx.Timeout(30.0, connect=5.0),
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
@@ -142,18 +151,27 @@ class AudioService:
     def _register_current(self, request_id: str) -> None:
         task = asyncio.current_task()
         if request_id and task:
-            self._tasks[request_id] = task
+            self._tasks.setdefault(request_id, set()).add(task)
 
     def _finish(self, request_id: str) -> None:
-        if request_id:
+        task = asyncio.current_task()
+        if not request_id or not task:
+            return
+        tasks = self._tasks.get(request_id)
+        if not tasks:
+            return
+        tasks.discard(task)
+        if not tasks:
             self._tasks.pop(request_id, None)
 
     def interrupt(self, request_id: str) -> bool:
-        task = self._tasks.get(request_id)
-        if task and not task.done():
-            task.cancel()
-            return True
-        return False
+        tasks = self._tasks.get(request_id, set()).copy()
+        cancelled = False
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+                cancelled = True
+        return cancelled
 
     async def synthesize(self, text: str, *, request_id: str, speed: float = 1.0) -> Path:
         self._register_current(request_id)
@@ -262,17 +280,27 @@ class AudioService:
                     )
                 else:
                     payload["voice_id"] = self.settings.tts_gpt_sovits_voice
+                payload["request_id"] = request_id
                 timeout = httpx.Timeout(connect=5, read=180, write=10, pool=5)
-                async with self._http.stream(
-                    "POST",
-                    f"{worker_url.rstrip('/')}/synthesize-stream",
-                    json=payload,
-                    timeout=timeout,
-                ) as response:
-                    response.raise_for_status()
-                    async for chunk in response.aiter_bytes(chunk_size=16_384):
-                        if chunk:
-                            yield chunk
+                self._local_tts_waiters += 1
+                acquired = False
+                try:
+                    async with self._local_tts_lock:
+                        acquired = True
+                        self._local_tts_waiters -= 1
+                        async with self._http.stream(
+                            "POST",
+                            f"{worker_url.rstrip('/')}/synthesize-stream",
+                            json=payload,
+                            timeout=timeout,
+                        ) as response:
+                            response.raise_for_status()
+                            async for chunk in response.aiter_bytes(chunk_size=16_384):
+                                if chunk:
+                                    yield chunk
+                finally:
+                    if not acquired:
+                        self._local_tts_waiters = max(0, self._local_tts_waiters - 1)
             finally:
                 self._finish(request_id)
 

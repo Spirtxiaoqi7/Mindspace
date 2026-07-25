@@ -6,7 +6,7 @@ export function normalizeSpeechSegment(value: string): string {
   return value
     .replace(/```[\s\S]*?```/g, "")
     .replace(/[`*_#>]/g, "")
-    .replace(/[ \t]+/g, " ")
+    .replace(/\s+/g, " ")
     .replace(/\s+([。！？!?；;，,])/g, "$1")
     .trim();
 }
@@ -34,26 +34,40 @@ function extractCompleteSentences(value: string) {
   return { sentences, remainder: value.slice(consumed) };
 }
 
+function extractFirstCompleteSentence(value: string) {
+  SENTENCE_BOUNDARY.lastIndex = 0;
+  const match = SENTENCE_BOUNDARY.exec(value);
+  if (!match) return { sentence: "", remainder: value };
+  let end = match.index + match[0].length;
+  while (end < value.length && TRAILING_CLOSERS.has(value[end])) end += 1;
+  return {
+    sentence: normalizeSpeechSegment(value.slice(0, end)),
+    remainder: value.slice(end),
+  };
+}
+
 export class SpeechSegmenter {
   private buffer = "";
   private parentheses: Array<{ closer: string; spokenStart: number }> = [];
+  private voiceBuffer = "";
+  private voiceParentheticalBuffer = "";
+  private voiceParentheses: string[] = [];
+  private firstVoiceSentenceEmitted = false;
 
   reset() {
     this.buffer = "";
     this.parentheses = [];
+    this.voiceBuffer = "";
+    this.voiceParentheticalBuffer = "";
+    this.voiceParentheses = [];
+    this.firstVoiceSentenceEmitted = false;
   }
 
   feed(chunk: string, flush = false, speakParentheticalContent = false): string[] {
+    if (speakParentheticalContent) return this.feedVoice(chunk, flush);
+
     for (const character of chunk) {
       if (character === "（" || character === "(") {
-        if (
-          speakParentheticalContent
-          && !this.parentheses.length
-          && this.buffer
-          && !SPOKEN_BOUNDARY.test(this.buffer)
-        ) {
-          this.buffer += "。";
-        }
         this.parentheses.push({
           closer: character === "（" ? "）" : ")",
           spokenStart: this.buffer.length,
@@ -63,22 +77,12 @@ export class SpeechSegmenter {
       if (this.parentheses.length) {
         const current = this.parentheses[this.parentheses.length - 1];
         if (character === current.closer) {
-          const completed = this.parentheses.pop()!;
-          if (
-            speakParentheticalContent
-            && !this.parentheses.length
-            && this.buffer.length > completed.spokenStart
-            && !SPOKEN_BOUNDARY.test(this.buffer)
-          ) {
-            this.buffer += "。";
-          }
+          this.parentheses.pop();
         } else if (character === "（" || character === "(") {
           this.parentheses.push({
             closer: character === "（" ? "）" : ")",
             spokenStart: this.buffer.length,
           });
-        } else if (speakParentheticalContent) {
-          this.buffer += character;
         }
         continue;
       }
@@ -86,11 +90,6 @@ export class SpeechSegmenter {
       this.buffer += character;
     }
 
-    if (speakParentheticalContent && this.parentheses.length && !flush) return [];
-    if (speakParentheticalContent && flush && this.parentheses.length) {
-      if (this.buffer && !SPOKEN_BOUNDARY.test(this.buffer)) this.buffer += "。";
-      this.parentheses = [];
-    }
     const extracted = extractCompleteSentences(this.buffer);
     this.buffer = extracted.remainder;
     if (!flush) return extracted.sentences;
@@ -98,6 +97,68 @@ export class SpeechSegmenter {
     const tail = normalizeSpeechSegment(this.buffer);
     this.reset();
     return tail ? [...extracted.sentences, tail] : extracted.sentences;
+  }
+
+  private feedVoice(chunk: string, flush: boolean): string[] {
+    const segments: string[] = [];
+    const emitNormalBlock = () => {
+      let block = normalizeSpeechSegment(this.voiceBuffer);
+      this.voiceBuffer = "";
+      if (!block) return;
+      if (!SPOKEN_BOUNDARY.test(block)) block += "。";
+      segments.push(block);
+      this.firstVoiceSentenceEmitted = true;
+    };
+    const emitParenthetical = () => {
+      let block = normalizeSpeechSegment(this.voiceParentheticalBuffer);
+      this.voiceParentheticalBuffer = "";
+      if (!block) return;
+      if (!SPOKEN_BOUNDARY.test(block)) block += "。";
+      segments.push(block);
+    };
+
+    for (const character of chunk) {
+      if (this.voiceParentheses.length) {
+        const currentCloser = this.voiceParentheses[this.voiceParentheses.length - 1];
+        if (character === currentCloser) {
+          this.voiceParentheses.pop();
+          if (!this.voiceParentheses.length) emitParenthetical();
+        } else if (character === "（" || character === "(") {
+          this.voiceParentheses.push(character === "（" ? "）" : ")");
+        } else {
+          this.voiceParentheticalBuffer += character;
+        }
+        continue;
+      }
+
+      if (character === "（" || character === "(") {
+        // Ordinary prose after the first low-latency sentence is accumulated
+        // into one block and is cut only when a parenthetical block begins.
+        emitNormalBlock();
+        this.voiceParentheses.push(character === "（" ? "）" : ")");
+        continue;
+      }
+      if (character === "）" || character === ")") continue;
+
+      this.voiceBuffer += character;
+      if (!this.firstVoiceSentenceEmitted) {
+        const extracted = extractFirstCompleteSentence(this.voiceBuffer);
+        if (extracted.sentence) {
+          segments.push(extracted.sentence);
+          this.voiceBuffer = extracted.remainder;
+          this.firstVoiceSentenceEmitted = true;
+        }
+      }
+    }
+
+    if (!flush) return segments;
+    if (this.voiceParentheses.length) {
+      this.voiceParentheses = [];
+      emitParenthetical();
+    }
+    emitNormalBlock();
+    this.reset();
+    return segments;
   }
 }
 

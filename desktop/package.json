@@ -1,6 +1,6 @@
 {
   "name": "mindspace-desktop",
-  "version": "0.5.17",
+  "version": "0.5.18",
   "description": "Mindspace local AI desktop application",
   "author": "Mindspace",
   "private": true,
@@ -48,7 +48,8 @@
       "component-manager.cjs",
       "gpt-sovits-catalog.cjs",
       "runtime-manager.cjs",
-      "service-policy.cjs",
+    "service-policy.cjs",
+    "process-check.cjs",
       "announcement-policy.cjs",
       "app-paths.cjs",
       "storage-location.cjs",

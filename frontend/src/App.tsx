@@ -76,6 +76,8 @@ const TTS_FIRST_PCM_TIMEOUT_MS = 8_000;
 const TTS_PLAYBACK_START_TIMEOUT_MS = 1_500;
 const TTS_STREAM_IDLE_TIMEOUT_MS = 15_000;
 const TTS_PLAYBACK_END_GRACE_MS = 8_000;
+const TTS_READY_WAIT_LIMIT_MS = 90_000;
+const TTS_READY_POLL_MS = 2_000;
 const VOICE_RECONNECT_DELAYS_MS = [800, 1600, 3200, 5000] as const;
 
 interface ActiveRunRecord {
@@ -192,7 +194,28 @@ export function shouldIgnoreASREvent(inputLocked: boolean, event: string) {
 }
 
 export function voiceReconnectDelay(attempt: number) {
-  return VOICE_RECONNECT_DELAYS_MS[Math.max(0, attempt)] ?? null;
+  return VOICE_RECONNECT_DELAYS_MS[Math.min(
+    Math.max(0, attempt),
+    VOICE_RECONNECT_DELAYS_MS.length - 1,
+  )];
+}
+
+function waitWithSignal(milliseconds: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("Cancelled", "AbortError"));
+      return;
+    }
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      reject(new DOMException("Cancelled", "AbortError"));
+    };
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 export function asrClientDisposition(data: Record<string, unknown>) {
@@ -507,20 +530,14 @@ function App() {
     setVoiceInputLocked(false, "voice_transport_lost");
     const attempt = voiceReconnectAttemptRef.current;
     const delay = voiceReconnectDelay(attempt);
-    if (delay == null) {
-      setVoice((current) => ({
-        ...current,
-        phase: "error",
-        error: `${reason}，自动恢复失败，请点击“恢复语音”或退出`,
-        level: 0,
-      }));
-      return;
-    }
     voiceReconnectAttemptRef.current = attempt + 1;
+    const initialRecovery = attempt < VOICE_RECONNECT_DELAYS_MS.length;
     setVoice((current) => ({
       ...current,
       phase: "connecting",
-      error: `${reason}，正在自动恢复（${attempt + 1}/${VOICE_RECONNECT_DELAYS_MS.length}）`,
+      error: initialRecovery
+        ? `${reason}，正在自动恢复（${attempt + 1}/${VOICE_RECONNECT_DELAYS_MS.length}）`
+        : `${reason}，服务仍在启动，后台持续恢复（第 ${attempt + 1} 次）`,
       level: 0,
     }));
     voiceReconnectTimerRef.current = window.setTimeout(() => {
@@ -679,13 +696,40 @@ function App() {
     ttsControllersRef.current.add(controller);
     item.prepared = (async () => {
       const speed = num(settings?.audio.tts_speed, 1);
+      const readyStartedAt = performance.now();
+      while (true) {
+        const status = await requestWithTimeout<{
+          tts_ready?: boolean;
+          tts_error?: string;
+        }>("/api/v1/audio/status", { signal: controller.signal }, 3_000);
+        if (status.tts_ready) break;
+        if (performance.now() - readyStartedAt >= TTS_READY_WAIT_LIMIT_MS) {
+          throw new Error(str(status.tts_error || "语音合成服务启动超时"));
+        }
+        if (voiceOpenRef.current) {
+          setVoice((current) => ({
+            ...current,
+            phase: "connecting",
+            error: str(status.tts_error || "语音合成模型正在启动，请稍候"),
+            level: 0,
+          }));
+        }
+        await waitWithSignal(TTS_READY_POLL_MS, controller.signal);
+      }
       const responseTimeout = window.setTimeout(() => controller.abort("tts_response_timeout"), TTS_RESPONSE_TIMEOUT_MS);
       let response: Response;
       try {
         response = await fetch("/api/v1/audio/tts/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: item.text, request_id: runIdRef.current || uid(), speed }),
+          body: JSON.stringify({
+            text: item.text,
+            // All segments from one answer share the run id.  AudioService now
+            // tracks a set of tasks per id, so one interrupt cancels the whole
+            // spoken answer without later segments overwriting earlier ones.
+            request_id: runIdRef.current || item.id,
+            speed,
+          }),
           signal: controller.signal,
         });
       } catch (error) {
@@ -922,9 +966,12 @@ function App() {
     if (!speech) return;
     ttsResponseStartedRef.current = true;
     audioQueueRef.current.push({ id: uid(), text: speech });
-    if (audioPlayingRef.current) prepareNextSpeech();
-    else void playQueue();
-  }, [playQueue, prepareNextSpeech, settings]);
+    // Do not open another worker request for every streamed sentence.  The
+    // current PCM pump schedules exactly one look-ahead after synthesis has
+    // completed; extra eager fetches used to accumulate behind GPT-SoVITS'
+    // single inference lock and survived browser cancellation.
+    if (!audioPlayingRef.current) void playQueue();
+  }, [playQueue, settings]);
 
   const acceptSpeechDelta = useCallback((delta: string, flush = false) => {
     const sentences = speechSegmenterRef.current.feed(delta, flush, voiceOpenRef.current);
@@ -1448,6 +1495,22 @@ function App() {
       && !closingVoiceRef.current
       && voiceSessionGenerationRef.current === generation
     );
+    try {
+      const status = await requestWithTimeout<{
+        asr_ready?: boolean;
+        asr_error?: string;
+      }>("/api/v1/audio/status", {}, 3_000);
+      if (!isCurrent()) return;
+      if (!status.asr_ready) {
+        scheduleVoiceReconnect(str(status.asr_error || "语音识别模型仍在启动"));
+        return;
+      }
+    } catch (error) {
+      if (isCurrent()) {
+        scheduleVoiceReconnect(`语音识别服务尚未就绪：${(error as Error).message}`);
+      }
+      return;
+    }
     const releaseLocal = () => {
       if (worklet) worklet.port.onmessage = null;
       if (socket) {

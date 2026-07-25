@@ -17,6 +17,7 @@ const { createRuntimeManager } = require("./runtime-manager.cjs");
 const { SERVICE_START_ORDER, isFatalStartFailure, isStaleCore, serviceRestartDelay, shouldWaitForAsrBeforeLocalTts } = require("./service-policy.cjs");
 const { appPaths, ensureAppPaths, migrateLegacyLayout } = require("./app-paths.cjs");
 const { cleanupMigratedSource, migrateStorage } = require("./storage-location.cjs");
+const { runProcessCheck } = require("./process-check.cjs");
 const {
   bundledArchive,
   bundledVersion,
@@ -356,7 +357,7 @@ async function snapshot() {
   };
 }
 
-function launchService(name) {
+async function launchService(name, generation) {
   const root = rootPath();
   const ps7 = resolvePowerShell();
   const service = services[name];
@@ -375,12 +376,16 @@ function launchService(name) {
       : "ASR CUDA 尚未安装；请点击“安装并启动”，基础文字功能不受影响" };
   }
   if (name === "asr") {
-    const verification = spawnSync(asrPython, ["-c", "import torch, torchaudio, funasr, fastapi, uvicorn, websockets; assert torch.cuda.is_available()"], {
-      encoding: "utf8", windowsHide: true, timeout: 45_000, env: serviceEnvironment(),
+    const verification = await runProcessCheck(asrPython, ["-c", "import torch, torchaudio, funasr, fastapi, uvicorn, websockets; assert torch.cuda.is_available()"], {
+      timeoutMs: 45_000,
+      env: serviceEnvironment(),
     });
     if (verification.status !== 0) {
       fs.rmSync(asrReadyMarker, { force: true });
-      return { ok: false, error: `ASR CUDA 校验未通过，已标记为可续修：${String(verification.stderr || verification.stdout || "依赖缺失").trim().slice(-360)}` };
+      const detail = verification.timedOut
+        ? "校验超时"
+        : verification.error?.message || verification.stderr || verification.stdout || "依赖缺失";
+      return { ok: false, error: `ASR CUDA 校验未通过，已标记为可续修：${String(detail).trim().slice(-360)}` };
     }
   }
   if (name === "tts" && configuredTtsProvider(root) === "cosyvoice") {
@@ -420,6 +425,9 @@ function launchService(name) {
     if (!fs.existsSync(worker) || !fs.existsSync(code)) return { ok: false, error: "GPT-SoVITS 推理代码缺失，请先检查应用更新" };
     if (!selectedComponent?.ready) return { ok: false, error: `${voice.label} 模型尚未完整下载` };
   }
+  if (generation !== undefined && (startGenerations.get(name) || 0) !== generation) {
+    return { ok: false, cancelled: true, error: "启动已被停止操作取消" };
+  }
   const logs = logRoot();
   fs.mkdirSync(logs, { recursive: true });
   const out = fs.openSync(path.join(logs, `${name}.launcher.log`), "a");
@@ -452,7 +460,7 @@ async function startService(name, recoveryAttempt = false) {
     if ((startGenerations.get(name) || 0) !== generation) {
       return { ok: false, cancelled: true, error: "启动已被停止操作取消" };
     }
-    return launchService(name);
+    return launchService(name, generation);
   })();
   starts.set(name, task);
   try {
