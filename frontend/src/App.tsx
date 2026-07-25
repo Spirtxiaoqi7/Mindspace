@@ -74,6 +74,9 @@ const VOICE_ENTRY_TIMEOUT_MS = 10_000;
 const TTS_RESPONSE_TIMEOUT_MS = 15_000;
 const TTS_FIRST_PCM_TIMEOUT_MS = 8_000;
 const TTS_PLAYBACK_START_TIMEOUT_MS = 1_500;
+const TTS_STREAM_IDLE_TIMEOUT_MS = 15_000;
+const TTS_PLAYBACK_END_GRACE_MS = 8_000;
+const VOICE_RECONNECT_DELAYS_MS = [800, 1600, 3200, 5000] as const;
 
 interface ActiveRunRecord {
   run_id: string;
@@ -186,6 +189,10 @@ const INPUT_LOCKED_ASR_EVENTS = [
 
 export function shouldIgnoreASREvent(inputLocked: boolean, event: string) {
   return inputLocked && INPUT_LOCKED_ASR_EVENTS.includes(event);
+}
+
+export function voiceReconnectDelay(attempt: number) {
+  return VOICE_RECONNECT_DELAYS_MS[Math.max(0, attempt)] ?? null;
 }
 
 export function asrClientDisposition(data: Record<string, unknown>) {
@@ -361,6 +368,9 @@ function App() {
   const playbackContextRef = useRef<AudioContext | null>(null);
   const workletRef = useRef<AudioWorkletNode | null>(null);
   const voiceSessionGenerationRef = useRef(0);
+  const voiceReconnectTimerRef = useRef<number | null>(null);
+  const voiceReconnectAttemptRef = useRef(0);
+  const startListeningRef = useRef<(() => void) | null>(null);
   const voiceEntryControllerRef = useRef<AbortController | null>(null);
   const voiceEntryGenerationRef = useRef(0);
   const voiceConnectWatchdogRef = useRef<number | null>(null);
@@ -381,6 +391,7 @@ function App() {
   const speechSegmenterRef = useRef(new SpeechSegmenter());
   const ttsResponseStartedRef = useRef(false);
   const partialRenderRef = useRef(0);
+  const voiceLevelRenderRef = useRef(0);
   const pendingResponseDeltaRef = useRef("");
   const responseFrameRef = useRef<number | null>(null);
   const closingVoiceRef = useRef(false);
@@ -490,6 +501,33 @@ function App() {
     }
     if (locked) setVoice((current) => ({ ...current, level: 0 }));
   }, []);
+
+  const scheduleVoiceReconnect = useCallback((reason: string) => {
+    if (!voiceOpenRef.current || closingVoiceRef.current || voiceReconnectTimerRef.current != null) return;
+    setVoiceInputLocked(false, "voice_transport_lost");
+    const attempt = voiceReconnectAttemptRef.current;
+    const delay = voiceReconnectDelay(attempt);
+    if (delay == null) {
+      setVoice((current) => ({
+        ...current,
+        phase: "error",
+        error: `${reason}，自动恢复失败，请点击“恢复语音”或退出`,
+        level: 0,
+      }));
+      return;
+    }
+    voiceReconnectAttemptRef.current = attempt + 1;
+    setVoice((current) => ({
+      ...current,
+      phase: "connecting",
+      error: `${reason}，正在自动恢复（${attempt + 1}/${VOICE_RECONNECT_DELAYS_MS.length}）`,
+      level: 0,
+    }));
+    voiceReconnectTimerRef.current = window.setTimeout(() => {
+      voiceReconnectTimerRef.current = null;
+      if (voiceOpenRef.current && !closingVoiceRef.current) startListeningRef.current?.();
+    }, delay);
+  }, [setVoiceInputLocked]);
 
   const captureVoiceInterruption = useCallback((cause = "confirmed_user_speech") => {
     const current = currentSpeechRef.current;
@@ -616,6 +654,7 @@ function App() {
       ttsWorkletLoadedRef.current = false;
       context.onstatechange = () => {
         if (audioPlayingRef.current && context?.state !== "running" && voiceOpenRef.current) {
+          currentPlaybackDoneRef.current?.();
           setVoice((current) => ({
             ...current,
             phase: "error",
@@ -678,11 +717,26 @@ function App() {
       handle.pump = (async () => {
         try {
           while (true) {
-            const { value, done } = await reader.read();
+            let idleTimer: number | null = null;
+            const stalled = new Promise<never>((_resolve, reject) => {
+              idleTimer = window.setTimeout(() => {
+                controller.abort("tts_stream_idle_timeout");
+                reject(new Error("语音合成流长时间没有继续返回数据"));
+              }, TTS_STREAM_IDLE_TIMEOUT_MS);
+            });
+            let packet: ReadableStreamReadResult<Uint8Array>;
+            try {
+              packet = await Promise.race([reader.read(), stalled]);
+            } finally {
+              if (idleTimer != null) window.clearTimeout(idleTimer);
+            }
+            const { value, done } = packet;
             if (done) break;
             if (value?.byteLength) {
               handle.totalInputSamples += Math.floor(value.byteLength / 2);
-              handle.chunks.push(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
+              const pcm = new Uint8Array(value.byteLength);
+              pcm.set(value);
+              handle.chunks.push(pcm.buffer);
               wake();
             }
           }
@@ -758,7 +812,11 @@ function App() {
         const receivedMs = handle.totalInputSamples / Math.max(1, handle.sampleRate) * 1000;
         const estimatedMs = Math.max(receivedMs, item.text.length * 180);
         currentSpeechRef.current = { item, playedMs, totalMs: estimatedMs, complete: handle.done };
-        setVoice((current) => ({ ...current, level: num(event.data.value) }));
+        const now = performance.now();
+        if (now - voiceLevelRenderRef.current >= 50) {
+          voiceLevelRenderRef.current = now;
+          setVoice((current) => ({ ...current, level: num(event.data.value) }));
+        }
       } else if (event.data.type === "ended") {
         resolveEnded();
       }
@@ -785,11 +843,26 @@ function App() {
       if (handle.error) throw handle.error;
       if (handle.totalInputSamples <= 0) throw new Error("语音合成返回了空音频");
       node.port.postMessage({ type: "end" });
-      await ended;
+      const expectedPlaybackMs = handle.totalInputSamples / Math.max(1, handle.sampleRate) * 1000;
+      let endTimer: number | null = null;
+      try {
+        await Promise.race([
+          ended,
+          new Promise<never>((_resolve, reject) => {
+            endTimer = window.setTimeout(
+              () => reject(new Error("语音播放器结束等待超时")),
+              Math.max(TTS_PLAYBACK_END_GRACE_MS, expectedPlaybackMs + TTS_PLAYBACK_END_GRACE_MS),
+            );
+          }),
+        ]);
+      } finally {
+        if (endTimer != null) window.clearTimeout(endTimer);
+      }
       if (playbackStartError) throw playbackStartError;
       if (!playbackStarted) throw new Error("音频播放器未能启动");
     } finally {
       if (playbackStartTimer != null) window.clearTimeout(playbackStartTimer);
+      node.port.postMessage({ type: "stop" });
       node.disconnect();
       gain.disconnect();
       if (currentPlaybackNodeRef.current === node) currentPlaybackNodeRef.current = null;
@@ -814,6 +887,9 @@ function App() {
         if (generation === playbackGenerationRef.current) completedSpeechRef.current.push(item.text);
       } catch (error) {
         playbackFailed = true;
+        audioQueueRef.current = [];
+        ttsControllersRef.current.forEach((controller) => controller.abort("tts_queue_failed"));
+        ttsControllersRef.current.clear();
         if ((error as Error).name !== "AbortError") {
           const message = (error as Error).message;
           setVoiceInputLocked(false, "tts_failed");
@@ -1319,6 +1395,8 @@ function App() {
 
   const stopListening = useCallback((finalize = false) => {
     voiceSessionGenerationRef.current += 1;
+    if (voiceReconnectTimerRef.current != null) window.clearTimeout(voiceReconnectTimerRef.current);
+    voiceReconnectTimerRef.current = null;
     if (voiceConnectWatchdogRef.current != null) window.clearTimeout(voiceConnectWatchdogRef.current);
     voiceConnectWatchdogRef.current = null;
     const socket = voiceSocketRef.current;
@@ -1370,15 +1448,6 @@ function App() {
       && !closingVoiceRef.current
       && voiceSessionGenerationRef.current === generation
     );
-    voiceConnectWatchdogRef.current = window.setTimeout(() => {
-      if (!isCurrent()) return;
-      setVoice((current) => ({
-        ...current,
-        phase: "error",
-        error: "语音连接等待超时，请点击“恢复语音”重连",
-        level: 0,
-      }));
-    }, 12_000);
     const releaseLocal = () => {
       if (worklet) worklet.port.onmessage = null;
       if (socket) {
@@ -1400,6 +1469,12 @@ function App() {
       if (workletRef.current === worklet) workletRef.current = null;
       if (silentMonitorRef.current === silentMonitor) silentMonitorRef.current = null;
     };
+    voiceConnectWatchdogRef.current = window.setTimeout(() => {
+      if (!isCurrent()) return;
+      voiceConnectWatchdogRef.current = null;
+      releaseLocal();
+      scheduleVoiceReconnect("语音连接等待超时");
+    }, 12_000);
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
       if (!isCurrent()) { releaseLocal(); return; }
@@ -1447,7 +1522,10 @@ function App() {
           noiseReportRef.current = { value: floor, at: now };
           activeSocket.send(JSON.stringify({ action: "playback_state", playing: audioPlayingRef.current, noise_floor_db: floor }));
         }
-        if (!audioPlayingRef.current) setVoice((current) => ({ ...current, level: event.data.level }));
+        if (!audioPlayingRef.current && now - voiceLevelRenderRef.current >= 50) {
+          voiceLevelRenderRef.current = now;
+          setVoice((current) => ({ ...current, level: event.data.level }));
+        }
       };
       activeSocket.onopen = () => {
         if (!isCurrent()) { releaseLocal(); return; }
@@ -1470,6 +1548,7 @@ function App() {
         if (payload.event === "asr.ready") {
           if (voiceConnectWatchdogRef.current != null) window.clearTimeout(voiceConnectWatchdogRef.current);
           voiceConnectWatchdogRef.current = null;
+          voiceReconnectAttemptRef.current = 0;
           setVoice((current) => ({ ...current, phase: "listening", error: "" }));
           scheduleIdleContinuation("voice");
         }
@@ -1602,17 +1681,22 @@ function App() {
           else setPlaybackDucked(false);
         }
         if (payload.event === "asr.interrupted") setVoice((current) => ({ ...current, phase: "interrupted", reply: "", level: 0 }));
-        if (payload.event === "asr.error") setVoice((current) => ({ ...current, phase: "error", error: str(payload.data.error), level: 0 }));
+        if (payload.event === "asr.error") {
+          setVoice((current) => ({ ...current, phase: "connecting", error: str(payload.data.error), level: 0 }));
+          try { activeSocket.close(1012, "asr service unavailable"); } catch { /* close handler will recover */ }
+        }
       };
       activeSocket.onerror = () => {
         if (voiceConnectWatchdogRef.current != null) window.clearTimeout(voiceConnectWatchdogRef.current);
         voiceConnectWatchdogRef.current = null;
-        if (isCurrent()) setVoice((current) => ({ ...current, phase: "error", error: "实时语音连接失败", level: 0 }));
+        if (isCurrent()) setVoice((current) => ({ ...current, phase: "connecting", error: "实时语音连接失败，等待恢复", level: 0 }));
       };
       activeSocket.onclose = () => {
         if (voiceConnectWatchdogRef.current != null) window.clearTimeout(voiceConnectWatchdogRef.current);
         voiceConnectWatchdogRef.current = null;
-        if (isCurrent()) setVoice((current) => ({ ...current, phase: "error", error: current.error || "语音连接已断开", level: 0 }));
+        const current = isCurrent();
+        releaseLocal();
+        if (current) scheduleVoiceReconnect("语音识别连接已断开");
       };
     } catch (error) {
       const current = isCurrent();
@@ -1624,7 +1708,12 @@ function App() {
         setVoice((state) => ({ ...state, phase: "error", error: `无法使用麦克风：${(error as Error).message}`, level: 0 }));
       }
     }
-  }, [cancelIdleContinuation, cancelRun, captureVoiceInterruption, queueVoiceSegment, scheduleIdleContinuation, setPlaybackDucked, settings?.audio.asr_adaptive_noise_enabled, settings?.audio.asr_noise_calibration_ms, settings?.audio.asr_noise_gate_db, stopAudio, stopListening]);
+  }, [cancelIdleContinuation, cancelRun, captureVoiceInterruption, queueVoiceSegment, scheduleIdleContinuation, scheduleVoiceReconnect, setPlaybackDucked, settings?.audio.asr_adaptive_noise_enabled, settings?.audio.asr_noise_calibration_ms, settings?.audio.asr_noise_gate_db, stopAudio, stopListening]);
+
+  useEffect(() => {
+    startListeningRef.current = () => { void startListening(); };
+    return () => { startListeningRef.current = null; };
+  }, [startListening]);
 
   const enterVoice = useCallback((context: VoiceInteractionContext) => {
     cancelIdleContinuation();
@@ -1632,6 +1721,7 @@ function App() {
     companionRoundRef.current = 0;
     companionArmedRef.current = false;
     voiceInputLockedRef.current = false;
+    voiceReconnectAttemptRef.current = 0;
     setCompanionRound(0);
     voiceOpenRef.current = true;
     voiceInteractionRef.current = context;
@@ -1758,6 +1848,9 @@ function App() {
   }, [cancelIdleContinuation, closePlaybackContext, messages, scheduleIdleContinuation, stopAudio, stopListening]);
 
   const retryVoice = useCallback(async () => {
+    if (voiceReconnectTimerRef.current != null) window.clearTimeout(voiceReconnectTimerRef.current);
+    voiceReconnectTimerRef.current = null;
+    voiceReconnectAttemptRef.current = 0;
     voiceInputLockedRef.current = false;
     stopAudio();
     try {

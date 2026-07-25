@@ -7,6 +7,7 @@ import App, {
   asrClientDisposition,
   companionContinuationPlan,
   shouldIgnoreASREvent,
+  voiceReconnectDelay,
   voiceMergeDelay,
 } from "./App";
 
@@ -38,6 +39,16 @@ it("drops speech events while a committed voice turn is waiting for TTS", () => 
   expect(shouldIgnoreASREvent(true, "asr.ready")).toBe(false);
   expect(shouldIgnoreASREvent(true, "asr.error")).toBe(false);
   expect(shouldIgnoreASREvent(false, "asr.speech_start")).toBe(false);
+});
+
+it("uses bounded automatic voice reconnect backoff", () => {
+  expect([0, 1, 2, 3, 4].map(voiceReconnectDelay)).toEqual([
+    800,
+    1600,
+    3200,
+    5000,
+    null,
+  ]);
 });
 
 it("never submits or interrupts for an all-low-confidence ASR draft", () => {

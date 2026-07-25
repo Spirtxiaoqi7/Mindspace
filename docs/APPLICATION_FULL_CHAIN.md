@@ -226,14 +226,22 @@ JSON 基线紧跟 system，用确定性键排序和紧凑序列化生成。它�
 
 VAD final 触发正常聊天 SSE。用户再次开口会立即取消当前 run、终止播放、清空 TTS 队列并开始新一轮识别。退出时关闭 WebSocket、媒体轨、Worklet、AudioContext、请求控制器和播放缓冲。
 
-前端只把完整自然句送入 `/api/v1/audio/tts/stream`，同时继续渲染下一段。文本清洗会跳过全角/半角括号中的动作描写。音频 PCM 通过播放 AudioWorklet 顺序消费，避免每句创建独立 `<audio>` 导致空隙。
+前端只把完整自然句送入 `/api/v1/audio/tts/stream`，同时继续渲染下一段。
+实时语音会朗读全角/半角括号中的动作描写；音频 PCM 通过播放 AudioWorklet
+顺序消费，避免每句创建独立 `<audio>` 导致空隙。
 
 可切换两条同逻辑链路：
 
 - SiliconFlow 云端流式 TTS：正式版默认；API 配置与 LLM 配置同页，自检同时验证 LLM 与 TTS。
 - 本地 CosyVoice：可选；支持参考音频上传、ASR 自动识别参考文本、替换、清除和测试语音。
 
-ASR/TTS 异常时语音页保留，用户仍可退出或重试；系统不偷偷切换浏览器音色。
+ASR WebSocket 异常时先释放旧麦克风、Worklet、AudioContext 和连接，再按
+`0.8s / 1.6s / 3.2s / 5s` 最多重连四次。TTS 的响应、首包、流空闲、播放器启动
+和播放结束均有独立看门狗；失败会清空待播队列并解除输入门。语音页始终保留
+退出和手动恢复入口，系统不偷偷切换浏览器音色。
+
+Launcher 对自己启动的 Core、ASR 和 TTS 子进程执行 `1s / 2.5s / 5s` 三次有界
+崩溃恢复；连续失败后停止拉起并写入 `runtime-manager.jsonl`，避免无限重启争抢显存。
 
 ## 11. SSE 与诊断
 

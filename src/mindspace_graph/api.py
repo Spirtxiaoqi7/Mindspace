@@ -976,6 +976,8 @@ def create_app(
             async def client_to_worker(upstream: Any) -> None:
                 while True:
                     message = await websocket.receive()
+                    if message.get("type") == "websocket.disconnect":
+                        return
                     if message.get("bytes") is not None:
                         await upstream.send(message["bytes"])
                     elif message.get("text"):
@@ -1034,18 +1036,31 @@ def create_app(
                     done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
                     for task in pending:
                         task.cancel()
-                    for task in done:
-                        task.result()
+                    # Always retrieve every task result. Otherwise a client
+                    # disconnect racing the upstream close is logged as
+                    # "Task exception was never retrieved" and leaves the
+                    # bridge looking like a service crash.
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    for result in results:
+                        if isinstance(result, asyncio.CancelledError):
+                            continue
+                        if isinstance(result, (WebSocketDisconnect, RuntimeError)):
+                            return
+                        if isinstance(result, BaseException):
+                            raise result
             except (WebSocketDisconnect, RuntimeError):
                 return
             except Exception as exc:  # noqa: BLE001
-                await websocket.send_json(
-                    {
-                        "event": "asr.error",
-                        "data": {"error": f"FunASR worker unavailable: {exc}"},
-                    }
-                )
-                await websocket.close(code=1011)
+                try:
+                    await websocket.send_json(
+                        {
+                            "event": "asr.error",
+                            "data": {"error": f"FunASR worker unavailable: {exc}"},
+                        }
+                    )
+                    await websocket.close(code=1011)
+                except (WebSocketDisconnect, RuntimeError):
+                    pass
             return
 
         await websocket.send_json({"event": "asr.loading", "data": {"provider": "funasr"}})
@@ -1100,6 +1115,8 @@ def create_app(
         try:
             while True:
                 message = await websocket.receive()
+                if message.get("type") == "websocket.disconnect":
+                    break
                 raw_events: list[dict[str, Any]] = []
                 if message.get("bytes") is not None:
                     raw_events = await asyncio.to_thread(session.feed, message["bytes"])

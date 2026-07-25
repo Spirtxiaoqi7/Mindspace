@@ -270,7 +270,14 @@ class en_G2p(G2p):
     def __call__(self, text):
         # tokenization
         words = word_tokenize(text)
-        tokens = pos_tag(words)  # tuples of (word, tag)
+        try:
+            tokens = pos_tag(words)  # tuples of (word, tag)
+        except LookupError:
+            # The optional NLTK tagger corpus is not bundled in Mindspace.
+            # Pronunciation lookup works without it for ordinary words; only
+            # homograph preference loses POS context. Never fail an entire
+            # Chinese TTS turn merely because it contains an English token.
+            tokens = [(word, "") for word in words]
 
         # steps
         prons = []

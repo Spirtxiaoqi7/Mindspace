@@ -85,3 +85,30 @@ def test_voice_switch_reloads_catalog_for_newly_installed_voice(tmp_path: Path) 
     assert result["ok"] is True
     assert result["voice_id"] == "v4-new"
     assert "v4-new" in worker.voices
+
+
+def test_stream_disconnect_is_treated_as_client_cancellation() -> None:
+    class Worker:
+        def stream_synthesize(self, _payload):
+            yield b"pcm"
+
+    class ClosedClient:
+        def write(self, _chunk):
+            raise ConnectionAbortedError("client closed")
+
+        def flush(self):
+            raise AssertionError("flush must not run after a failed write")
+
+    handler_type = MODULE.make_handler(Worker())
+    handler = handler_type.__new__(handler_type)
+    handler.path = "/synthesize-stream"
+    handler.wfile = ClosedClient()
+    handler._payload = lambda: {"text": "测试"}
+    handler.send_response = lambda _status: None
+    handler.send_header = lambda _name, _value: None
+    handler.end_headers = lambda: None
+    handler._json = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("a disconnected stream cannot receive a JSON error")
+    )
+
+    handler.do_POST()

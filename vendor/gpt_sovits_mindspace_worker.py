@@ -369,6 +369,7 @@ def make_handler(worker: GPTSoVITSWorker):
             self._json(404, {"ok": False, "error": "not found"})
 
         def do_POST(self) -> None:  # noqa: N802
+            streaming_response = False
             try:
                 payload = self._payload()
                 route = self.path.rstrip("/")
@@ -383,17 +384,36 @@ def make_handler(worker: GPTSoVITSWorker):
                     self.send_header("Content-Type", "application/octet-stream")
                     self.send_header("Cache-Control", "no-store")
                     self.end_headers()
+                    streaming_response = True
                     for chunk in worker.stream_synthesize(payload):
                         self.wfile.write(chunk)
                         self.wfile.flush()
                     return
                 self._json(404, {"ok": False, "error": "not found"})
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
                 return
             except Exception as exc:  # noqa: BLE001
+                if streaming_response:
+                    # Headers and possibly PCM have already been sent, so a
+                    # second JSON 500 would corrupt the stream and often raises
+                    # another socket exception. Close this request only; the
+                    # resident worker remains healthy for the next turn.
+                    self.close_connection = True
+                    print(
+                        json.dumps(
+                            {
+                                "event": "tts.stream_failed",
+                                "error": str(exc),
+                            },
+                            ensure_ascii=False,
+                        ),
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                    return
                 try:
                     self._json(500, {"ok": False, "error": str(exc)})
-                except (BrokenPipeError, ConnectionResetError):
+                except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
                     pass
 
     return Handler

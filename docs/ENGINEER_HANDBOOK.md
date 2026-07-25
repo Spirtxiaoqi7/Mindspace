@@ -285,11 +285,17 @@ SQLite 开启 WAL、外键、`synchronous=FULL` 和 busy timeout。任一步抛�
 
 ## 13. 实时语音
 
-浏览器 `pcm-worklet.js` 完成降采样、PCM16 和能量计算，通过 `/api/v1/audio/asr/stream` 发送固定帧。ASR partial 必须限频，不能让每个音频帧触发 React 消息列表重渲染。
+浏览器 `pcm-worklet.js` 完成降采样、PCM16 和能量计算，通过 `/api/v1/audio/asr/stream` 发送固定帧。ASR partial 和音量动画必须限频，不能让每个音频帧触发 React 消息列表重渲染。
 
 VAD final 触发正常聊天 SSE。`asr.speech_start` 会取消当前 LangGraph run、TTS 请求和播放队列，形成插话。退出语音模式必须释放媒体轨、Worklet、AudioContext、WebSocket、AbortController 和音频缓冲。
 
-TTS 客户端按完整自然句切分；括号动作过滤后调用 `/api/v1/audio/tts/stream`。当前句播放期间继续生成下一句。云端 SiliconFlow 和本地 CosyVoice 共用分句、队列、取消和错误语义，禁止异常时偷偷切换浏览器音色。
+TTS 客户端按完整自然句切分；实时语音保留括号动作并调用
+`/api/v1/audio/tts/stream`。当前句播放期间继续生成下一句。云端 SiliconFlow 和
+本地 TTS 共用分句、队列、取消和错误语义。响应、首包、流空闲、播放器启动与
+结束都必须有看门狗，任何失败路径都要清空队列并解除输入门，禁止异常时偷偷切换浏览器音色。
+
+ASR 连接异常时前端最多重连四次，每次重连前必须释放旧媒体资源。Launcher 对
+自己启动的服务只做三次有界退避恢复；用户主动停止、退出和更新期间不得自动复活。
 
 ## 14. API 分类
 
@@ -432,6 +438,13 @@ mindspace-admin check --runtime <runtime目录>
 ### 语音一直聆听或误触发
 
 检查浏览器麦克风权限、ASR WebSocket、能量阈值、噪声门、最短语音时长和 VAD 静音时长。必须用真实 `asr.partial/final/speech_start` 时间线判断，不能只看麦克风动画。
+
+### 语音中断或页面像被锁住
+
+先检查 `api.launcher.log`、`asr.launcher.log`、`tts.launcher.log` 和
+`runtime-manager.jsonl`。确认断线后旧媒体轨与 Worklet 已释放、TTS 队列为空、
+输入门已解除，并区分客户端取消与 Worker 真正退出。不要靠刷新页面掩盖未结束的
+Promise、不可达的播放结束事件或未回收 WebSocket Task。
 
 ### TTS 首句慢
 

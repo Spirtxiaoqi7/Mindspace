@@ -14,7 +14,7 @@ const { createLauncherUpdater } = require("./launcher-updater.cjs");
 const { createComponentManager } = require("./component-manager.cjs");
 const { GPT_SOVITS_VOICES } = require("./gpt-sovits-catalog.cjs");
 const { createRuntimeManager } = require("./runtime-manager.cjs");
-const { SERVICE_START_ORDER, isFatalStartFailure, isStaleCore, shouldWaitForAsrBeforeLocalTts } = require("./service-policy.cjs");
+const { SERVICE_START_ORDER, isFatalStartFailure, isStaleCore, serviceRestartDelay, shouldWaitForAsrBeforeLocalTts } = require("./service-policy.cjs");
 const { appPaths, ensureAppPaths, migrateLegacyLayout } = require("./app-paths.cjs");
 const { cleanupMigratedSource, migrateStorage } = require("./storage-location.cjs");
 const {
@@ -44,6 +44,8 @@ const services = {
 const children = new Map();
 const starts = new Map();
 const startGenerations = new Map();
+const desiredServices = new Set();
+const serviceRecovery = new Map();
 const captureArg = process.argv.find((argument) => argument.startsWith("--capture="));
 const captureAnnouncement = process.argv.includes("--capture-announcement");
 let launcherWindow;
@@ -207,6 +209,48 @@ async function probe(service) {
   } catch (error) {
     return { online: false, detail: { error: String(error.message || error) } };
   } finally { clearTimeout(timeout); }
+}
+
+function recordServiceEvent(event, details = {}) {
+  try {
+    fs.mkdirSync(logRoot(), { recursive: true });
+    fs.appendFileSync(
+      path.join(logRoot(), "runtime-manager.jsonl"),
+      `${JSON.stringify({ at: new Date().toISOString(), event, ...details })}\n`,
+    );
+  } catch { /* diagnostics must never interrupt recovery */ }
+}
+
+function clearServiceRecovery(name) {
+  const recovery = serviceRecovery.get(name);
+  if (recovery?.timer) clearTimeout(recovery.timer);
+  serviceRecovery.delete(name);
+}
+
+function scheduleServiceRecovery(name, startedAt, exitCode, signal) {
+  if (quitting || !desiredServices.has(name)) return;
+  const previous = serviceRecovery.get(name) || { failures: 0, timer: null };
+  const uptimeMs = Math.max(0, Date.now() - startedAt);
+  const failures = uptimeMs >= 120_000 ? 1 : previous.failures + 1;
+  const delayMs = serviceRestartDelay(failures);
+  if (delayMs == null) {
+    desiredServices.delete(name);
+    serviceRecovery.set(name, { failures, timer: null });
+    recordServiceEvent("service.recovery_exhausted", { service: name, failures, uptime_ms: uptimeMs, exit_code: exitCode, signal });
+    return;
+  }
+  const timer = setTimeout(async () => {
+    const current = serviceRecovery.get(name);
+    if (!current || current.timer !== timer || quitting || !desiredServices.has(name)) return;
+    serviceRecovery.set(name, { ...current, timer: null });
+    recordServiceEvent("service.restart_attempt", { service: name, failure: failures });
+    const result = await startService(name, true);
+    if (!result.ok) {
+      recordServiceEvent("service.restart_failed", { service: name, failure: failures, error: result.error || "unknown" });
+    }
+  }, delayMs);
+  serviceRecovery.set(name, { failures, timer });
+  recordServiceEvent("service.restart_scheduled", { service: name, failure: failures, delay_ms: delayMs, uptime_ms: uptimeMs, exit_code: exitCode, signal });
 }
 
 function configuredTtsProvider(root) {
@@ -382,14 +426,18 @@ function launchService(name) {
   const child = spawn(ps7, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], {
     cwd: root, env: serviceEnvironment(), windowsHide: true, detached: false, stdio: ["ignore", out, out],
   });
+  const startedAt = Date.now();
   children.set(name, child);
-  child.once("exit", () => {
+  child.once("exit", (code, signal) => {
     if (children.get(name) === child) children.delete(name);
+    scheduleServiceRecovery(name, startedAt, code, signal);
   });
   return { ok: true, pid: child.pid };
 }
 
-async function startService(name) {
+async function startService(name, recoveryAttempt = false) {
+  if (!recoveryAttempt) clearServiceRecovery(name);
+  desiredServices.add(name);
   if (starts.has(name)) return starts.get(name);
   const running = children.get(name);
   if (running && running.exitCode === null && !running.killed) {
@@ -441,6 +489,8 @@ function serviceEnvironment(extra = {}) {
 }
 
 function stopService(name) {
+  desiredServices.delete(name);
+  clearServiceRecovery(name);
   startGenerations.set(name, (startGenerations.get(name) || 0) + 1);
   const child = children.get(name);
   if (!child) return { ok: false, error: "该服务不是由当前 Launcher 启动" };
@@ -503,6 +553,8 @@ async function waitForServiceReady(name, timeout) {
 }
 
 function stopServicesForUpdate() {
+  for (const name of desiredServices) clearServiceRecovery(name);
+  desiredServices.clear();
   const ps7 = resolvePowerShell();
   const script = path.join(rootPath(), "scripts", "stop-services.ps1");
   if (!ps7 || !fs.existsSync(script)) return allServices("stop");
