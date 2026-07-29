@@ -31,12 +31,14 @@ REQUIRED_SECTIONS = {
         "relationship_rules": dict,
         "behavior_rules": dict,
         "continuity": dict,
+        "roleplay": dict,
     },
     "runtime_state": {
         "relationship_state": dict,
         "user_state": dict,
         "ai_state": dict,
         "session_state": dict,
+        "roleplay_state": dict,
     },
 }
 
@@ -70,7 +72,7 @@ def _validate_safe_json(value: Any, *, depth: int = 0) -> None:
 
 
 class ProfileSchemaRegistry:
-    current_version = "1.1.0"
+    current_version = "1.2.0"
 
     def validate_document(
         self,

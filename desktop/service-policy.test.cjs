@@ -1,6 +1,15 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
-const { SERVICE_START_ORDER, isFatalStartFailure, isStaleCore, serviceRestartDelay, shouldWaitForAsrBeforeLocalTts } = require("./service-policy.cjs");
+const {
+  SERVICE_START_ORDER,
+  isFatalStartFailure,
+  isStaleCore,
+  productEntryState,
+  serviceRestartDelay,
+  shouldWaitForAsrBeforeLocalTts,
+} = require("./service-policy.cjs");
 
 test("core starts before optional local voice services", () => {
   assert.deepEqual(SERVICE_START_ORDER, ["api", "asr", "tts"]);
@@ -9,11 +18,29 @@ test("core starts before optional local voice services", () => {
   assert.equal(isFatalStartFailure("tts"), false);
 });
 
-test("local TTS waits for ASR readiness while CUDA models are loading", () => {
-  assert.equal(shouldWaitForAsrBeforeLocalTts("gpt-sovits", true, { online: false }), true);
-  assert.equal(shouldWaitForAsrBeforeLocalTts("cosyvoice", false, { online: true, detail: { ready: false } }), true);
-  assert.equal(shouldWaitForAsrBeforeLocalTts("gpt-sovits", false, { online: true, detail: { ready: true } }), false);
+test("TTS starts independently of ASR readiness", () => {
+  assert.equal(shouldWaitForAsrBeforeLocalTts("gpt-sovits", true, { online: false }), false);
+  assert.equal(shouldWaitForAsrBeforeLocalTts("cosyvoice", false, { online: true, detail: { ready: false } }), false);
+  assert.equal(shouldWaitForAsrBeforeLocalTts("qwen3-vllm", false, { online: false }), false);
   assert.equal(shouldWaitForAsrBeforeLocalTts("siliconflow", true, { online: false }), false);
+});
+
+test("product entry depends on Core and degrades explicitly to text-only mode", () => {
+  assert.deepEqual(productEntryState({ coreOnline: false, asrOnline: false }), {
+    canEnter: false,
+    mode: "text-only",
+    notice: "本次启动未启用语音功能（VAD/ASR 未启动），可以正常进行文字对话。",
+  });
+  assert.deepEqual(productEntryState({ coreOnline: true, asrOnline: false }), {
+    canEnter: true,
+    mode: "text-only",
+    notice: "本次启动未启用语音功能（VAD/ASR 未启动），可以正常进行文字对话。",
+  });
+  assert.deepEqual(productEntryState({ coreOnline: true, asrOnline: true }), {
+    canEnter: true,
+    mode: "voice-capable",
+    notice: "",
+  });
 });
 
 test("a running core from an older application is stale", () => {
@@ -27,4 +54,40 @@ test("crashed services use bounded restart backoff", () => {
   assert.equal(serviceRestartDelay(2), 2500);
   assert.equal(serviceRestartDelay(3), 5000);
   assert.equal(serviceRestartDelay(4), null);
+});
+
+test("ASR startup trusts the installer marker instead of repeating CUDA imports", () => {
+  const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
+  assert.match(main, /asrReadyMarker/);
+  assert.doesNotMatch(main, /runProcessCheck\(asrPython/);
+  assert.doesNotMatch(main, /fs\.rmSync\(asrReadyMarker/);
+});
+
+test("bulk startup starts local TTS without awaiting ASR cold load", () => {
+  const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
+  const bulkStart = main.slice(
+    main.indexOf("async function allServices"),
+    main.indexOf("function stopServicesForUpdate"),
+  );
+  assert.match(bulkStart, /scheduleStartupHealthRecheck\(name\)/);
+  assert.doesNotMatch(bulkStart, /await waitForServiceReady\("asr", 90_000\)/);
+  assert.doesNotMatch(bulkStart, /startLocalTtsAfterAsr/);
+});
+
+test("default launcher startup requests Core only", () => {
+  const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
+  const startup = main.match(/async function startDefaultCore\(\) \{[\s\S]*?\n\}/)?.[0] || "";
+  assert.match(startup, /startService\("api"\)/);
+  assert.doesNotMatch(startup, /allServices\("start"\)/);
+  assert.doesNotMatch(startup, /startService\("asr"\)/);
+  assert.doesNotMatch(startup, /ensureSelectedTtsService/);
+});
+
+test("the product grants microphone access only to its loopback Core origin", () => {
+  const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
+  assert.match(main, /configureProductMediaPermissions\(productWindow\.webContents\.session\)/);
+  assert.match(main, /origin === "http:\/\/127\.0\.0\.1:8765"/);
+  assert.match(main, /permission === "media"/);
+  assert.match(main, /mediaType === "audio"/);
+  assert.match(main, /mediaType === "unknown"/);
 });

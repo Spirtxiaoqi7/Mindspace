@@ -51,6 +51,42 @@ def test_persisted_demo_mode_migrates_to_real_llm_provider(tmp_path):
     assert json.loads(path.read_text(encoding="utf-8"))["llm"]["mode"] == "openai"
 
 
+def test_legacy_qwen_preset_migrates_to_locked_custom_voice(tmp_path):
+    settings = make_settings(tmp_path, tts_provider="qwen3-vllm")
+    path = settings.runtime_dir / "config" / "settings.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps({"audio": {"tts_qwen3_vllm_voice": "serena"}}),
+        encoding="utf-8",
+    )
+
+    store = ProductConfigStore(path, settings)
+    audio = store.snapshot()["audio"]
+
+    assert audio["tts_qwen3_vllm_task_type"] == "CustomVoice"
+    assert audio["tts_qwen3_vllm_voice"] == "serena"
+
+
+def test_flat_base_profile_migrates_back_to_expressive_custom_voice(tmp_path):
+    settings = make_settings(tmp_path, tts_provider="qwen3-vllm")
+    path = settings.runtime_dir / "config" / "settings.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps({
+            "audio": {
+                "tts_qwen3_vllm_voice": "mindspace_mature_alluring",
+                "tts_qwen3_vllm_task_type": "Base",
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    audio = ProductConfigStore(path, settings).snapshot()["audio"]
+
+    assert audio["tts_qwen3_vllm_task_type"] == "CustomVoice"
+    assert audio["tts_qwen3_vllm_voice"] == "serena"
+
+
 def test_appearance_font_scale_defaults_and_is_clamped(tmp_path):
     settings = make_settings(tmp_path)
     path = settings.runtime_dir / "config" / "settings.json"
@@ -72,9 +108,13 @@ def test_voice_phase_thresholds_and_idle_continuation_settings_are_migrated_and_
     store = ProductConfigStore(path, settings)
     snapshot = store.snapshot()
 
-    assert snapshot["audio"]["asr_listening_min_speech_ms"] == 160
-    assert snapshot["audio"]["asr_barge_in_min_speech_ms"] == 420
-    assert snapshot["audio"]["asr_adaptive_noise_enabled"] is True
+    assert snapshot["audio"]["asr_listening_min_speech_ms"] == 120
+    assert snapshot["audio"]["asr_listening_energy_threshold_db"] == -50
+    assert snapshot["audio"]["asr_energy_threshold_db"] == -50
+    assert snapshot["audio"]["asr_noise_gate_db"] == -55
+    assert snapshot["audio"]["asr_barge_in_energy_threshold_db"] == -38
+    assert snapshot["audio"]["asr_barge_in_min_speech_ms"] == 300
+    assert snapshot["audio"]["asr_adaptive_noise_enabled"] is False
     assert snapshot["audio"]["asr_utterance_merge_ms"] == 1100
     assert snapshot["audio"]["asr_silence_ms"] == 600
     assert snapshot["audio"]["asr_dynamic_endpointing"] is True
@@ -156,6 +196,59 @@ def test_legacy_fast_voice_merge_window_migrates_without_overwriting_custom_valu
     ] == 1450
 
 
+def test_legacy_voice_sensitivity_defaults_migrate_without_overwriting_custom_value(
+    tmp_path,
+):
+    settings = make_settings(tmp_path)
+    legacy = settings.runtime_dir / "legacy-sensitivity.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        json.dumps(
+            {
+                "audio": {
+                    "asr_energy_threshold_db": -35,
+                    "asr_noise_gate_db": -45,
+                    "asr_listening_energy_threshold_db": -36,
+                    "asr_listening_min_speech_ms": 160,
+                    "asr_barge_in_energy_threshold_db": -30,
+                    "asr_adaptive_noise_enabled": True,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    custom = settings.runtime_dir / "custom-sensitivity.json"
+    custom.write_text(
+        json.dumps(
+            {
+                "audio": {
+                    "asr_energy_threshold_db": -48,
+                    "asr_noise_gate_db": -58,
+                    "asr_listening_energy_threshold_db": -54,
+                    "asr_listening_min_speech_ms": 100,
+                    "asr_barge_in_energy_threshold_db": -41,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    legacy_audio = ProductConfigStore(legacy, settings).snapshot()["audio"]
+    custom_audio = ProductConfigStore(custom, settings).snapshot()["audio"]
+
+    assert legacy_audio["asr_energy_threshold_db"] == -50
+    assert legacy_audio["asr_noise_gate_db"] == -55
+    assert legacy_audio["asr_listening_energy_threshold_db"] == -50
+    assert legacy_audio["asr_listening_min_speech_ms"] == 120
+    assert legacy_audio["asr_barge_in_energy_threshold_db"] == -38
+    assert legacy_audio["asr_adaptive_noise_enabled"] is False
+    assert custom_audio["asr_energy_threshold_db"] == -48
+    assert custom_audio["asr_noise_gate_db"] == -58
+    assert custom_audio["asr_listening_energy_threshold_db"] == -54
+    assert custom_audio["asr_listening_min_speech_ms"] == 100
+    assert custom_audio["asr_barge_in_energy_threshold_db"] == -41
+
+
 def test_voice_entry_mode_and_scene_are_validated_and_persisted(tmp_path):
     settings = make_settings(tmp_path)
     path = settings.runtime_dir / "config" / "settings.json"
@@ -180,10 +273,10 @@ def test_voice_entry_mode_and_scene_are_validated_and_persisted(tmp_path):
         store.update({"interaction": {"voice_entry_mode": "telepathy"}})
 
 
-def test_playback_candidate_gate_does_not_double_apply_frontend_noise_margin(tmp_path):
+def test_playback_candidate_gate_ignores_unreliable_startup_noise_sample(tmp_path):
     store = ProductConfigStore(tmp_path / "settings.json", make_settings(tmp_path))
     audio = store.snapshot()["audio"]
-    audio["asr_barge_in_energy_threshold_db"] = -30
+    audio["asr_barge_in_energy_threshold_db"] = -38
     audio["asr_barge_in_noise_margin_db"] = 16
 
     threshold = _voice_energy_threshold_db(
@@ -192,8 +285,8 @@ def test_playback_candidate_gate_does_not_double_apply_frontend_noise_margin(tmp
         noise_floor_db=-40,
     )
 
-    assert threshold == -32
-    assert threshold < -24  # the former double gate was too strict for ordinary speech
+    assert threshold == -42
+    assert threshold < -24  # the former adaptive gate was too strict for ordinary speech
 
 
 def test_asr_vocabulary_api_supports_live_edit_and_test(tmp_path):
@@ -327,6 +420,7 @@ def test_stream_chat_emits_progress_final_and_persists_session(tmp_path):
     assert "event: run.accepted" in response.text
     assert "event: node.started" in response.text
     assert "event: response.delta" in response.text
+    assert "event: response.ready" in response.text
     assert "event: run.completed" in response.text
     envelopes = [
         json.loads(line.removeprefix("data: "))
@@ -370,6 +464,28 @@ def test_stream_chat_emits_progress_final_and_persists_session(tmp_path):
     assert any(
         "请解释服务调度" in item["content"] for item in revealed.json()["layers"]
     )
+
+
+def test_voice_stream_emits_acoustic_state_only_for_qwen(tmp_path):
+    payload = {
+        "message": "说句话",
+        "session_id": "provider-routing",
+        "round": 1,
+        "interaction_mode": "voice",
+        "retrieval": {"similarity_threshold": 0},
+    }
+
+    streamed = TestClient(
+        create_app(make_settings(tmp_path / "streamed", tts_provider="mock"))
+    ).post("/api/v1/chat/stream", json=payload)
+    qwen = TestClient(
+        create_app(make_settings(tmp_path / "qwen", tts_provider="qwen3-vllm"))
+    ).post("/api/v1/chat/stream", json=payload)
+
+    assert streamed.status_code == 200
+    assert "event: response.voice_cue" not in streamed.text
+    assert qwen.status_code == 200
+    assert "event: response.voice_cue" in qwen.text
 
 
 def test_completed_stream_can_resume_by_sequence_without_reexecuting(tmp_path):
@@ -530,7 +646,8 @@ def test_initiative_chat_returns_only_the_assistant_message_publicly(tmp_path):
     assert streamed.status_code == 200
     assert [item["role"] for item in session["messages"]] == ["assistant"]
     assert session["messages"][0]["kind"] == "initiative_response"
-    assert stored[0]["content"] == "阿澈不想说什么，但是想让你说点什么。"
+    assert "角色主动开口的空间" in stored[0]["content"]
+    assert "本轮主动类型=continue" in stored[0]["content"]
     assert stored[0]["hidden"] is True
 
     deleted = client.delete(
@@ -624,7 +741,22 @@ def test_mock_streaming_tts_returns_raw_pcm_with_audio_metadata(tmp_path):
     assert response.headers["content-type"].startswith("application/octet-stream")
     assert response.headers["x-audio-format"] == "pcm_s16le"
     assert response.headers["x-audio-sample-rate"] == "16000"
+    assert response.headers["x-tts-provider"] == "mock"
+    assert response.headers["x-tts-text-mode"] == "streamed-segments"
     assert len(response.content) == 6_400
+
+
+def test_streaming_tts_rejects_punctuation_before_opening_stream(tmp_path):
+    settings = make_settings(tmp_path, tts_provider="mock", asr_provider="mock")
+    client = TestClient(create_app(settings))
+
+    response = client.post(
+        "/api/v1/audio/tts/stream",
+        json={"text": "…… —— ♡", "request_id": "audio-stream-punctuation"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "没有可朗读的正文内容"
 
 
 def test_settings_profiles_knowledge_and_destructive_confirmations(tmp_path):

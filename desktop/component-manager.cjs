@@ -122,6 +122,21 @@ const DEFAULT_COMPONENTS = [
     installArgs: [],
     optional: true,
   },
+  {
+    id: "qwen3-vllm-runtime",
+    name: "Qwen3 实时语音运行时",
+    description: "可选；仅接入已就绪的 WSL2/vLLM/Qwen3 本地环境。条件不满足时不会下载或安装大模型",
+    provider: "installer",
+    category: "voice",
+    target: "environment/qwen3-vllm",
+    required: ["ready.json"],
+    estimatedBytes: 0,
+    displayEstimatedBytes: false,
+    installScript: "scripts/prepare-qwen3-tts.ps1",
+    installArgs: [],
+    optional: true,
+    hardware: "nvidia",
+  },
   ...GPT_SOVITS_COMPONENTS,
 ];
 
@@ -412,7 +427,7 @@ function createComponentManager(options) {
           progress: 2,
           downloadedBytes: 0,
           totalBytes,
-          message: `正在准备${component.id === "tts-runtime" ? " CosyVoice" : component.id === "gpt-sovits-runtime" ? " GPT-SoVITS" : " ASR CUDA"}运行时…`,
+          message: `正在准备${component.id === "tts-runtime" ? " CosyVoice" : component.id === "gpt-sovits-runtime" ? " GPT-SoVITS" : component.id === "qwen3-vllm-runtime" ? " Qwen3 实时语音" : " ASR CUDA"}运行时…`,
           error: "",
         });
         await options.installComponent(component, controller.signal, (progress, message) => {

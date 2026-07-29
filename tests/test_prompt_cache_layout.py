@@ -339,6 +339,97 @@ def test_adult_roleplay_context_activates_profile_rules_in_final_calibration():
     assert event["persistence_eligible"] is False
 
 
+def test_r18_sexual_action_mode_is_explicit_and_does_not_replace_normal_adult_detection():
+    built = build_prompt(
+        ChatRequest(
+            message="继续",
+            session_id="r18-enhanced",
+            round=4,
+            adult_mode=True,
+            user_name="林澈",
+            character_name="弦月",
+        ),
+        profiles(),
+        [],
+        [],
+        [],
+    )
+
+    calibration = built.messages[-1]
+    assert "【R18 性行为推进模式｜用户已明确开启｜硬性执行】" in calibration["content"]
+    assert "通用 R18 Director（产品级规则，不属于任何单角色）" in calibration["content"]
+    assert "本轮质量目标" in calibration["content"]
+    assert "用户明确承接时兑现下一拍" in calibration["content"]
+    assert "私有 overlay 仅是本机写法素材" in calibration["content"]
+    turn_control = next(item for item in built.pending_events if item["kind"] == "turn_control")
+    assert turn_control["metadata"]["adult_mode"] is True
+
+
+def test_r18_final_directive_detects_repeated_foreplay_and_forces_progress():
+    built = build_prompt(
+        ChatRequest(
+            message="继续",
+            session_id="r18-foreplay-loop",
+            round=4,
+            adult_mode=True,
+            user_name="林澈",
+            character_name="弦月",
+        ),
+        profiles(),
+        [
+            {"role": "assistant", "round": 2, "content": "我吻住你，手指慢慢解开衣扣。"},
+            {"role": "assistant", "round": 3, "content": "我贴得更近，问你准备好了吗？"},
+        ],
+        [],
+        [],
+    )
+
+    calibration = built.messages[-1]["content"]
+    assert '"consecutive_foreplay_only_assistant_turns":2' in calibration
+    assert "本轮必须结束拖延" in calibration
+    assert "最近 R18 推进状态" in calibration
+
+
+def test_private_r18_protocol_is_verbatim_and_absent_when_switch_is_off():
+    bundle = profiles()
+    bundle.ai_profile["roleplay"]["r18_protocol"] = [
+        "原文规则A：必须保留这个句子。",
+        "原文规则B：符号♡与括号()也保持。",
+    ]
+    adult = build_prompt(
+        ChatRequest(
+            message="继续",
+            session_id="r18-private-protocol",
+            round=2,
+            adult_mode=True,
+        ),
+        bundle,
+        [],
+        [],
+        [],
+    )
+    ordinary = build_prompt(
+        ChatRequest(
+            message="继续",
+            session_id="r18-private-protocol-off",
+            round=2,
+            adult_mode=False,
+        ),
+        bundle,
+        [],
+        [],
+        [],
+    )
+
+    adult_text = adult.messages[-1]["content"]
+    ordinary_text = "\n".join(item["content"] for item in ordinary.messages)
+    assert "通用 R18 Director（产品级规则，不属于任何单角色）" in adult_text
+    assert "原文规则B：符号♡与括号()也保持。" in adult_text
+    assert "原文规则A：必须保留这个句子。" not in adult_text
+    assert "原文规则B：符号♡与括号()也保持。" in adult_text
+    assert "原文规则A：必须保留这个句子。" not in ordinary_text
+
+
 def test_gender_identity_is_the_first_high_priority_system_content():
     bundle = profiles()
     bundle.user_profile["identity"]["gender"] = "男"

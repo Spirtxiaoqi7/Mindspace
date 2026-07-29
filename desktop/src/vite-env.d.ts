@@ -13,7 +13,8 @@ interface Window {
     shortcut(): Promise<ActionResult>;
     update(action: string, options?: { updateUrl?: string; channel?: string }): Promise<UpdateSnapshot>;
     component(action: string, id?: string): Promise<ComponentSnapshot>;
-    voice(action: "snapshot" | "install" | "select", id?: string): Promise<TtsVoiceSnapshot>;
+    voice(action: "snapshot" | "install" | "select" | "provider", id?: string): Promise<TtsVoiceSnapshot>;
+    onboarding(action: "snapshot" | "select-voice" | "install-base" | "test-llm" | "save-llm" | "retry-voice" | "acknowledge-voice" | "finish", payload?: Record<string, unknown>): Promise<OnboardingSnapshot | (ActionResult & { onboarding?: OnboardingSnapshot })>;
     runtime(action: "snapshot" | "install" | "install-all" | "cancel" | "retry" | "repair", id?: string): Promise<RuntimeSnapshot>;
     diagnostics(): Promise<ActionResult>;
     source(source: "china" | "official"): Promise<RuntimeSnapshot>;
@@ -21,8 +22,8 @@ interface Window {
   };
 }
 
-interface ActionResult { ok: boolean; error?: string; warnings?: string[]; pid?: number; log?: string; path?: string }
-interface ServiceReport { online: boolean; detail: Record<string, unknown> }
+interface ActionResult { ok: boolean; error?: string; warning?: string; warnings?: string[]; pid?: number; log?: string; path?: string }
+interface ServiceReport { online: boolean; starting?: boolean; detail: Record<string, unknown> }
 interface ModelReport { id: string; name: string; path: string; ready: boolean; optional?: boolean }
 interface ComponentReport {
   id: string; name: string; description: string; path: string; ready: boolean; missing: string[];
@@ -40,6 +41,25 @@ interface TtsVoiceReport {
   downloadedBytes: number; totalBytes: number; speedBps: number; message: string; error: string;
 }
 interface TtsVoiceSnapshot { provider: string; current: string; items: TtsVoiceReport[]; ok?: boolean; error?: string; warning?: string }
+interface LlmPreset {
+  id: string; label: string; baseUrl: string; model: string; keyUrl: string; docsUrl: string;
+}
+interface OnboardingSnapshot {
+  version: number; showWizard: boolean; complete: boolean; completedAt: string;
+  step: "voice" | "install" | "llm" | "ready";
+  baseReady: boolean; llmReady: boolean;
+  voicePreference: "none" | "gpt-sovits" | "cosyvoice" | "qwen3-vllm";
+  voiceSelectionConfirmed: boolean; voiceRequested: boolean; voiceReady: boolean; voiceNeedsNotice: boolean;
+  voice: {
+    state: string; progress: number; currentId: string; currentName: string;
+    message: string; error: string; plan: string[];
+  };
+  llm: {
+    mode: string; baseUrl: string; model: string;
+    credentialsConfigured: boolean; localEndpoint: boolean;
+  };
+  presets: LlmPreset[];
+}
 type RuntimeInstallPhase = "idle" | "checking" | "downloading" | "verifying" | "installing" | "ready" | "cancelled" | "error";
 interface RuntimeComponentState {
   id: string; name: string; description: string; version?: string; kind: string;
@@ -47,10 +67,11 @@ interface RuntimeComponentState {
   partial?: boolean;
   bundled?: boolean; downloadRequired?: boolean;
   displayEstimatedBytes?: boolean;
-  hardwareAvailable?: boolean; unavailableReason?: string;
+  hardwareAvailable?: boolean; unavailableReason?: string; preflightCode?: string;
   category?: "base" | "voice" | string;
   status: RuntimeInstallPhase | string; progress: number; downloadedBytes: number;
   totalBytes: number; speedBps: number; message: string; error: string;
+  sourceHost?: string; sourceFallback?: boolean;
   operationId?: string; errorCode?: string; errorStage?: string; startedAt?: string; updatedAt?: string;
 }
 interface RuntimeManifest { schema_version: string; runtime_version: string; platform: "win32"; arch: "x64"; components: RuntimeComponentState[] }
@@ -59,6 +80,8 @@ interface RuntimeSnapshot {
   downloadSource?: "china" | "official";
   system: { supported?: boolean; writable?: boolean; freeBytes?: number; nvidia?: boolean; nvidiaDetail?: string; windowsRelease?: string };
   items: RuntimeComponentState[];
+  qwenPreflight?: { eligible: boolean; code: string; message: string; vramMiB?: number };
+  ttsTransition?: { state: string; target: string; error: string; startedAt: string };
   pipeline?: { status: string; currentId: string; currentName: string; completed: number; total: number; progress: number; operationId?: string; errorCode?: string; error?: string };
 }
 interface UpdateSnapshot {
@@ -80,4 +103,5 @@ interface LauncherSnapshot {
   services: Record<string, ServiceReport>; models: ModelReport[]; components: ComponentSnapshot;
   voices: TtsVoiceSnapshot;
   runtime: RuntimeSnapshot;
+  onboarding: OnboardingSnapshot;
 }

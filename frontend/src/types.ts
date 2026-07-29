@@ -10,6 +10,7 @@ export interface Message {
   status?: "complete" | "streaming" | "cancelled" | "interrupted" | "error";
   kind?: "message" | "initiative_signal" | "initiative_response";
   initiative_trigger?: InitiativeTrigger;
+  voice_cue?: string;
   hidden?: boolean;
 }
 
@@ -24,6 +25,11 @@ export interface VoiceInteractionContext {
 export interface SessionSummary {
   session_id: string;
   title: string;
+  character_id?: string;
+  mode?: "draw" | "custom";
+  character_name?: string;
+  character_avatar?: AvatarEntry;
+  character_source?: CharacterSource;
   updated_at: string;
   message_count: number;
 }
@@ -31,7 +37,56 @@ export interface SessionSummary {
 export interface SessionDocument {
   session_id: string;
   title: string;
+  character_id?: string;
+  mode?: "draw" | "custom";
+  character?: CharacterSummary;
   messages: Message[];
+}
+
+export type CharacterSource = "draw" | "custom" | "imported" | "migrated";
+
+export interface CharacterSummary {
+  character_id: string;
+  schema_version: string;
+  revision: number;
+  source: CharacterSource;
+  status: "active" | "archived";
+  display_name: string;
+  gender: "男" | "女";
+  user_alias: string;
+  relationship_label: string;
+  avatar: AvatarEntry;
+  created_at: string;
+  updated_at: string;
+  last_used_at: string;
+  session_count?: number;
+  latest_session_id?: string;
+}
+
+export interface CharacterRecord extends CharacterSummary {
+  system_prompt: string;
+  ai_profile: Record<string, unknown>;
+  runtime_state: Record<string, unknown>;
+}
+
+export interface CharacterDraft {
+  draft_id: string;
+  revision: number;
+  status: string;
+  input: {
+    ai_name: string;
+    ai_gender: "男" | "女";
+    core_traits: string[];
+    flaw: string;
+    relationship: string;
+    user_name: string;
+    user_alias: string;
+  };
+  profile: Record<string, unknown>;
+  avatar: AvatarEntry | Record<string, never>;
+  generation_mode: "llm" | "local_template";
+  model_call_count: number;
+  warnings: string[];
 }
 
 export interface StreamEnvelope<T = Record<string, unknown>> {
@@ -117,6 +172,7 @@ export interface AvatarConfig {
 
 export type VoicePhase =
   | "idle"
+  | "preparing"
   | "connecting"
   | "listening"
   | "user-speaking"
@@ -224,6 +280,7 @@ export interface ProfileCardData {
   identity: Record<string, unknown>;
   personality: Record<string, unknown>;
   relationship: Record<string, unknown>;
+  roleplay?: Record<string, unknown>;
   revision: number;
   updated_at: string;
 }

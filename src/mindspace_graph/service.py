@@ -21,6 +21,7 @@ from mindspace_graph.adapters.structured_memory import StructuredMemoryStore
 from mindspace_graph.asr_vocabulary import ASRVocabularyStore
 from mindspace_graph.cancellation import CancellationRegistry, GenerationCancelled
 from mindspace_graph.capabilities import ReadOnlyCapabilityService
+from mindspace_graph.characters import CharacterRepository
 from mindspace_graph.compaction import ContextCompactionService
 from mindspace_graph.context_ledger import ContextLedger
 from mindspace_graph.emotion_disabled import DisabledEmotionCoordinator
@@ -120,6 +121,7 @@ class ProductContainer:
     capabilities: ReadOnlyCapabilityService
     emotion: DisabledEmotionCoordinator
     prompt_inspector: PromptInspectionStore
+    characters: CharacterRepository
 
 
 class ConversationService:
@@ -143,6 +145,10 @@ class ConversationService:
             profiles=dependencies.profiles,
             llm_provider=lambda: self.dependencies.llm,
             active_run_count=cancellation.active_count,
+            character_for_session=lambda session_id: str(
+                self.dependencies.sessions.load_session(session_id).get("character_id")
+                or ""
+            ),
         )
         self.role_audit = RoleAuditService(
             ledger=dependencies.context,
@@ -209,6 +215,27 @@ class ConversationService:
     def _server_request(self, request: ChatRequest) -> ChatRequest:
         """用服务端模型地址/密钥/模型名覆盖客户端值，只保留本轮采样参数。"""
 
+        characters = self.dependencies.characters
+        if characters is None:
+            raise RuntimeError("character repository is unavailable")
+        character = (
+            characters.get(request.character_id)
+            if request.character_id
+            else characters.default()
+        )
+        if character.get("status") != "active":
+            raise ValueError("selected character is archived")
+        character_id = str(character["character_id"])
+        session_mode = "draw" if character.get("source") == "draw" else "custom"
+        self.dependencies.sessions.ensure_session(
+            request.session_id,
+            character_id=character_id,
+            mode=session_mode,
+        )
+        profiles = self.dependencies.profiles.load_bundle(character_id)
+        user_identity = profiles.user_profile.get("identity", {})
+        ai_identity = profiles.ai_profile.get("identity", {})
+        characters.touch(character_id)
         api = ApiConfig(
             api_key=self.settings.llm_api_key,
             base_url=self.settings.llm_base_url,
@@ -217,7 +244,16 @@ class ConversationService:
             max_tokens=request.api.max_tokens,
         )
         return request.model_copy(
-            update={"api": api, "server_received_at": datetime.now(UTC)}
+            update={
+                "api": api,
+                "server_received_at": datetime.now(UTC),
+                "voice_tts_provider": self.settings.tts_provider,
+                "character_id": character_id,
+                "session_mode": session_mode,
+                "user_name": str(user_identity.get("preferred_name") or request.user_name),
+                "character_name": str(ai_identity.get("name") or request.character_name),
+                "system_prompt": str(character.get("system_prompt") or ""),
+            }
         )
 
     async def invoke(self, request: ChatRequest, request_id: str | None = None) -> ChatResponse:
@@ -534,6 +570,14 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
         profiles,
     )
     sessions = JsonSessionRepository(settings.runtime_dir / "data" / "sessions", database=database)
+    characters = CharacterRepository(
+        settings.runtime_dir / "data" / "characters",
+        database=database,
+        profiles=profiles,
+        sessions=sessions,
+        avatar_config_path=settings.runtime_dir / "data" / "avatars" / "config.json",
+    )
+    profiles.bind_characters(characters)
     context = ContextLedger(
         settings.runtime_dir / "data" / "context" / "context.db", database=database
     )
@@ -547,6 +591,7 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
         database=database,
         entity_registry=entities,
     )
+    memory.bind_legacy_character(str(characters.default()["character_id"]))
     memory_service = StructuredMemoryService(
         profiles, memory, database=database, entity_registry=entities
     )
@@ -590,6 +635,8 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
         capabilities=capabilities,
         emotion=emotion,
         prompt_inspector=prompt_inspector,
+        characters=characters,
+        tts_provider=lambda: settings.tts_provider,
     )
     conversation = ConversationService(settings, dependencies, cancellation)
     return ProductContainer(
@@ -612,4 +659,5 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
         capabilities=capabilities,
         emotion=emotion,
         prompt_inspector=prompt_inspector,
+        characters=characters,
     )

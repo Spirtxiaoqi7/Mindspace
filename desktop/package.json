@@ -1,6 +1,6 @@
 {
   "name": "mindspace-desktop",
-  "version": "0.5.18",
+  "version": "0.5.52",
   "description": "Mindspace local AI desktop application",
   "author": "Mindspace",
   "private": true,
@@ -48,8 +48,10 @@
       "component-manager.cjs",
       "gpt-sovits-catalog.cjs",
       "runtime-manager.cjs",
-    "service-policy.cjs",
-    "process-check.cjs",
+      "service-policy.cjs",
+      "onboarding-policy.cjs",
+      "qwen-runtime-policy.cjs",
+      "process-check.cjs",
       "announcement-policy.cjs",
       "app-paths.cjs",
       "storage-location.cjs",
@@ -69,10 +71,6 @@
       {
         "from": "assets/runtime-manifest.json",
         "to": "runtime/runtime-manifest.json"
-      },
-      {
-        "from": "bootstrap/runtime-bundle",
-        "to": "runtime/bundled"
       }
     ],
     "asar": true,

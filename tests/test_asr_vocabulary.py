@@ -25,6 +25,19 @@ def test_profile_json_is_compiled_without_prompt_or_llm(tmp_path) -> None:
     assert "长离" in snapshot["decoder_hotwords"]
 
 
+def test_private_r18_protocol_is_not_compiled_into_asr_hotwords(tmp_path) -> None:
+    profiles = JsonProfileRepository(tmp_path / "profiles")
+    ai = profiles.load_document("ai_profile")
+    ai["roleplay"]["r18_protocol"] = ["私有协议绝不应该进入语音热词"]
+    profiles.save_document("ai_profile", ai)
+
+    snapshot = ASRVocabularyStore(tmp_path / "asr" / "vocabulary.json", profiles).snapshot()
+    terms = {item["term"] for item in snapshot["entries"]}
+
+    assert "私有协议绝不应该进入语音热词" not in terms
+    assert "私有协议" not in snapshot["decoder_hotwords"]
+
+
 def test_manual_correction_is_atomic_and_immediately_testable(tmp_path) -> None:
     profiles = JsonProfileRepository(tmp_path / "profiles")
     store = ASRVocabularyStore(tmp_path / "asr" / "vocabulary.json", profiles)

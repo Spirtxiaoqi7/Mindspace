@@ -299,8 +299,8 @@ class GPTSoVITSWorker:
 
     def stream_synthesize(self, payload: dict[str, Any]) -> Iterator[bytes]:
         text = str(payload.get("text") or "").strip()
-        if not text:
-            raise ValueError("empty TTS text")
+        if not any(character.isalnum() for character in text):
+            raise ValueError("请输入有效文本")
         requested = str(payload.get("voice_id") or self.voice_id)
         speed = float(payload.get("speed") or 1.0)
         with self.lock:
@@ -380,6 +380,10 @@ def make_handler(worker: GPTSoVITSWorker):
                     self._json(200, worker.synthesize(payload))
                     return
                 if route == "/synthesize-stream":
+                    text = str(payload.get("text") or "").strip()
+                    if not any(character.isalnum() for character in text):
+                        self._json(400, {"ok": False, "error": "请输入有效文本"})
+                        return
                     self.send_response(200)
                     self.send_header("Content-Type", "application/octet-stream")
                     self.send_header("Cache-Control", "no-store")

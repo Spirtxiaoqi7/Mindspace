@@ -131,6 +131,7 @@ class StructuredMemoryStore:
         return episode_id, {
             "episode_id": episode_id,
             "session_id": request.session_id,
+            "character_id": request.character_id,
             "round": request.round,
             "user_message_id": persisted["user_message_id"],
             "assistant_message_id": persisted["assistant_message_id"],
@@ -138,7 +139,13 @@ class StructuredMemoryStore:
             "created_at": timestamp,
         }
 
-    def _binding(self, patch: dict[str, Any], episode_id: str, timestamp: str) -> dict[str, Any]:
+    def _binding(
+        self,
+        patch: dict[str, Any],
+        episode_id: str,
+        timestamp: str,
+        character_id: str,
+    ) -> dict[str, Any]:
         target = str(patch.get("target") or "")
         raw_path = str(patch.get("path") or "")
         field = self.registry.resolve(target, raw_path)
@@ -150,7 +157,9 @@ class StructuredMemoryStore:
         if op == "remove":
             value = patch.get("before")
         normalized = _normalize_value(value)
+        owner = "" if target == "user_profile" else character_id
         family_key = f"{field.scope}:{field.conflict_group or field.field_code}"
+        owner_prefix = "global" if not owner else f"character:{owner}"
         has_item_identity = field.value_kind == "list"
         entity_id = (
             self.entity_registry.resolve(
@@ -162,7 +171,7 @@ class StructuredMemoryStore:
             else None
         )
         suffix = f":{entity_id or _digest(normalized)}" if has_item_identity else ""
-        memory_key = f"{family_key}{suffix}"
+        memory_key = f"{owner_prefix}:{family_key}{suffix}"
         return {
             "memory_key": memory_key,
             "family_key": family_key,
@@ -182,6 +191,7 @@ class StructuredMemoryStore:
             "display_name": field.display_name,
             "category": field.category,
             "scope": field.scope,
+            "character_id": owner,
             "lifecycle": field.lifecycle,
             "reducer": field.reducer,
             "max_items": field.max_items,
@@ -215,7 +225,13 @@ class StructuredMemoryStore:
             if patches:
                 data["episodes"][episode_id] = episode
                 bindings = [
-                    self._binding(raw_patch, episode_id, timestamp) for raw_patch in patches
+                    self._binding(
+                        raw_patch,
+                        episode_id,
+                        timestamp,
+                        request.character_id,
+                    )
+                    for raw_patch in patches
                 ]
                 # When one turn removes and adds opposite values for the same slot,
                 # the positive final binding wins regardless of patch ordering.
@@ -349,27 +365,38 @@ class StructuredMemoryStore:
         except ValueError:
             return datetime.min.replace(tzinfo=UTC)
 
-    def list_active(self) -> list[dict[str, Any]]:
+    def list_active(self, character_id: str = "") -> list[dict[str, Any]]:
         with self._lock:
             data = self._load()
         result = []
         for record in data["active"].values():
+            owner = str(record.get("character_id") or "")
+            if owner and owner != character_id:
+                continue
             episode = data["episodes"].get(record.get("episode_id"), {})
             if episode.get("text"):
                 result.append({**deepcopy(record), "episode": deepcopy(episode)})
         return result
 
-    def list_items(self, *, include_history: bool = False) -> list[dict[str, Any]]:
+    def list_items(
+        self, *, include_history: bool = False, character_id: str = ""
+    ) -> list[dict[str, Any]]:
         with self._lock:
             data = self._load()
         items: list[dict[str, Any]] = []
         for record in data["active"].values():
+            owner = str(record.get("character_id") or "")
+            if owner and owner != character_id:
+                continue
             episode = data["episodes"].get(record.get("episode_id"), {})
             items.append(self._public_item(record, episode, "active"))
         if include_history:
             for tombstone in reversed(data["tombstones"]):
                 record = tombstone.get("removed_record")
                 if not isinstance(record, dict):
+                    continue
+                owner = str(record.get("character_id") or "")
+                if owner and owner != character_id:
                     continue
                 item = self._public_item(
                     record,
@@ -397,6 +424,7 @@ class StructuredMemoryStore:
             "category": record.get("category", ""),
             "value": deepcopy(record.get("value")),
             "scope": record.get("scope", ""),
+            "character_id": record.get("character_id", ""),
             "lifecycle": record.get("lifecycle", ""),
             "status": status,
             "created_at": record.get("created_at", ""),
@@ -405,6 +433,44 @@ class StructuredMemoryStore:
             "assistant_message_id": episode.get("assistant_message_id", ""),
             "source_text": text[:600],
         }
+
+    def bind_legacy_character(self, character_id: str) -> int:
+        """Attach pre-0.6 AI/runtime memories to the migrated legacy character."""
+
+        changed = 0
+        with self._lock:
+            data = self._load()
+            remapped: dict[str, dict[str, Any]] = {}
+            for old_key, record in list(data["active"].items()):
+                tags = record.get("json_tags") or []
+                target = str(tags[0].get("target") or "") if tags else ""
+                owner = "" if target == "user_profile" else character_id
+                if "character_id" not in record:
+                    record["character_id"] = owner
+                    changed += 1
+                episode = data["episodes"].get(record.get("episode_id"), {})
+                if isinstance(episode, dict) and "character_id" not in episode:
+                    episode["character_id"] = owner or character_id
+                owner_prefix = "global" if not owner else f"character:{owner}"
+                if old_key.startswith(f"{owner_prefix}:"):
+                    family = str(record.get("family_key") or "")
+                    if family.startswith(f"{owner_prefix}:"):
+                        record["family_key"] = family.removeprefix(f"{owner_prefix}:")
+                        changed += 1
+                    remapped[old_key] = record
+                    continue
+                family = str(record.get("family_key") or old_key)
+                suffix = old_key[len(family) :] if old_key.startswith(family) else ""
+                new_key = f"{owner_prefix}:{family}{suffix}"
+                record["family_key"] = family
+                record["memory_key"] = new_key
+                remapped[new_key] = record
+                changed += 1
+            if changed:
+                data["active"] = remapped
+                data["schema_version"] = "2.1.0"
+                self._save(data)
+        return changed
 
     def invalidate_key(self, memory_key: str, *, reason: str = "user_deleted") -> bool:
         with self._lock:
@@ -545,7 +611,9 @@ class StructuredMemoryStore:
                 if entity_id is None:
                     rebuilt[old_key] = record
                     continue
-                new_key = f"{record['family_key']}:{entity_id}"
+                owner = str(record.get("character_id") or "")
+                owner_prefix = "global" if not owner else f"character:{owner}"
+                new_key = f"{owner_prefix}:{record['family_key']}:{entity_id}"
                 updated = deepcopy(record)
                 updated["entity_id"] = entity_id
                 updated["memory_key"] = new_key

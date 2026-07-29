@@ -20,10 +20,21 @@ class OpenAICompatibleLanguageModel:
     def __init__(self, client: httpx.Client | None = None) -> None:
         self._local = local()
         self._owns_client = client is None
-        # 单个适配器复用连接池；不要为每个节点或每个 token 创建新 Client。
+        # Reuse one bounded pool, but retry TLS/connect establishment before the
+        # provider has accepted a request. This covers transient VPN/TUN route
+        # switches without issuing a second model call after output has started.
         self._client = client or httpx.Client(
             timeout=self.timeout,
-            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            limits=httpx.Limits(
+                max_connections=20,
+                max_keepalive_connections=10,
+                keepalive_expiry=20.0,
+            ),
+            transport=httpx.HTTPTransport(retries=2),
+            # Provider traffic should not silently inherit a stale HTTP proxy
+            # variable from the launcher environment. System-level TUN/VPN
+            # routing continues to work because it operates below httpx.
+            trust_env=False,
         )
 
     def close(self) -> None:
@@ -300,7 +311,7 @@ class OpenAICompatibleLanguageModel:
         """主生成/修复的统一流入口；仅在尚未产出 token 时降级 stream_options。"""
 
         try:
-            yield from self._stream_once(
+            yield from self._stream_with_connect_retry(
                 messages, config, request_kind=request_kind, include_usage=True
             )
         except httpx.HTTPStatusError as exc:
@@ -308,9 +319,38 @@ class OpenAICompatibleLanguageModel:
                 raise
             # Older compatible endpoints reject stream_options. Retrying before
             # any response token preserves output while marking usage unreported.
-            yield from self._stream_once(
+            yield from self._stream_with_connect_retry(
                 messages, config, request_kind=request_kind, include_usage=False
             )
+
+    def _stream_with_connect_retry(
+        self,
+        messages: list[dict[str, str]],
+        config: ApiConfig,
+        *,
+        request_kind: str,
+        include_usage: bool,
+    ) -> Iterator[str]:
+        """Retry one failed TLS/connect handshake only before the first token."""
+
+        emitted = False
+        for attempt in range(2):
+            try:
+                for chunk in self._stream_once(
+                    messages,
+                    config,
+                    request_kind=request_kind,
+                    include_usage=include_usage,
+                ):
+                    emitted = True
+                    yield chunk
+                return
+            except httpx.ConnectError:
+                if emitted or attempt > 0:
+                    raise
+                # A failed handshake is not a provider/model call. The next
+                # attempt gets a fresh connection from httpx's cleaned pool.
+                continue
 
     def _stream_once(
         self,

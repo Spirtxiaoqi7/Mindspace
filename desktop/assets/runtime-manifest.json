@@ -23,7 +23,7 @@
         "$PSVersionTable.PSVersion.ToString()"
       ],
       "urls": [
-        "https://downloads.douyinqijun.cn/mindspace/runtime/PowerShell-7.6.3-win-x64.zip",
+        "https://douyinqijun.cn/downloads/mindspace/runtime/PowerShell-7.6.3-win-x64.zip",
         "https://github.com/PowerShell/PowerShell/releases/download/v7.6.3/PowerShell-7.6.3-win-x64.zip"
       ]
     },
@@ -43,7 +43,7 @@
         "--version"
       ],
       "urls": [
-        "https://downloads.douyinqijun.cn/mindspace/runtime/MinGit-2.53.0-64-bit.zip",
+        "https://douyinqijun.cn/downloads/mindspace/runtime/MinGit-2.53.0-64-bit.zip",
         "https://github.com/git-for-windows/git/releases/download/v2.53.0.windows.1/MinGit-2.53.0-64-bit.zip"
       ]
     },
@@ -63,7 +63,7 @@
         "--version"
       ],
       "urls": [
-        "https://downloads.douyinqijun.cn/mindspace/runtime/uv-x86_64-pc-windows-msvc-0.11.26.zip",
+        "https://douyinqijun.cn/downloads/mindspace/runtime/uv-x86_64-pc-windows-msvc-0.11.26.zip",
         "https://github.com/astral-sh/uv/releases/download/0.11.26/uv-x86_64-pc-windows-msvc.zip"
       ]
     },
@@ -78,7 +78,7 @@
       "dependencies": [
         "uv"
       ],
-      "mirror": "https://downloads.douyinqijun.cn/mindspace/python"
+      "mirror": "https://douyinqijun.cn/downloads/mindspace/python"
     },
     {
       "id": "core-venv",
@@ -98,6 +98,6 @@
   ],
   "signature": {
     "algorithm": "ed25519",
-    "value": "VBFfTPhub4kDnxXVBLpw3V+2WBWnjvWMQV/p0yQS+ceBxm0uh712/3deA+qvGtgNjuN9Pl8sr+ksrv2e+KehAg=="
+    "value": "EH3FIW5DteF0aUlg4xz1I6cIJkqbVJ3S2toLnYnzkTYyHrJViIm1KiQ1UnUXYurffMkfGXWxBX9GNwDX7Yl2CA=="
   }
 }

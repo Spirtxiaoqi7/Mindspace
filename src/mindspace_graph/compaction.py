@@ -83,12 +83,14 @@ class ContextCompactionService:
         profiles: ProfileRepositoryPort,
         llm_provider: Callable[[], LanguageModelPort],
         active_run_count: Callable[[], int],
+        character_for_session: Callable[[str], str] | None = None,
     ) -> None:
         self.settings = settings
         self.ledger = ledger
         self.profiles = profiles
         self.llm_provider = llm_provider
         self.active_run_count = active_run_count
+        self.character_for_session = character_for_session or (lambda _session_id: "")
         self._runner: asyncio.Task[None] | None = None
         self._gate = asyncio.Lock()
 
@@ -154,7 +156,9 @@ class ContextCompactionService:
                 self._api_config(),
             )
             summary = parse_compaction_output(raw, job.cutoff_sequence)
-            current_profiles: ProfileBundle = self.profiles.load_bundle()
+            current_profiles: ProfileBundle = self.profiles.load_bundle(
+                self.character_for_session(job.session_id)
+            )
             self.ledger.activate_compaction(job, summary=summary, profiles=current_profiles)
         except Exception as exc:  # noqa: BLE001 - durable retry owns failure semantics
             self.ledger.fail_compaction(job.job_id, str(exc), retry=True)

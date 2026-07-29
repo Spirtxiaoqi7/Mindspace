@@ -51,6 +51,17 @@ def test_protocol_parser_recovers_plain_leading_response():
     assert protocol.json_update.trigger == "none"
 
 
+def test_protocol_parser_recovers_plain_response_that_starts_with_voice_directive():
+    raw = """[[voice:reflective]] 嗯，我想了一下，你说得有道理。
+<json_update>{"turn_id":"round_1","base_revisions":{},"trigger":"none","patches":[]}</json_update>"""
+
+    protocol, errors = ProtocolParser().parse(raw)
+
+    assert errors == []
+    assert protocol is not None
+    assert protocol.response.startswith("[[voice:reflective]]")
+
+
 def test_protocol_parser_accepts_fenced_json_and_dangling_response_close():
     raw = """你好！</response>
 <json_update>```json

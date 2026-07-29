@@ -109,7 +109,7 @@ def test_profile_gender_defaults_and_validation_are_explicit(tmp_path):
 
     assert user["identity"]["gender"] == "男"
     assert assistant["identity"]["gender"] == "女"
-    assert user["schema_version"] == "1.1.0"
+    assert user["schema_version"] == "1.2.0"
 
     invalid = deepcopy(user)
     invalid["identity"]["gender"] = "未设置"
@@ -146,7 +146,7 @@ def test_openai_usage_extracts_standard_cached_tokens():
     assert usage.cache_source == "prompt_tokens_details.cached_tokens"
 
 
-def test_role_audit_correction_stays_audit_only_and_out_of_model_history(tmp_path):
+def test_role_audit_writes_one_bounded_continuity_digest_for_next_turn(tmp_path):
     database = ProductDatabase(tmp_path / "context.db")
     ledger = ContextLedger(tmp_path / "context.db", database=database)
     profiles = ProfileBundle(
@@ -172,6 +172,9 @@ def test_role_audit_correction_stays_audit_only_and_out_of_model_history(tmp_pat
             confidence=0.95,
             evidence=["声称实体接触"],
             next_turn_instruction="保持纯文字交流，不声称发生实体接触。",
+            recent_event_summary="用户提出继续文字交流，助手作出回应。",
+            event_progression="话题从问候推进到交流方式。",
+            open_threads=["继续当前话题"],
         ),
     )
     snapshot = ledger.prepare_context(
@@ -180,6 +183,9 @@ def test_role_audit_correction_stays_audit_only_and_out_of_model_history(tmp_pat
         profiles=profiles,
         history=[],
     )
-    assert not any("保持纯文字交流" in item["content"] for item in snapshot.messages)
+    digest = [item["content"] for item in snapshot.messages if "近期连续性摘要" in item["content"]]
+    assert len(digest) == 1
+    assert "保持纯文字交流" in digest[0]
+    assert "话题从问候推进到交流方式" in digest[0]
     diagnostics = ledger.diagnostics("role")
-    assert diagnostics["event_count"] > diagnostics["model_visible_event_count"]
+    assert diagnostics["model_visible_event_count"] >= 1

@@ -24,7 +24,16 @@ $AllowedTargets = @(
     'config\gpt-sovits-voices.json',
     'pyproject.toml',
     'uv.lock',
-    'README.md'
+    'README.md',
+    'CHANGELOG.md',
+    'docs\voice-session-architecture.md',
+    'docs\QWEN3_TTS_RUNTIME.md',
+    'docs\MULTI_CHARACTER_ARCHITECTURE.md',
+    'docs\CHARACTER_ART_LIBRARY.md',
+    'docs\CHARACTER_CARD_PACKAGE.md',
+    'docs\MIGRATION_ROLLBACK_0.6.0.md',
+    'docs\DEVELOPMENT_DESIGN_HISTORY.md',
+    'docs\release-history.json'
 )
 
 function Assert-UnderRoot([string]$Path, [string]$ExpectedRoot) {

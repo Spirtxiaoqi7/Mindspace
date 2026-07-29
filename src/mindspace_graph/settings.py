@@ -51,7 +51,7 @@ class AppSettings:
     context_compaction_delay_seconds: float = 1.5
     role_audit_enabled: bool = True
     role_audit_model: str = ""
-    tts_provider: str = "siliconflow"
+    tts_provider: str = "qwen3-vllm"
     tts_worker_url: str = "http://127.0.0.1:5055"
     tts_reference_audio: str = ""
     tts_reference_text: str = ""
@@ -63,6 +63,11 @@ class AppSettings:
     tts_siliconflow_sample_rate: int = 24000
     tts_gpt_sovits_worker_url: str = "http://127.0.0.1:5055"
     tts_gpt_sovits_voice: str = "v4-changli"
+    tts_qwen3_vllm_url: str = "http://127.0.0.1:8091"
+    tts_qwen3_vllm_model: str = "mindspace-qwen3-tts"
+    tts_qwen3_vllm_voice: str = "serena"
+    tts_qwen3_vllm_task_type: str = "CustomVoice"
+    tts_qwen3_vllm_language: str = "Chinese"
     asr_provider: str = "funasr"
     asr_base_url: str = "ws://127.0.0.1:8766/ws"
     asr_api_key: str = ""
@@ -75,7 +80,18 @@ class AppSettings:
     @classmethod
     def from_env(cls) -> AppSettings:
         _load_env_file(Path.cwd() / ".env")
-        default_runtime = Path(__file__).resolve().parents[2] / "runtime"
+        project_root = Path(__file__).resolve().parents[2]
+        # Desktop Launcher normally sends MINDSPACE_RUNTIME_DIR explicitly.
+        # Keep a safe home-derived fallback as well: a manual or recovered Core
+        # process that only receives MINDSPACE_HOME must reopen that install's
+        # existing data directory, never manufacture default profiles under
+        # application/core/runtime.
+        configured_home = os.environ.get("MINDSPACE_HOME", "").strip()
+        default_runtime = (
+            Path(configured_home).expanduser().resolve() / "data"
+            if configured_home
+            else project_root / "runtime"
+        )
         return cls(
             app_name=os.environ.get("MINDSPACE_APP_NAME", "Mindspace Graph"),
             host=os.environ.get("MINDSPACE_HOST", "127.0.0.1"),
@@ -119,7 +135,7 @@ class AppSettings:
             ),
             role_audit_enabled=_bool("MINDSPACE_ROLE_AUDIT_ENABLED", True),
             role_audit_model=os.environ.get("MINDSPACE_ROLE_AUDIT_MODEL", "").strip(),
-            tts_provider=os.environ.get("MINDSPACE_TTS_PROVIDER", "siliconflow").strip().lower(),
+            tts_provider=os.environ.get("MINDSPACE_TTS_PROVIDER", "qwen3-vllm").strip().lower(),
             tts_worker_url=os.environ.get("MINDSPACE_TTS_WORKER_URL", "http://127.0.0.1:5055"),
             tts_reference_audio=os.environ.get("MINDSPACE_TTS_REFERENCE_AUDIO", ""),
             tts_reference_text=os.environ.get("MINDSPACE_TTS_REFERENCE_TEXT", ""),
@@ -143,6 +159,21 @@ class AppSettings:
             tts_gpt_sovits_voice=os.environ.get(
                 "MINDSPACE_TTS_GPT_SOVITS_VOICE", "v4-changli"
             ).strip(),
+            tts_qwen3_vllm_url=os.environ.get(
+                "MINDSPACE_TTS_QWEN3_VLLM_URL", "http://127.0.0.1:8091"
+            ).strip().rstrip("/"),
+            tts_qwen3_vllm_model=os.environ.get(
+                "MINDSPACE_TTS_QWEN3_VLLM_MODEL", "mindspace-qwen3-tts"
+            ).strip(),
+            tts_qwen3_vllm_voice=os.environ.get(
+                "MINDSPACE_TTS_QWEN3_VLLM_VOICE", "serena"
+            ).strip(),
+            tts_qwen3_vllm_task_type=os.environ.get(
+                "MINDSPACE_TTS_QWEN3_VLLM_TASK_TYPE", "CustomVoice"
+            ).strip(),
+            tts_qwen3_vllm_language=os.environ.get(
+                "MINDSPACE_TTS_QWEN3_VLLM_LANGUAGE", "Chinese"
+            ).strip() or "Chinese",
             asr_provider=os.environ.get("MINDSPACE_ASR_PROVIDER", "funasr").strip().lower(),
             asr_base_url=os.environ.get("MINDSPACE_ASR_BASE_URL", "ws://127.0.0.1:8766/ws"),
             asr_api_key=os.environ.get("MINDSPACE_ASR_API_KEY", ""),

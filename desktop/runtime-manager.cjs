@@ -7,9 +7,65 @@ const { canonical } = require("./update-manager.cjs");
 const ACTIVE_STATUSES = new Set(["checking", "downloading", "verifying", "installing"]);
 const DOMESTIC_PYPI_INDEX = "https://mirrors.aliyun.com/pypi/simple/";
 const OFFICIAL_PYPI_INDEX = "https://pypi.org/simple/";
+const PYTHON_VALIDATION_REVISION = 1;
+const PYTHON_RUNTIME_PROBE = [
+  "-c",
+  "import encodings, ensurepip, venv; print('mindspace-python-ready')",
+];
+const PYTHON_PARENT_ENVIRONMENT_BLOCKLIST = new Set([
+  "VIRTUAL_ENV",
+  "CONDA_PREFIX",
+  "CONDA_DEFAULT_ENV",
+  "_OLD_VIRTUAL_PATH",
+  "_OLD_VIRTUAL_PYTHONHOME",
+  "__PYVENV_LAUNCHER__",
+  "UV_PROJECT_ENVIRONMENT",
+  "UV_PYTHON",
+]);
 
 function normalizeDownloadSource(value) {
   return value === "official" ? "official" : "china";
+}
+
+function uniqueUrls(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function archiveUrlsForSource(component, source) {
+  const normalized = normalizeDownloadSource(source);
+  if (component.sources?.[normalized]) {
+    const selected = [].concat(component.sources[normalized]);
+    return normalized === "official"
+      ? uniqueUrls(selected)
+      : uniqueUrls([...selected, ...[].concat(component.sources.official || [])]);
+  }
+  const domestic = component.urls?.[0];
+  const official = component.urls?.at(-1);
+  return normalized === "official"
+    ? uniqueUrls([official])
+    : uniqueUrls([domestic, official]);
+}
+
+function sourceHost(url) {
+  try { return new URL(url).host; } catch { return ""; }
+}
+
+function sanitizeHostEnvironment(environment = process.env) {
+  return Object.fromEntries(Object.entries(environment).filter(([key]) => {
+    const normalized = key.toUpperCase();
+    return !normalized.startsWith("PYTHON")
+      && !PYTHON_PARENT_ENVIRONMENT_BLOCKLIST.has(normalized);
+  }));
+}
+
+function pythonRuntimeLooksComplete(executable) {
+  const root = path.dirname(executable || "");
+  return Boolean(
+    executable
+    && fs.existsSync(executable)
+    && fs.existsSync(path.join(root, "Lib", "encodings", "__init__.py"))
+    && fs.existsSync(path.join(root, "Lib", "os.py")),
+  );
 }
 
 function sha256(file) {
@@ -78,12 +134,52 @@ function describeError(error) {
   return detail && !message.includes(detail) ? `${message}（${detail}）` : message;
 }
 
+const RETRYABLE_FILESYSTEM_CODES = new Set(["EBUSY", "EPERM", "EACCES"]);
+
+function waitForFilesystem(milliseconds) {
+  // Windows Defender and the indexer can briefly retain a handle after an
+  // executable probe exits. Atomics.wait gives this synchronous promotion path
+  // a bounded delay without spawning another process or entering a busy loop.
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+function renameWithRetry(source, target, attempts = 7) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      fs.renameSync(source, target);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!RETRYABLE_FILESYSTEM_CODES.has(error?.code) || attempt === attempts) break;
+      waitForFilesystem(Math.min(800, 50 * (2 ** (attempt - 1))));
+    }
+  }
+  throw lastError;
+}
+
+function copyPromotionFallback(staging, target) {
+  if (fs.existsSync(target)) throw new Error(`运行时目标已存在：${target}`);
+  try {
+    fs.mkdirSync(target, { recursive: true });
+    fs.cpSync(staging, target, { recursive: true, force: true, errorOnExist: false });
+    fs.rmSync(staging, { recursive: true, force: true });
+  } catch (error) {
+    try { fs.rmSync(target, { recursive: true, force: true }); } catch {}
+    throw error;
+  }
+}
+
 function classifyError(error, stage = "installing") {
   const message = describeError(error);
   const normalized = message.toLowerCase();
   const causeCode = String(error?.cause?.code || error?.code || "").toUpperCase();
   let code = "INSTALL_FAILED";
-  if (["ENOTFOUND", "EAI_AGAIN"].includes(causeCode) || /dns|域名|解析/.test(normalized)) code = "NETWORK_DNS";
+  if (/failed to get the python codec|no module named ['"]?encodings|python path configuration/.test(normalized)) code = "PYTHON_RUNTIME_INVALID";
+  else if (
+    ["ENOTFOUND", "EAI_AGAIN"].includes(causeCode)
+    || /dns|域名|解析|err_name_not_resolved|could not resolve host/.test(normalized)
+  ) code = "NETWORK_DNS";
   else if (["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED"].includes(causeCode) || /timeout|超时|connection|网络/.test(normalized)) code = "NETWORK_CONNECTION";
   else if (/tls|certificate|证书/.test(normalized)) code = "NETWORK_TLS";
   else if (/http\s*404/.test(normalized)) code = "HTTP_404";
@@ -95,7 +191,10 @@ function classifyError(error, stage = "installing") {
   else if (/解压|压缩包|archive|zip/.test(normalized)) code = "EXTRACT_FAILED";
   else if (/依赖/.test(normalized)) code = "DEPENDENCY_FAILED";
   else if (/probe|探针|import|导入/.test(normalized)) code = "PROBE_FAILED";
-  return { code, stage, message };
+  const userMessage = code === "PYTHON_RUNTIME_INVALID"
+    ? "Python 运行时不完整或与旧环境冲突；Mindspace 将自动重新校验并修复，点击“一键安装”即可继续。"
+    : message;
+  return { code, stage, message: userMessage };
 }
 
 function operationId(componentId) {
@@ -134,6 +233,13 @@ function createRuntimeManager(options) {
     const marker = readJson(markerPath(component.id));
     if (!marker || (!allowPrevious && marker.version !== component.version) || !marker.executable) return null;
     if (!fs.existsSync(marker.executable)) return null;
+    if (
+      component.kind === "python"
+      && (
+        marker.python_validation !== PYTHON_VALIDATION_REVISION
+        || !pythonRuntimeLooksComplete(marker.executable)
+      )
+    ) return null;
     return marker;
   }
 
@@ -239,7 +345,7 @@ function createRuntimeManager(options) {
     const git = gitComponent ? markerFor(gitComponent, true) : null;
     if (git) toolFolders.push(path.resolve(path.dirname(git.executable), "..", "bin"));
     return {
-      ...process.env,
+      ...sanitizeHostEnvironment(process.env),
       PATH: [...toolFolders, process.env.SystemRoot ? path.join(process.env.SystemRoot, "System32") : ""].filter(Boolean).join(path.delimiter),
       MINDSPACE_HOME: paths.home,
       MINDSPACE_ENVIRONMENT: paths.environment,
@@ -282,11 +388,26 @@ function createRuntimeManager(options) {
     if (fs.existsSync(partial) && fs.statSync(partial).size > component.size) fs.rmSync(partial, { force: true });
     let lastError;
     const downloadSource = normalizeDownloadSource(options.getDownloadSource?.());
-    const sourceUrls = component.sources?.[downloadSource]
-      ? [].concat(component.sources[downloadSource])
-      : [downloadSource === "official" ? component.urls.at(-1) : component.urls[0]];
+    const sourceUrls = archiveUrlsForSource(component, downloadSource);
     for (const [urlIndex, url] of sourceUrls.filter(Boolean).entries()) {
       const attempts = urlIndex < sourceUrls.length - 1 ? 1 : 3;
+      const host = sourceHost(url);
+      const fallback = downloadSource === "china" && urlIndex > 0;
+      setState(component.id, {
+        sourceHost: host,
+        sourceFallback: fallback,
+        message: fallback
+          ? `国内优先地址不可用，正在切换官方源 · ${host}`
+          : `正在连接下载源 · ${host}`,
+      });
+      if (fallback) {
+        writeLog("download.fallback", {
+          component: component.id,
+          from: sourceHost(sourceUrls[urlIndex - 1]),
+          to: host,
+          reason: describeError(lastError),
+        });
+      }
       for (let attempt = 1; attempt <= attempts; attempt += 1) {
         try {
           let offset = fs.existsSync(partial) ? fs.statSync(partial).size : 0;
@@ -313,7 +434,10 @@ function createRuntimeManager(options) {
               setState(component.id, {
                 status: "downloading", progress: Math.min(88, received / component.size * 88),
                 downloadedBytes: received, totalBytes: component.size,
-                speedBps: transfer.bytes / seconds, message: `正在下载 ${component.name}`,
+                speedBps: transfer.bytes / seconds,
+                sourceHost: host,
+                sourceFallback: fallback,
+                message: `正在下载 ${component.name} · ${host}`,
               });
             }
             await new Promise((resolve, reject) => output.end((error) => error ? reject(error) : resolve()));
@@ -359,22 +483,32 @@ function createRuntimeManager(options) {
 
   function promoteStaging(staging, target) {
     if (!fs.existsSync(target)) {
-      fs.renameSync(staging, target);
+      try {
+        renameWithRetry(staging, target);
+      } catch (error) {
+        if (!RETRYABLE_FILESYSTEM_CODES.has(error?.code)) throw error;
+        copyPromotionFallback(staging, target);
+      }
       return;
     }
     const previous = `${target}.previous-${process.pid}-${Date.now()}`;
     try {
-      fs.renameSync(target, previous);
+      renameWithRetry(target, previous);
     } catch (error) {
-      if (["EBUSY", "EPERM", "EACCES"].includes(error?.code)) {
+      if (RETRYABLE_FILESYSTEM_CODES.has(error?.code)) {
         throw new Error("现有运行时仍被旧服务占用；请先停止本机服务后重试", { cause: error });
       }
       throw error;
     }
     try {
-      fs.renameSync(staging, target);
+      try {
+        renameWithRetry(staging, target);
+      } catch (error) {
+        if (!RETRYABLE_FILESYSTEM_CODES.has(error?.code)) throw error;
+        copyPromotionFallback(staging, target);
+      }
     } catch (error) {
-      try { fs.renameSync(previous, target); } catch {}
+      try { renameWithRetry(previous, target); } catch {}
       throw error;
     }
     try { fs.rmSync(previous, { recursive: true, force: true }); } catch {}
@@ -481,37 +615,114 @@ function createRuntimeManager(options) {
       const staging = safeTarget(paths.python, `.staging-${component.version}-${process.pid}-${Date.now()}`);
       const target = safeTarget(paths.python, path.basename(bundled));
       const installedExecutable = path.join(target, "python.exe");
-      if (adoptExisting(component, installedExecutable, ["-c", "import ensurepip, venv; print('mindspace-python-ready')"], environment, { bundled: true })) {
+      if (adoptExisting(component, installedExecutable, PYTHON_RUNTIME_PROBE, environment, {
+        bundled: true,
+        python_validation: PYTHON_VALIDATION_REVISION,
+      })) {
         writeCurrentPointer(paths.python, component, installedExecutable);
         return;
       }
       try {
         fs.cpSync(bundled, staging, { recursive: true, force: true });
         const executable = path.join(staging, "python.exe");
-        runProbe(executable, ["--version"], environment);
+        const probe = runProbe(executable, PYTHON_RUNTIME_PROBE, environment);
         promoteStaging(staging, target);
         const finalExecutable = path.join(target, "python.exe");
-        writeMarker(component, finalExecutable, { bundled: true });
+        writeMarker(component, finalExecutable, {
+          bundled: true,
+          probe,
+          python_validation: PYTHON_VALIDATION_REVISION,
+        });
         writeCurrentPointer(paths.python, component, finalExecutable);
         return;
       } finally { fs.rmSync(staging, { recursive: true, force: true }); }
+    }
+    let reinstall = false;
+    try {
+      const existingExecutable = runProbe(uv.executable, [
+        "python", "find", component.version, "--managed-python", "--no-python-downloads",
+      ], environment);
+      if (pythonRuntimeLooksComplete(existingExecutable)) {
+        try {
+          const probe = runProbe(existingExecutable, PYTHON_RUNTIME_PROBE, environment);
+          writeMarker(component, existingExecutable, {
+            adopted: true,
+            probe,
+            python_validation: PYTHON_VALIDATION_REVISION,
+          });
+          writeCurrentPointer(paths.python, component, existingExecutable);
+          writeLog("python.revalidated", { component: component.id, version: component.version });
+          return;
+        } catch (error) {
+          reinstall = true;
+          writeLog("python.invalid", {
+            component: component.id,
+            version: component.version,
+            reason: describeError(error),
+          });
+        }
+      } else if (existingExecutable) {
+        reinstall = true;
+        writeLog("python.incomplete", {
+          component: component.id,
+          version: component.version,
+          executable: existingExecutable,
+        });
+      }
+    } catch {}
+    if (reinstall) {
+      setState(component.id, {
+        status: "installing",
+        progress: 5,
+        message: "检测到旧 Python 运行时不完整，正在自动重新安装",
+      });
     }
     const baseArguments = [
       "python", "install", component.version, "--install-dir", paths.python,
       "--cache-dir", path.join(paths.cache, "uv"), "--managed-python", "--no-bin", "--no-registry", "--system-certs",
     ];
+    if (reinstall) baseArguments.push("--reinstall");
     const downloadSource = normalizeDownloadSource(options.getDownloadSource?.());
     try {
       await runStreaming(component, uv.executable, downloadSource === "china" && component.mirror ? [...baseArguments, "--mirror", component.mirror] : baseArguments, environment, 5, 88);
     } catch (error) {
       if (controller.signal.aborted) throw error;
-      throw new Error(`${downloadSource === "china" ? "国内 Python 镜像" : "Python 官方源"}安装失败：${describeError(error)}`);
+      if (downloadSource !== "china" || !component.mirror) {
+        throw new Error(`Python 官方源安装失败：${describeError(error)}`);
+      }
+      setState(component.id, {
+        status: "installing",
+        progress: Math.max(5, stateFor(component.id).progress || 0),
+        sourceHost: "github.com",
+        sourceFallback: true,
+        message: "国内 Python 镜像不可用，正在切换 Astral 官方源",
+      });
+      writeLog("download.fallback", {
+        component: component.id,
+        from: sourceHost(component.mirror),
+        to: "github.com/astral-sh/python-build-standalone",
+        reason: describeError(error),
+      });
+      try {
+        await runStreaming(component, uv.executable, baseArguments, environment, 5, 88);
+      } catch (officialError) {
+        if (controller.signal.aborted) throw officialError;
+        throw new Error(
+          `国内 Python 镜像与 Astral 官方源均不可用：${describeError(officialError)}`,
+          { cause: officialError },
+        );
+      }
     }
     const executable = runProbe(uv.executable, [
       "python", "find", component.version, "--managed-python", "--no-python-downloads",
     ], environment);
-    runProbe(executable, ["--version"], environment);
-    writeMarker(component, executable);
+    const probe = runProbe(executable, PYTHON_RUNTIME_PROBE, environment, 120_000);
+    writeMarker(component, executable, {
+      probe,
+      python_validation: PYTHON_VALIDATION_REVISION,
+      repaired: reinstall,
+    });
+    writeCurrentPointer(paths.python, component, executable);
   }
 
   async function installVenv(component) {
@@ -534,7 +745,7 @@ function createRuntimeManager(options) {
     }
     fs.rmSync(staging, { recursive: true, force: true });
     const downloadSource = normalizeDownloadSource(options.getDownloadSource?.());
-    const packageIndex = downloadSource === "official" ? OFFICIAL_PYPI_INDEX : DOMESTIC_PYPI_INDEX;
+    let packageIndex = downloadSource === "official" ? OFFICIAL_PYPI_INDEX : DOMESTIC_PYPI_INDEX;
     const environment = privateEnvironment({ UV_PROJECT_ENVIRONMENT: staging, UV_MANAGED_PYTHON: "1" });
     try {
       setState(component.id, { status: "installing", progress: 3, message: "正在创建私有虚拟环境与 pip" });
@@ -547,7 +758,32 @@ function createRuntimeManager(options) {
         await runStreaming(component, uv.executable, [...syncArguments, "--default-index", packageIndex], environment, 18, 92);
       } catch (error) {
         if (controller.signal.aborted) throw error;
-        throw new Error(`${downloadSource === "china" ? "阿里云 PyPI" : "PyPI 官方源"}安装失败：${describeError(error)}`);
+        if (downloadSource !== "china") {
+          throw new Error(`PyPI 官方源安装失败：${describeError(error)}`);
+        }
+        packageIndex = OFFICIAL_PYPI_INDEX;
+        setState(component.id, {
+          status: "installing",
+          progress: Math.max(18, stateFor(component.id).progress || 0),
+          sourceHost: "pypi.org",
+          sourceFallback: true,
+          message: "阿里云 PyPI 不可用，正在切换 PyPI 官方源",
+        });
+        writeLog("download.fallback", {
+          component: component.id,
+          from: sourceHost(DOMESTIC_PYPI_INDEX),
+          to: sourceHost(OFFICIAL_PYPI_INDEX),
+          reason: describeError(error),
+        });
+        try {
+          await runStreaming(component, uv.executable, [...syncArguments, "--default-index", packageIndex], environment, 18, 92);
+        } catch (officialError) {
+          if (controller.signal.aborted) throw officialError;
+          throw new Error(
+            `阿里云 PyPI 与 PyPI 官方源均不可用：${describeError(officialError)}`,
+            { cause: officialError },
+          );
+        }
       }
       const executable = path.join(staging, "Scripts", "python.exe");
       await runStreaming(component, uv.executable, [
@@ -621,7 +857,7 @@ function createRuntimeManager(options) {
       }
       try {
         if (component.kind === "archive") runProbe(marker.executable, component.probe || ["--version"], privateEnvironment());
-        else if (component.kind === "python") runProbe(marker.executable, ["--version"], privateEnvironment());
+        else if (component.kind === "python") runProbe(marker.executable, PYTHON_RUNTIME_PROBE, privateEnvironment(), 120_000);
         else runProbe(marker.executable, ["-c", "import fastapi, langgraph, sentence_transformers"], privateEnvironment(), 120_000);
       } catch {
         fs.rmSync(markerPath(component.id), { force: true });
@@ -654,4 +890,13 @@ function createRuntimeManager(options) {
   };
 }
 
-module.exports = { classifyError, createRuntimeManager, safeTarget, sha256, verifyRuntimeManifest };
+module.exports = {
+  classifyError,
+  createRuntimeManager,
+  safeTarget,
+  sanitizeHostEnvironment,
+  sha256,
+  pythonRuntimeLooksComplete,
+  renameWithRetry,
+  verifyRuntimeManifest,
+};

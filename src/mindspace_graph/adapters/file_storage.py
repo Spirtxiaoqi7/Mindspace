@@ -23,10 +23,14 @@ from mindspace_graph.models import (
 )
 from mindspace_graph.product_database import ProductDatabase
 from mindspace_graph.profile_schema import DEFAULT_PROFILE_SCHEMA, ProfileSchemaRegistry
+from mindspace_graph.roleplay import (
+    chat_message_retrieval_eligible,
+    evaluate_roleplay_quality,
+)
 
 DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
     "user_profile": {
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "profile_type": "user",
         "revision": 0,
         "identity": {
@@ -47,7 +51,7 @@ DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
         "behavior_requirements": {"always_apply": [], "avoid": [], "hard_boundaries": []},
     },
     "ai_profile": {
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "profile_type": "ai",
         "revision": 0,
         "identity": {
@@ -74,9 +78,54 @@ DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
             "persistent_attitudes": [],
             "long_term_goals": [],
         },
+        # User-owned roleplay material.  The model can read these fields but
+        # they are intentionally absent from MEMORY_REGISTRY, so model-origin
+        # JSON updates cannot rewrite the character's selfhood or examples.
+        "roleplay": {
+            "selfhood": {
+                "values": [],
+                "personal_opinions": [],
+                "likes": [],
+                "dislikes": [],
+                "habits": [],
+                "flaws": [],
+                "contradictions": [],
+                "private_interests": [],
+                "personal_goals": [],
+            },
+            "agency": {
+                "initiative_sources": [],
+                "self_directed_choices": [],
+                "attention_triggers": [],
+                "boredom_triggers": [],
+                "default_conflict_posture": "",
+            },
+            "voice": {
+                "cadence": "",
+                "preferred_vocabulary": [],
+                "disliked_phrases": [],
+                "humor_style": "",
+                "action_dialogue_balance": "",
+            },
+            "scenario_baseline": "",
+            "post_history_note": "",
+            # Private user-authored protocol. It is loaded only when the
+            # explicit R18 switch is on and is not registered as long-term
+            # memory, raw chat retrieval, or model-editable JSON state.
+            "r18_protocol": [],
+            # Each list is edited one sample per line in the existing profile
+            # editor.  Only the current turn's category is loaded into Prompt.
+            "examples": {
+                "casual": [],
+                "disagreement": [],
+                "initiative": [],
+                "scene_transition": [],
+                "intimate": [],
+            },
+        },
     },
     "runtime_state": {
-        "schema_version": "1.1.0",
+        "schema_version": "1.2.0",
         "profile_type": "runtime_state",
         "revision": 0,
         "relationship_state": {
@@ -103,6 +152,25 @@ DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
             "open_questions": [],
             "pending_actions": [],
             "active_entities": [],
+        },
+        "roleplay_state": {
+            "scene": {
+                "location": "",
+                "time_anchor": "",
+                "character_outfit": "",
+                "character_posture": "",
+                "character_activity": "",
+                "active_objects": [],
+                "open_threads": [],
+                "last_transition": "",
+                "updated_round": 0,
+            },
+            "agent_drive": {
+                "current_intent": "",
+                "own_activity": "",
+                "unresolved_choice": "",
+                "initiative_type_history": [],
+            },
         },
     },
 }
@@ -198,7 +266,13 @@ class JsonProfileRepository:
         self.database = database
         self.schema = schema
         self._lock = RLock()
+        self.characters: Any | None = None
         self._ensure_defaults()
+
+    def bind_characters(self, characters: Any) -> None:
+        """Attach the 0.6 character store without making legacy profiles circular."""
+
+        self.characters = characters
 
     def _ensure_defaults(self) -> None:
         for key, filename in TARGET_FILES.items():
@@ -238,9 +312,11 @@ class JsonProfileRepository:
         snapshot = deepcopy(document)
         self.database.defer_projection(lambda: _atomic_json(path, snapshot))
 
-    def load_bundle(self) -> ProfileBundle:
+    def load_bundle(self, character_id: str = "") -> ProfileBundle:
         with self._lock:
             user = self._load("user_profile")
+            if character_id and self.characters is not None:
+                return self.characters.profile_bundle(character_id, user)
             ai = self._load("ai_profile")
             runtime = self._load("runtime_state")
         return ProfileBundle(
@@ -254,17 +330,31 @@ class JsonProfileRepository:
             },
         )
 
-    def load_document(self, key: str) -> dict[str, Any]:
+    def load_document(self, key: str, character_id: str = "") -> dict[str, Any]:
         if key not in TARGET_FILES:
             raise KeyError(f"unknown profile document: {key}")
+        if (
+            character_id
+            and self.characters is not None
+            and key in {"ai_profile", "runtime_state"}
+        ):
+            return deepcopy(self.characters.get(character_id)[key])
         with self._lock:
             return deepcopy(self._load(key))
 
-    def save_document(self, key: str, document: dict[str, Any]) -> dict[str, Any]:
+    def save_document(
+        self, key: str, document: dict[str, Any], character_id: str = ""
+    ) -> dict[str, Any]:
         if key not in TARGET_FILES:
             raise KeyError(f"unknown profile document: {key}")
         if not isinstance(document, dict):
             raise ValueError("profile document must be an object")
+        if (
+            character_id
+            and self.characters is not None
+            and key in {"ai_profile", "runtime_state"}
+        ):
+            return self.characters.save_profile_document(character_id, key, document)
         with self._lock:
             current = self._load(key)
             submitted_revision = document.get("revision")
@@ -351,6 +441,22 @@ class JsonProfileRepository:
             shutil.copy2(source, directory / f"{stamp}.json")
 
     def apply_json_update(self, plan: JsonUpdatePlan, *, request: ChatRequest) -> JsonWriteReceipt:
+        character_receipt = JsonWriteReceipt(turn_id=plan.turn_id)
+        if request.character_id and self.characters is not None:
+            character_patches = [
+                patch
+                for patch in plan.patches
+                if patch.target in {"ai_profile", "runtime_state"}
+            ]
+            if character_patches:
+                character_receipt = self.characters.apply_profile_plan(
+                    request.character_id,
+                    plan.model_copy(update={"patches": character_patches}),
+                )
+            user_patches = [patch for patch in plan.patches if patch.target == "user_profile"]
+            if not user_patches:
+                return character_receipt
+            plan = plan.model_copy(update={"patches": user_patches})
         grouped: dict[str, list[Any]] = {}
         for patch in plan.patches:
             grouped.setdefault(patch.target, []).append(patch)
@@ -389,7 +495,11 @@ class JsonProfileRepository:
             for key, candidate in candidates.items():
                 self._backup(key)
                 self._store(key, candidate)
-        return JsonWriteReceipt(turn_id=plan.turn_id, applied=True, patches=receipt_patches)
+        return JsonWriteReceipt(
+            turn_id=plan.turn_id,
+            applied=True,
+            patches=[*character_receipt.patches, *receipt_patches],
+        )
 
 
 class JsonSessionRepository:
@@ -492,6 +602,8 @@ class JsonSessionRepository:
             return {
                 "session_id": session_id,
                 "title": "新对话",
+                "character_id": "",
+                "mode": "custom",
                 "created_at": _now(),
                 "updated_at": _now(),
                 "messages": [],
@@ -504,6 +616,77 @@ class JsonSessionRepository:
         for message in session.get("messages", []):
             message.pop("analysis", None)
         return session
+
+    def session_exists(self, session_id: str) -> bool:
+        if self.database is not None:
+            return self.database.has_document(self._session_key(session_id))
+        return self._path(session_id).exists()
+
+    def ensure_session(
+        self,
+        session_id: str,
+        *,
+        character_id: str,
+        mode: str,
+    ) -> dict[str, Any]:
+        """Create or authoritatively bind an empty session to one character."""
+
+        if mode not in {"draw", "custom"}:
+            raise ValueError("session mode must be draw or custom")
+        if not character_id:
+            raise ValueError("character_id is required")
+        with self._lock:
+            exists = self.session_exists(session_id)
+            session = self.load_session(session_id)
+            bound = str(session.get("character_id") or "")
+            if bound and bound != character_id:
+                raise ValueError("session is already bound to another character")
+            if exists and session.get("messages") and not bound:
+                raise ValueError("legacy session must be migrated before it can be used")
+            changed = not exists or not bound or str(session.get("mode") or "") != mode
+            if changed:
+                now = _now()
+                session["session_id"] = session_id
+                session["character_id"] = character_id
+                session["mode"] = mode
+                session.setdefault("title", "新对话")
+                session.setdefault("created_at", now)
+                session["updated_at"] = str(session.get("updated_at") or now)
+                session.setdefault("messages", [])
+                self._store_session(session_id, session)
+            return deepcopy(session)
+
+    def bind_unbound(self, character_id: str, *, mode: str = "custom") -> int:
+        """Idempotently bind every legacy session that has no character."""
+
+        changed = 0
+        sources = (
+            [
+                (
+                    str(value.get("session_id") or key.removeprefix("session:")),
+                    value,
+                )
+                for key, value in self.database.list_documents("session:")
+            ]
+            if self.database is not None
+            else []
+        )
+        if self.database is None:
+            for path in self.root.glob("*.json"):
+                try:
+                    value = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    continue
+                sources.append((str(value.get("session_id") or path.stem), value))
+        with self._lock:
+            for session_id, value in sources:
+                if str(value.get("character_id") or ""):
+                    continue
+                value["character_id"] = character_id
+                value["mode"] = mode
+                self._store_session(session_id, value)
+                changed += 1
+        return changed
 
     def _migrate_legacy_analysis(self) -> None:
         changed: list[tuple[Path, dict[str, Any]]] = []
@@ -595,6 +778,9 @@ class JsonSessionRepository:
     ) -> dict[str, str]:
         with self._lock:
             session = self.load_session(request.session_id)
+            bound_character = str(session.get("character_id") or "")
+            if request.character_id and bound_character != request.character_id:
+                raise ValueError("session character binding changed during the turn")
             messages = session.setdefault("messages", [])
             replaced_ids: set[str | None] = set()
             if replace_round:
@@ -608,6 +794,7 @@ class JsonSessionRepository:
             assistant_timestamp = _now()
             user_message_id = uuid4().hex
             assistant_message_id = uuid4().hex
+            role_quality = evaluate_roleplay_quality(reply, request, messages)
             messages.extend(
                 [
                     {
@@ -628,6 +815,9 @@ class JsonSessionRepository:
                         "hidden": request.initiative,
                         "kind": "initiative_signal" if request.initiative else "message",
                         "initiative_trigger": request.initiative_trigger,
+                        "retrieval_class": (
+                            "initiative_signal" if request.initiative else "user_dialogue"
+                        ),
                     },
                     {
                         "message_id": assistant_message_id,
@@ -642,6 +832,12 @@ class JsonSessionRepository:
                         },
                         "kind": "initiative_response" if request.initiative else "message",
                         "initiative_trigger": request.initiative_trigger,
+                        "retrieval_class": (
+                            "raw_initiative" if request.initiative else "raw_assistant"
+                        ),
+                        "role_quality": role_quality["quality"],
+                        "role_quality_reasons": role_quality["reasons"],
+                        "role_quality_correction": role_quality["correction"],
                     },
                 ]
             )
@@ -683,6 +879,8 @@ class JsonSessionRepository:
                     {
                         "session_id": value.get("session_id", path.stem),
                         "title": value.get("title", "未命名对话"),
+                        "character_id": value.get("character_id", ""),
+                        "mode": value.get("mode", "custom"),
                         "updated_at": value.get("updated_at", ""),
                         "message_count": sum(
                             1 for item in value.get("messages", []) if not item.get("hidden")
@@ -888,12 +1086,13 @@ class JsonSessionRepository:
                     session = json.load(handle)
             sid = str(session.get("session_id", path.stem))
             for index, message in enumerate(session.get("messages", [])):
-                if message.get("hidden"):
+                if not chat_message_retrieval_eligible(message):
                     continue
                 chunks.append(
                     {
                         "chunk_id": f"{sid}:{index}",
                         "session_id": sid,
+                        "character_id": str(session.get("character_id") or ""),
                         "round": message.get("round", 0),
                         "role": message.get("role", "unknown"),
                         "text": message.get("content", ""),

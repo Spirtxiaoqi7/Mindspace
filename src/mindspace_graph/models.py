@@ -116,9 +116,16 @@ class VoiceInteractionContext(BaseModel):
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10_000)
     session_id: str = Field(default_factory=lambda: str(uuid4()))
+    character_id: str = Field(default="", max_length=64)
+    session_mode: Literal["draw", "custom"] = "custom"
     round: int = Field(default=1, ge=1)
     mode: Literal["primary", "regenerate"] = "primary"
     interaction_mode: Literal["text", "voice"] = "text"
+    voice_tts_provider: Literal[
+        "browser", "mock", "cosyvoice", "siliconflow", "gpt-sovits", "qwen3-vllm"
+    ] = "browser"
+    adult_mode: bool = False
+    r18_style_id: str = Field(default="high_intensity", min_length=1, max_length=64)
     initiative: bool = False
     initiative_trigger: Literal[
         "none", "manual", "idle_continuation", "continuous_companionship"
@@ -131,7 +138,6 @@ class ChatRequest(BaseModel):
     server_received_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     voice_delivery: VoiceDeliveryState | None = None
     voice_context: VoiceInteractionContext | None = None
-    voice_emotion_tokens: list[str] = Field(default_factory=list, max_length=8)
     input_evidence: InputEvidence | None = None
     user_name: str = "用户"
     user_persona: str = ""
@@ -257,6 +263,9 @@ class RoleAuditResult(BaseModel):
     confidence: float = Field(default=0, ge=0, le=1)
     evidence: list[str] = Field(default_factory=list, max_length=5)
     next_turn_instruction: str = Field(default="", max_length=500)
+    recent_event_summary: str = Field(default="", max_length=600)
+    event_progression: str = Field(default="", max_length=600)
+    open_threads: list[str] = Field(default_factory=list, max_length=5)
 
 
 class JsonUpdateValidation(BaseModel):

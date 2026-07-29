@@ -30,13 +30,20 @@ class PromptInspectionStore:
         self._lock = RLock()
 
     @staticmethod
-    def _layer_name(index: int, base_count: int, pending: list[dict[str, Any]]) -> str:
+    def _layer_name(
+        index: int,
+        base_count: int,
+        pending: list[dict[str, Any]],
+        content: str,
+    ) -> str:
         if index == 0:
-            return "persona_system"
+            return "system_and_current_character_profile"
         if index == 1:
-            return "contract_system"
+            return "system_data_contract"
         if index == 2:
-            return "authoritative_profile"
+            return "global_user_and_character_runtime"
+        if "【历史压缩摘要】" in content:
+            return "conversation_summary"
         pending_index = index - base_count
         if 0 <= pending_index < len(pending):
             return str(pending[pending_index].get("kind") or "turn_context")
@@ -56,6 +63,7 @@ class PromptInspectionStore:
         *,
         run_id: str,
         session_id: str,
+        character_id: str = "",
         messages: list[dict[str, str]],
         pending_events: list[dict[str, Any]],
     ) -> None:
@@ -68,7 +76,9 @@ class PromptInspectionStore:
             layers.append(
                 {
                     "index": index,
-                    "layer": self._layer_name(index, base_count, pending_events),
+                    "layer": self._layer_name(
+                        index, base_count, pending_events, content
+                    ),
                     "role": str(message.get("role") or ""),
                     "chars": len(content),
                     "estimated_tokens": max(1, len(content) // 2) if content else 0,
@@ -79,6 +89,7 @@ class PromptInspectionStore:
         metadata = {
             "run_id": run_id,
             "session_id": session_id,
+            "character_id": character_id,
             "message_count": len(messages),
             "total_chars": sum(item["chars"] for item in layers),
             "estimated_tokens": sum(item["estimated_tokens"] for item in layers),

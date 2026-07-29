@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld("launcher", {
   update: (action, options = {}) => ipcRenderer.invoke("launcher:update", { action, ...options }),
   component: (action, id = "") => ipcRenderer.invoke("launcher:component", { action, id }),
   voice: (action, id = "") => ipcRenderer.invoke("launcher:voice", { action, id }),
+  onboarding: (action, payload = {}) => ipcRenderer.invoke("launcher:onboarding", { action, payload }),
   diagnostics: () => ipcRenderer.invoke("runtime:diagnostics"),
   runtime: (action, id = "") => {
     const channel = {

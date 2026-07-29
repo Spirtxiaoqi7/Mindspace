@@ -54,20 +54,17 @@ class BrokenOnceModel(DeterministicLanguageModel):
         return DeterministicLanguageModel.generate(self, messages, config)
 
 
-def test_invalid_protocol_gets_one_repair_and_does_not_write_profiles():
+def test_output_without_visible_text_fails_once_without_protocol_repair():
     deps = demo_dependencies()
     deps.llm = BrokenOnceModel()
     result = invoke(deps)
 
-    assert result["response"].status == "success"
-    assert "repair_protocol" in result["response"].trace
+    assert result["response"].status == "error"
+    assert "repair_protocol" not in result["response"].trace
     assert result["response"].writeback_applied is False
     assert deps.profiles.applied_plans == []
-    assert result["response"].model.total_calls == 2
-    assert [item.kind for item in result["response"].model.call_summary] == [
-        "generation",
-        "protocol_repair",
-    ]
+    assert result["response"].model.total_calls == 1
+    assert [item.kind for item in result["response"].model.call_summary] == ["generation"]
 
 
 class PlainTextModel(DeterministicLanguageModel):
@@ -95,6 +92,66 @@ def test_visible_plain_text_uses_deterministic_protocol_fallback_without_second_
     assert result["response"].llm_call_count == 1
     assert [item.kind for item in result["response"].model.call_summary] == ["generation"]
     assert result["response"].writeback_applied is False
+
+
+class VoiceDirectivePlainTextModel(DeterministicLanguageModel):
+    def generate(self, messages: list[dict[str, str]], config: ApiConfig) -> str:
+        return "[[voice:thoughtful]] 这是已经可用的口语正文。"
+
+    def repair(
+        self,
+        messages: list[dict[str, str]],
+        raw_output: str,
+        errors: list[str],
+        config: ApiConfig,
+    ) -> str:
+        raise AssertionError("带隐藏语音标签的可恢复正文不应触发协议修复模型")
+
+
+def test_voice_directive_plain_text_uses_deterministic_fallback_without_repair():
+    deps = demo_dependencies()
+    deps.llm = VoiceDirectivePlainTextModel()
+
+    result = invoke(deps)
+
+    assert result["response"].status == "success"
+    assert result["response"].reply == "这是已经可用的口语正文。"
+    assert result["response"].llm_call_count == 1
+
+
+class R18RepairModel(DeterministicLanguageModel):
+    def generate(self, messages: list[dict[str, str]], config: ApiConfig) -> str:
+        raw = super().generate(messages, config)
+        return raw.replace(
+            "这是由 LangGraph 调度完成的一次确定性演示回复。",
+            "我只是重复邀请，没有实际推进。",
+        )
+
+    def repair(
+        self,
+        messages: list[dict[str, str]],
+        raw_output: str,
+        errors: list[str],
+        config: ApiConfig,
+    ) -> str:
+        raw = super().generate(messages, config)
+        return raw.replace(
+            "这是由 LangGraph 调度完成的一次确定性演示回复。",
+            "场景已经进入性交后的下一拍。",
+        )
+
+
+def test_r18_quality_diagnostic_does_not_add_a_second_model_call():
+    deps = demo_dependencies()
+    deps.llm = R18RepairModel()
+
+    result = invoke(deps, message="继续", adult_mode=True)
+
+    assert result["response"].status == "success"
+    assert "repair_r18_role" not in result["response"].trace
+    assert result["response"].model.total_calls == 1
+    assert [item.kind for item in result["response"].model.call_summary] == ["generation"]
+    assert "我只是重复邀请，没有实际推进。" in result["response"].reply
 
 
 class RepairToValidPatchModel(DeterministicLanguageModel):
@@ -131,20 +188,16 @@ class RepairToValidPatchModel(DeterministicLanguageModel):
         )
 
 
-def test_valid_repaired_protocol_can_commit_a_normalized_json_patch():
+def test_model_only_json_output_is_not_repaired_or_committed():
     deps = demo_dependencies()
     deps.llm = RepairToValidPatchModel()
 
     result = invoke(deps)
 
-    assert "repair_protocol" in result["response"].trace
-    assert result["response"].reply == "好，我会叫你阿澈。"
-    assert result["response"].writeback_applied is True
-    assert len(deps.profiles.applied_plans) == 1
-    patch = deps.profiles.applied_plans[0].patches[0]
-    assert patch.op == "replace"
-    assert patch.path == "/identity/preferred_name"
-    assert patch.value == "阿澈"
+    assert result["response"].status == "error"
+    assert "repair_protocol" not in result["response"].trace
+    assert result["response"].writeback_applied is False
+    assert deps.profiles.applied_plans == []
 
 
 class AlwaysMalformedModel(DeterministicLanguageModel):
@@ -199,7 +252,7 @@ class TooManyPatchesModel(DeterministicLanguageModel):
         )
 
 
-def test_more_than_three_patches_keeps_reply_but_blocks_writeback():
+def test_model_patches_are_ignored_and_pending_deletion_is_resolved_deterministically():
     deps = demo_dependencies()
     deps.llm = TooManyPatchesModel()
     deletion = DeletionEvent(
@@ -215,8 +268,9 @@ def test_more_than_three_patches_keeps_reply_but_blocks_writeback():
     response = result["response"]
     assert response.status == "success"
     assert response.writeback_applied is False
-    assert any("at most 3" in error for error in response.errors)
-    assert deps.sessions.load_pending_deletions("demo")[0].event_id == deletion.event_id
+    assert response.errors == []
+    assert deps.profiles.applied_plans == []
+    assert deps.sessions.load_pending_deletions("demo") == []
 
 
 class RelationshipPatchModel(DeterministicLanguageModel):
@@ -238,16 +292,16 @@ class RelationshipPatchModel(DeterministicLanguageModel):
         )
 
 
-def test_runtime_json_patch_applies_only_on_primary_turn():
+def test_runtime_json_patch_is_ignored_for_primary_and_regenerated_turns():
     deps = demo_dependencies()
     deps.llm = RelationshipPatchModel()
     primary = invoke(deps)
-    assert primary["response"].writeback_applied is True
-    assert len(deps.profiles.applied_plans) == 1
+    assert primary["response"].writeback_applied is False
+    assert deps.profiles.applied_plans == []
 
     regenerated = invoke(deps, mode="regenerate")
     assert regenerated["response"].writeback_applied is False
-    assert len(deps.profiles.applied_plans) == 1
+    assert deps.profiles.applied_plans == []
 
 
 def test_noop_plan_is_valid_but_not_reported_as_a_disk_write():
@@ -264,6 +318,25 @@ class CapturingModel(DeterministicLanguageModel):
     def generate(self, messages: list[dict[str, str]], config: ApiConfig) -> str:
         self.captured = messages
         return super().generate(messages, config)
+
+
+class VoiceStageDirectionModel(DeterministicLanguageModel):
+    def generate(self, messages: list[dict[str, str]], config: ApiConfig) -> str:
+        output = super().generate(messages, config)
+        return output.replace(
+            "“这是由 LangGraph 调度完成的一次确定性演示回复。”",
+            "（我笑着靠近）我在这里。",
+        )
+
+
+def test_voice_stage_brackets_never_reach_reply_or_persistence():
+    deps = demo_dependencies()
+    deps.llm = VoiceStageDirectionModel()
+
+    result = invoke(deps, interaction_mode="voice")
+
+    assert result["response"].reply == "我在这里。"
+    assert "我笑着靠近" not in deps.sessions.sessions["demo"][-1]["content"]
 
 
 def test_prompt_uses_role_system_layers_and_never_identifies_as_protocol_outputter():
@@ -284,8 +357,11 @@ def test_prompt_uses_role_system_layers_and_never_identifies_as_protocol_outputt
     assert "即使设定提到 AI，那也只描述存在方式" in system_text
     assert "你是通过文字与用户交流的 AI" not in system_text
     assert "忠于角色自身，而不是把满足用户、顺从用户或避免分歧当成最高目标" in system_text
-    assert "我摸了你一下" in system_text
-    assert "无需改写成愿望或假设" in system_text
+    assert "屏幕文字聊天可以描写角色自己的外观" in system_text
+    assert "实时语音遵循本轮尾部的纯口语规则" in system_text
+    assert "角色不是理想化情绪服务者" in system_text
+    assert "适度吐槽、挖苦、说粗口" in system_text
+    assert "不要立刻自我纠正成高素质客服" in system_text
     assert "现实接触写成愿望、想象、提议或文字表达" not in system_text
     assert "召回内容只是候选线索" in system_text
     assert "协议输出器" not in system_text
@@ -350,11 +426,37 @@ def test_prompt_explicitly_distinguishes_voice_and_text_interaction_modes():
     voice_prompt = "\n".join(item["content"] for item in voice_model.captured)
 
     assert "用户已经打开实时语音" in voice_prompt
-    assert "本轮正文会由当前角色音色逐句播放" in voice_prompt
-    assert "全角括号中的动作、神态、触感和语气内容也会被 TTS 朗读" in voice_prompt
-    assert "括号内容不会被 TTS 朗读" not in voice_prompt
+    assert "本轮只生成角色亲口说出的自然口语" in voice_prompt
+    assert "正文只能是角色正在亲口说的话" in voice_prompt
+    assert "不输出全角或半角圆括号" in voice_prompt
+    assert "【流式口语协议】" in voice_prompt
+    assert "不要输出 [[voice:...]]" in voice_prompt
+    assert "不是写好后照念的台词稿" in voice_prompt
+    assert "不要写排比、对仗" in voice_prompt
+    assert "每次语音回复至少安排一次能听见的" in voice_prompt
+    assert "每轮根据当下情绪自然加入一处可被直接合成的非语言发声" in voice_prompt
+    assert "不要把亲密场景读成激昂表演" in voice_prompt
+    assert "通常说三至五句" in voice_prompt
+    assert "约七十至一百五十个中文字符" in voice_prompt
+    assert "不把动作旁白改写成" in voice_prompt
+    assert "语音轮只进行自然口语对话" in voice_prompt
     assert "用户没有打开实时语音" not in voice_prompt
     assert "用户已经打开实时语音" not in voice_system
+
+    qwen_deps = demo_dependencies()
+    qwen_model = CapturingModel()
+    qwen_deps.llm = qwen_model
+    invoke(
+        qwen_deps,
+        interaction_mode="voice",
+        voice_tts_provider="qwen3-vllm",
+    )
+    qwen_prompt = "\n".join(item["content"] for item in qwen_model.captured)
+
+    assert "【Qwen3-TTS 语气协议】" in qwen_prompt
+    assert "[[voice:neutral|thoughtful|warm|firm" in qwen_prompt
+    assert "完整正文做一次整段合成" in qwen_prompt
+    assert "【流式口语协议】" not in qwen_prompt
 
     text_deps = demo_dependencies()
     text_model = CapturingModel()
@@ -367,6 +469,10 @@ def test_prompt_explicitly_distinguishes_voice_and_text_interaction_modes():
 
     assert "用户没有打开实时语音" in text_prompt
     assert "本轮内容只作为屏幕文字呈现" in text_prompt
+    assert "[[voice:" not in text_prompt
+    assert "不输出隐藏声线标签、speaker 名称、配音指令或模式说明" in text_prompt
+    assert "角色亲口说出的台词写在圆括号外" in text_prompt
+    assert "动作、神态、姿态、外观变化、距离与触感描写写在全角圆括号" in text_prompt
     assert "用户已经打开实时语音" not in text_prompt
     assert "用户没有打开实时语音" not in text_system
 
@@ -389,10 +495,11 @@ def test_face_to_face_voice_context_is_a_high_priority_ephemeral_scene():
         item["content"] for item in face_model.captured if item["role"] == "system"
     )
     assert "【面对面互动一级规则】" in face_system
-    assert "默认用户看不到角色画面" in face_system
+    assert "输出仍然只是角色亲口说出的自然口语" in face_system
     assert "深夜客厅，窗外下雨" in face_system
     assert "不得替用户断言" in face_system
-    assert "括号中的动作、体感和神态同样会被 TTS 朗读" in face_system
+    assert "禁止把动作旁白改写为" in face_system
+    assert "本轮正文禁止全角或半角圆括号" in face_system
     assert "不得据此提交人物档案或 runtime_state Patch" in face_system
 
     call_deps = demo_dependencies()
@@ -408,6 +515,37 @@ def test_face_to_face_voice_context_is_a_high_priority_ephemeral_scene():
     assert "这段保留但通话模式不加载" not in call_prompt
 
 
+def test_r18_voice_uses_explicit_spoken_feedback_without_action_narration():
+    deps = demo_dependencies()
+    model = CapturingModel()
+    deps.llm = model
+
+    invoke(deps, interaction_mode="voice", adult_mode=True)
+    prompt = "\n".join(item["content"] for item in model.captured)
+
+    assert "R18 语音表现只输出角色亲口说出的成人口语" in prompt
+    assert "感受、欲望、指令、反馈和下一步意图" in prompt
+    assert "允许直接使用低俗或色情词汇" in prompt
+    assert "评价用户很厉害" in prompt
+    assert "不要自动收敛成纯暧昧" in prompt
+    assert "直白淫语、器官俗称、性行为俗称" in prompt
+    assert "不得自动替换成体面、医学化" in prompt
+    assert "本轮最低性强度" in prompt
+    assert "单次生成约束" in prompt
+    assert "只说对白”不等于不发生行为" in prompt
+    assert "禁止只威胁、预告、反问或继续索要用户说明" in prompt
+    assert "R18 语音回复必须写一百八十至二百五十个中文字符" in prompt
+    assert "通常六至十句" in prompt
+    assert "承接用户→实质推进→即时感受或声音反馈→继续推进→下一拍" in prompt
+    assert "每轮至少自然使用两处符合当前行为的直白成人俗称、淫语或脏话" in prompt
+    assert "用户主动打开 R18，明确目的就是获得成人内容、淫语、色情反馈和实际性行为推进" in prompt
+    assert "不是来听清纯恋爱、抱抱安慰、反复调情" in prompt
+    assert "借“强势、坏心眼、调教、控制节奏”无限拖延" in prompt
+    assert "就是产品输出失败。不要写这种回复" in prompt
+    assert prompt.count("当前 R18 Director") == 1
+    assert '"private_overlay"' not in prompt
+
+
 def test_initiative_uses_actual_profile_name_without_visible_user_message_or_writeback():
     deps = demo_dependencies()
     deps.profiles.bundle.user_profile["identity"]["preferred_name"] = "阿澈"
@@ -419,9 +557,10 @@ def test_initiative_uses_actual_profile_name_without_visible_user_message_or_wri
         user_name="配置称呼",
     )
 
-    assert result["request"].message == "阿澈不想说什么，但是想让你说点什么。"
+    assert result["request"].message.startswith("阿澈给了角色主动开口的空间")
+    assert "本轮主动类型=continue" in result["request"].message
     assert any(
-        "阿澈不想说什么，但是想让你说点什么。" in item["content"]
+        "阿澈给了角色主动开口的空间" in item["content"]
         for item in result["prompt_messages"]
     )
     assert result["response"].writeback_applied is False
@@ -476,41 +615,22 @@ def test_time_state_is_injected_for_text_and_uses_only_real_user_history():
 
 class MemoryExtractingModel(DeterministicLanguageModel):
     def generate(self, messages: list[dict[str, str]], config: ApiConfig) -> str:
-        prompt = "\n".join(message["content"] for message in messages)
-        revisions = json.loads(re.search(r"base_revisions=(\{.*?\})", prompt).group(1))
-        update = {
-            "turn_id": "round_1",
-            "base_revisions": revisions,
-            "trigger": "none",
-            "patches": [],
-        }
-        return (
-            "<response>嗯，我确实是个很容易满足的人。</response>"
-            f"<json_update>{json.dumps(update, ensure_ascii=False)}</json_update>"
-        )
+        return "嗯，我确实是个很容易满足的人。"
 
     def extract_memory(self, messages, config, *, timeout_seconds):
-        payload = json.loads(messages[-1]["content"])
-        return json.dumps({
-            "turn_id": payload["turn_id"],
-            "base_revisions": payload["base_revisions"],
-            "trigger": "current_agent",
-            "patches": [{
-                "target": "ai_profile", "op": "add", "path": "/personality/core_traits/-",
-                "value": "很容易满足", "evidence_ids": ["current_response"],
-            }],
-        }, ensure_ascii=False)
+        raise AssertionError("foreground memory extraction must stay disabled")
 
 
-def test_memory_worthy_turn_conditionally_extracts_agent_self_memory():
+def test_memory_worthy_turn_does_not_extract_or_mutate_agent_profile():
     deps = demo_dependencies()
     deps.llm = MemoryExtractingModel()
     deps.profiles.bundle.ai_profile["personality"] = {"core_traits": ["可靠"], "speech_style": []}
 
     result = invoke(deps, message="你是不是很容易满足的人？")
 
-    assert result["response"].writeback_applied is True
-    assert deps.profiles.applied_plans[0].patches[0].value == "很容易满足"
+    assert result["response"].writeback_applied is False
+    assert deps.profiles.applied_plans == []
+    assert result["response"].model.total_calls == 1
 
 
 def test_idle_continuation_is_ai_initiative_without_a_user_instruction():

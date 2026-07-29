@@ -49,7 +49,7 @@ class StructuredMemoryPort(Protocol):
 
 
 class ProfileRepositoryPort(Protocol):
-    def load_bundle(self) -> ProfileBundle: ...
+    def load_bundle(self, character_id: str = "") -> ProfileBundle: ...
 
     def apply_json_update(
         self, plan: JsonUpdatePlan, *, request: ChatRequest
@@ -176,3 +176,7 @@ class Dependencies:
     capabilities: Any | None = None
     emotion: EmotionPort | None = None
     prompt_inspector: Any | None = None
+    characters: Any | None = None
+    # Stable turn-level provider routing. Qwen-only acoustic cues must never
+    # leak into GPT-SoVITS, CosyVoice, browser or mock output streams.
+    tts_provider: Any = ""

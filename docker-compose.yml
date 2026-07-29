@@ -7,8 +7,8 @@ services:
       MINDSPACE_LLM_MODE: ${MINDSPACE_LLM_MODE:-demo}
       MINDSPACE_LLM_BASE_URL: ${MINDSPACE_LLM_BASE_URL:-https://api.deepseek.com}
       MINDSPACE_LLM_API_KEY: ${MINDSPACE_LLM_API_KEY:-}
-      MINDSPACE_LLM_MODEL: ${MINDSPACE_LLM_MODEL:-deepseek-chat}
-      MINDSPACE_TTS_PROVIDER: ${MINDSPACE_TTS_PROVIDER:-siliconflow}
+      MINDSPACE_LLM_MODEL: ${MINDSPACE_LLM_MODEL:-deepseek-v4-flash}
+      MINDSPACE_TTS_PROVIDER: ${MINDSPACE_TTS_PROVIDER:-qwen3-vllm}
       MINDSPACE_ASR_PROVIDER: ${MINDSPACE_ASR_PROVIDER:-browser}
     volumes:
       - ./runtime:/data

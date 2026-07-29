@@ -1,8 +1,11 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$IncludeQwen
+)
 
 $ErrorActionPreference = 'Stop'
-$AllowedPorts = 8765, 8766, 5055
+$AllowedPorts = @(8765, 8766, 5055)
+if ($IncludeQwen) { $AllowedPorts += 8091 }
 $Listeners = Get-NetTCPConnection -State Listen -LocalPort $AllowedPorts -ErrorAction SilentlyContinue
 $ProcessIds = @($Listeners | Select-Object -ExpandProperty OwningProcess -Unique)
 foreach ($ProcessId in $ProcessIds) {
@@ -11,4 +14,3 @@ foreach ($ProcessId in $ProcessIds) {
     }
 }
 @{ ok = $true; stopped = $ProcessIds } | ConvertTo-Json -Compress
-

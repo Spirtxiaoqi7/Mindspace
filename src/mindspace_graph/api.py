@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import io
 import json
+import re
+import shutil
+import zipfile
+from urllib.parse import quote
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -28,6 +34,13 @@ from starlette.background import BackgroundTask
 
 from mindspace_graph.adapters.file_storage import _atomic_json
 from mindspace_graph.audio import AudioProviderUnavailable, AudioService
+from mindspace_graph.characters import (
+    CORE_TRAITS,
+    FLAWS,
+    RELATIONSHIPS,
+    CharacterDraftInput,
+    generate_draft_once,
+)
 from mindspace_graph.gpt_sovits import public_voice_catalog, voice_definition
 from mindspace_graph.memory_registry import DEFAULT_MEMORY_REGISTRY
 from mindspace_graph.models import ChatRequest
@@ -54,6 +67,7 @@ class TTSRequest(BaseModel):
     text: str = Field(min_length=1, max_length=5_000)
     request_id: str = Field(default_factory=lambda: uuid4().hex)
     speed: float = Field(default=1, ge=0.5, le=2)
+    voice_cue: str = Field(default="neutral", max_length=32)
 
 
 class ClearDataRequest(BaseModel):
@@ -105,6 +119,56 @@ class ASRVocabularyTestRequest(BaseModel):
 class ProfileRestoreRequest(BaseModel):
     version_id: str = Field(min_length=1, max_length=100)
     expected_revision: int | None = Field(default=None, ge=0)
+
+
+class CharacterRestoreRequest(BaseModel):
+    version_id: str = Field(min_length=1, max_length=100)
+    expected_revision: int = Field(ge=1)
+
+
+class SessionCreateRequest(BaseModel):
+    session_id: str = Field(default_factory=lambda: str(uuid4()), min_length=1, max_length=100)
+    character_id: str = Field(min_length=1, max_length=64)
+
+
+def _character_summary(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: record.get(key)
+        for key in (
+            "character_id",
+            "schema_version",
+            "revision",
+            "source",
+            "status",
+            "display_name",
+            "gender",
+            "user_alias",
+            "relationship_label",
+            "avatar",
+            "created_at",
+            "updated_at",
+            "last_used_at",
+        )
+    }
+
+
+def _avatar_suffix(filename: str, data: bytes) -> str:
+    suffix = Path(filename or "").suffix.lower()
+    if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+        raise ValueError("unsupported avatar format")
+    valid = (
+        data.startswith(b"\x89PNG\r\n\x1a\n")
+        or data.startswith(b"\xff\xd8\xff")
+        or (data.startswith(b"RIFF") and data[8:12] == b"WEBP")
+        or data.startswith((b"GIF87a", b"GIF89a"))
+    )
+    if not valid:
+        raise ValueError("avatar content does not match a supported image")
+    return ".jpg" if suffix == ".jpeg" else suffix
+
+
+def _safe_archive_name(value: str) -> str:
+    return re.sub(r'[<>:"/\\|?*\x00-\x1f]+', "-", value).strip(" .-") or "character"
 
 
 PROFILE_KEYS = {
@@ -187,7 +251,13 @@ def _voice_energy_threshold_db(
     playing: bool,
     noise_floor_db: float | None,
 ) -> float:
-    """Return the server gate; playback uses a softer candidate gate before VAD confirmation."""
+    """Return a stable server gate before FunASR VAD confirms real speech.
+
+    Older clients reported a short startup noise sample and raised the gate from
+    that value.  The sample was both timing-sensitive and easy to contaminate
+    with the user's first words, so it could suppress quiet Chinese speech.
+    Keep the argument for wire compatibility, but deliberately do not use it.
+    """
 
     base_key = (
         "asr_barge_in_energy_threshold_db"
@@ -196,19 +266,10 @@ def _voice_energy_threshold_db(
     )
     threshold = float(audio_config[base_key])
     if playing:
-        # The AudioWorklet has already applied an adaptive floor + 8 dB gate.
-        # Let weak but real speech reach VAD/ASR; only confirmed speech stops TTS.
+        # TTS playback still needs echo rejection, but the energy gate is only a
+        # candidate filter. FunASR VAD and semantic arbitration decide whether
+        # the assistant is actually interrupted.
         threshold -= 4.0
-    if bool(audio_config.get("asr_adaptive_noise_enabled", True)) and noise_floor_db is not None:
-        margin_key = (
-            "asr_barge_in_noise_margin_db"
-            if playing
-            else "asr_listening_noise_margin_db"
-        )
-        margin = float(audio_config[margin_key])
-        if playing:
-            margin = max(4.0, margin - 8.0)
-        threshold = max(threshold, noise_floor_db + margin)
     return min(-15.0, threshold)
 
 
@@ -245,8 +306,15 @@ def create_app(
     avatar_root = settings.runtime_dir / "data" / "avatars"
     avatar_root.mkdir(parents=True, exist_ok=True)
     avatar_config_path = avatar_root / "config.json"
+    character_root = settings.runtime_dir / "data" / "characters"
+    character_root.mkdir(parents=True, exist_ok=True)
     app.mount("/assets", StaticFiles(directory=web_root), name="assets")
     app.mount("/api/v1/avatar/files", StaticFiles(directory=avatar_root), name="avatars")
+    app.mount(
+        "/api/v1/character/files",
+        StaticFiles(directory=character_root),
+        name="character-files",
+    )
 
     @app.get("/", include_in_schema=False)
     async def index():
@@ -311,6 +379,13 @@ def create_app(
     async def list_tts_voices():
         return public_voice_catalog(settings.model_root, settings.tts_gpt_sovits_voice)
 
+    @app.get("/api/v1/audio/tts/qwen3/voices")
+    async def list_qwen3_tts_voices():
+        try:
+            return await audio.qwen3_vllm_voices()
+        except AudioProviderUnavailable as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
     @app.post("/api/v1/audio/tts/voice/select")
     async def select_tts_voice(payload: dict[str, Any]):
         voice_id = str(payload.get("voice_id") or "").strip()
@@ -367,6 +442,434 @@ def create_app(
             }
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
+
+    @app.get("/api/v1/characters/options")
+    async def character_options():
+        return {
+            "core_traits": CORE_TRAITS,
+            "flaws": FLAWS,
+            "relationships": RELATIONSHIPS,
+            "gender": ["女", "男"],
+        }
+
+    @app.get("/api/v1/characters")
+    async def list_characters(include_archived: bool = Query(default=False)):
+        sessions = container.sessions.list_sessions()
+        latest_session: dict[str, str] = {}
+        session_count: dict[str, int] = {}
+        for session in sessions:
+            character_id = str(session.get("character_id") or "")
+            if not character_id:
+                continue
+            session_count[character_id] = session_count.get(character_id, 0) + 1
+            latest_session.setdefault(character_id, str(session.get("session_id") or ""))
+        items = []
+        for record in container.characters.list(include_archived=include_archived):
+            summary = _character_summary(record)
+            character_id = str(record["character_id"])
+            summary["session_count"] = session_count.get(character_id, 0)
+            summary["latest_session_id"] = latest_session.get(character_id, "")
+            items.append(summary)
+        return {"items": items, "count": len(items)}
+
+    @app.get("/api/v1/characters/{character_id}")
+    async def get_character(character_id: str):
+        try:
+            return container.characters.get(character_id)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/v1/characters")
+    async def create_character(payload: dict[str, Any]):
+        try:
+            profile = payload.get("ai_profile")
+            if not isinstance(profile, dict):
+                raise ValueError("ai_profile is required")
+            record = container.characters.create(
+                ai_profile=profile,
+                source=str(payload.get("source") or "custom"),
+                runtime_state=payload.get("runtime_state"),
+                avatar=payload.get("avatar"),
+                user_alias=str(payload.get("user_alias") or ""),
+                relationship_label=str(payload.get("relationship_label") or ""),
+                system_prompt=str(payload.get("system_prompt") or ""),
+            )
+            container.memory_service.rebuild(dry_run=False)
+            return {"success": True, "character": record}
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.put("/api/v1/characters/{character_id}")
+    async def update_character(character_id: str, payload: dict[str, Any]):
+        try:
+            record = container.characters.update(character_id, payload)
+            container.memory_service.rebuild(dry_run=False)
+            container.audit.record(
+                "user_direct_character_edit",
+                {"character_id": character_id, "revision": record["revision"]},
+            )
+            return {"success": True, "character": record}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/characters/{character_id}/clone")
+    async def clone_character(character_id: str):
+        try:
+            return {
+                "success": True,
+                "character": container.characters.clone(character_id),
+            }
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/v1/characters/{character_id}/archive")
+    async def archive_character(character_id: str):
+        try:
+            current = container.characters.get(character_id)
+            active_count = len(container.characters.list())
+            next_status = "active" if current.get("status") == "archived" else "archived"
+            if next_status == "archived" and active_count <= 1:
+                raise ValueError("至少保留一个可用角色")
+            return {
+                "success": True,
+                "character": container.characters.update(
+                    character_id,
+                    {"revision": current["revision"], "status": next_status},
+                ),
+            }
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/v1/characters/{character_id}/history")
+    async def character_history(
+        character_id: str, limit: int = Query(default=20, ge=1, le=100)
+    ):
+        try:
+            container.characters.get(character_id)
+            return {"items": container.characters.history(character_id, limit)}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/v1/characters/{character_id}/restore")
+    async def restore_character(character_id: str, payload: CharacterRestoreRequest):
+        try:
+            record = container.characters.restore(
+                character_id, payload.version_id, payload.expected_revision
+            )
+            container.memory_service.rebuild(dry_run=False)
+            return {"success": True, "character": record}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/v1/characters/{character_id}/export")
+    async def export_character(character_id: str):
+        try:
+            record = container.characters.get(character_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        profile_bytes = json.dumps(
+            record["ai_profile"], ensure_ascii=False, indent=2
+        ).encode("utf-8")
+        files: dict[str, bytes] = {"ai-profile.json": profile_bytes}
+        avatar_src = str((record.get("avatar") or {}).get("src") or "")
+        prefix = "/api/v1/character/files/"
+        if avatar_src.startswith(prefix):
+            relative = Path(avatar_src.removeprefix(prefix))
+            candidate = (character_root / relative).resolve()
+            root_resolved = character_root.resolve()
+            if candidate.is_file() and root_resolved in candidate.parents:
+                files[f"avatar{candidate.suffix.lower()}"] = candidate.read_bytes()
+        manifest = {
+            "format": "mindspace-card",
+            "schema_version": "1.0.0",
+            "display_name": record["display_name"],
+            "gender": record["gender"],
+            "relationship_label": record.get("relationship_label", ""),
+            "user_alias": record.get("user_alias", ""),
+            "files": {
+                name: {
+                    "bytes": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                }
+                for name, data in files.items()
+            },
+        }
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                "manifest.json",
+                json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"),
+            )
+            for name, data in files.items():
+                archive.writestr(name, data)
+        buffer.seek(0)
+        filename = f"{_safe_archive_name(str(record['display_name']))}.mindspace-card"
+        return StreamingResponse(
+            buffer,
+            media_type="application/vnd.mindspace.character+zip",
+            headers={
+                "Content-Disposition": (
+                    f"attachment; filename=\"mindspace-card.mindspace-card\"; "
+                    f"filename*=UTF-8''{quote(filename)}"
+                )
+            },
+        )
+
+    @app.post("/api/v1/characters/import")
+    async def import_character(file: Annotated[UploadFile, File()]):
+        data = await file.read()
+        if not data or len(data) > 10 * 1024 * 1024:
+            raise HTTPException(
+                status_code=413, detail="character package must be between 1 byte and 10 MiB"
+            )
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                infos = archive.infolist()
+                if len(infos) > 4:
+                    raise ValueError("character package contains too many files")
+                names = [item.filename for item in infos]
+                for info in infos:
+                    path = Path(info.filename)
+                    if (
+                        info.is_dir()
+                        or path.is_absolute()
+                        or ".." in path.parts
+                        or len(info.filename) > 100
+                        or info.file_size > 5 * 1024 * 1024
+                    ):
+                        raise ValueError("unsafe character package entry")
+                if "manifest.json" not in names or "ai-profile.json" not in names:
+                    raise ValueError("character package is missing required files")
+                allowed = {
+                    "manifest.json",
+                    "ai-profile.json",
+                    "avatar.png",
+                    "avatar.jpg",
+                    "avatar.webp",
+                    "avatar.gif",
+                }
+                if any(name not in allowed for name in names):
+                    raise ValueError("character package contains unsupported files")
+                manifest = json.loads(archive.read("manifest.json"))
+                if (
+                    manifest.get("format") != "mindspace-card"
+                    or manifest.get("schema_version") != "1.0.0"
+                ):
+                    raise ValueError("unsupported character package version")
+                payload_files = manifest.get("files")
+                if not isinstance(payload_files, dict):
+                    raise ValueError("character package file manifest is invalid")
+                for name, expected in payload_files.items():
+                    if name not in names or not isinstance(expected, dict):
+                        raise ValueError("character package file manifest is incomplete")
+                    content = archive.read(name)
+                    if len(content) != int(expected.get("bytes", -1)):
+                        raise ValueError("character package file size mismatch")
+                    if hashlib.sha256(content).hexdigest() != expected.get("sha256"):
+                        raise ValueError("character package checksum mismatch")
+                profile = json.loads(archive.read("ai-profile.json"))
+                avatar_name = next(
+                    (name for name in names if name.startswith("avatar.")), ""
+                )
+                avatar_data = archive.read(avatar_name) if avatar_name else b""
+            record = container.characters.create(
+                ai_profile=profile,
+                source="imported",
+                user_alias=str(manifest.get("user_alias") or ""),
+                relationship_label=str(manifest.get("relationship_label") or ""),
+            )
+            if avatar_name and avatar_data:
+                suffix = _avatar_suffix(avatar_name, avatar_data)
+                target_dir = character_root / str(record["character_id"])
+                target_dir.mkdir(parents=True, exist_ok=True)
+                target = target_dir / f"avatar{suffix}"
+                target.write_bytes(avatar_data)
+                avatar = {
+                    "src": f"/api/v1/character/files/{record['character_id']}/{target.name}",
+                    "aspect": "2 / 3",
+                    "scale": 1.0,
+                    "x": 0,
+                    "y": 0,
+                }
+                record = container.characters.update(
+                    str(record["character_id"]),
+                    {"revision": record["revision"], "avatar": avatar},
+                )
+            container.memory_service.rebuild(dry_run=False)
+            return {"success": True, "character": record}
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+            zipfile.BadZipFile,
+        ) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/character-drafts")
+    async def create_character_draft(payload: CharacterDraftInput):
+        try:
+            return container.characters.create_draft(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/v1/character-drafts/{draft_id}")
+    async def get_character_draft(draft_id: str):
+        try:
+            return container.characters.get_draft(draft_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.put("/api/v1/character-drafts/{draft_id}")
+    async def update_character_draft(draft_id: str, payload: dict[str, Any]):
+        try:
+            updates: dict[str, Any] = {}
+            if "input" in payload:
+                selected = CharacterDraftInput.model_validate(payload["input"])
+                from mindspace_graph.characters import (
+                    local_profile_from_draft,
+                    validate_character_combination,
+                )
+
+                conflicts = validate_character_combination(selected)
+                if conflicts:
+                    raise ValueError("；".join(conflicts))
+                updates["input"] = selected.model_dump(mode="json")
+                updates["profile"] = local_profile_from_draft(selected)
+                updates["generation_mode"] = "local_template"
+                updates["model_call_count"] = 0
+                updates["warnings"] = []
+            if "profile" in payload:
+                updates["profile"] = payload["profile"]
+            if "avatar" in payload:
+                avatar = payload["avatar"]
+                if not isinstance(avatar, dict):
+                    raise ValueError("avatar must be an object")
+                src = str(avatar.get("src") or "")
+                if not src.startswith("/assets/characters/"):
+                    raise ValueError("only bundled placeholder avatars can be selected directly")
+                updates["avatar"] = {
+                    "src": src,
+                    "aspect": str(avatar.get("aspect") or "2 / 3"),
+                    "scale": float(avatar.get("scale", 1.0)),
+                    "x": float(avatar.get("x", 0)),
+                    "y": float(avatar.get("y", 0)),
+                }
+            return container.characters.save_draft(draft_id, updates)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/character-drafts/{draft_id}/generate")
+    async def generate_character_draft(draft_id: str):
+        try:
+            return await generate_draft_once(
+                container.characters,
+                draft_id,
+                llm=container.conversation.dependencies.llm,
+                settings=settings,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/character-drafts/{draft_id}/avatar")
+    async def upload_character_draft_avatar(
+        draft_id: str, file: Annotated[UploadFile, File()]
+    ):
+        try:
+            container.characters.get_draft(draft_id)
+            data = await file.read()
+            if not data or len(data) > 5 * 1024 * 1024:
+                raise ValueError("avatar must be between 1 byte and 5 MiB")
+            suffix = _avatar_suffix(file.filename or "", data)
+            relative = Path("drafts") / f"{draft_id}{suffix}"
+            target = character_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            avatar = {
+                "src": f"/api/v1/character/files/{relative.as_posix()}",
+                "aspect": "2 / 3",
+                "scale": 1.0,
+                "x": 0,
+                "y": 0,
+            }
+            draft = container.characters.save_draft(draft_id, {"avatar": avatar})
+            return {"success": True, "avatar": avatar, "draft": draft}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/character-drafts/{draft_id}/commit")
+    async def commit_character_draft(draft_id: str, payload: dict[str, Any] | None = None):
+        try:
+            draft = container.characters.get_draft(draft_id)
+            selected = CharacterDraftInput.model_validate(draft["input"])
+            with container.database.transaction(
+                operation="commit_character_draft", details={"draft_id": draft_id}
+            ):
+                user_profile = container.profiles.load_document("user_profile")
+                if (
+                    str(user_profile.get("identity", {}).get("preferred_name") or "")
+                    != selected.user_name
+                ):
+                    user_profile["identity"]["preferred_name"] = selected.user_name
+                    container.profiles.save_document("user_profile", user_profile)
+                record = container.characters.commit_draft(
+                    draft_id,
+                    (payload or {}).get("profile") if isinstance(payload, dict) else None,
+                )
+                avatar = record.get("avatar") or {}
+                src = str(avatar.get("src") or "")
+                prefix = "/api/v1/character/files/drafts/"
+                if src.startswith(prefix):
+                    draft_file = character_root / "drafts" / src.removeprefix(prefix)
+                    if draft_file.is_file():
+                        target_dir = character_root / str(record["character_id"])
+                        target_dir.mkdir(parents=True, exist_ok=True)
+                        target = target_dir / f"avatar{draft_file.suffix.lower()}"
+                        shutil.copy2(draft_file, target)
+                        avatar["src"] = (
+                            f"/api/v1/character/files/{record['character_id']}/{target.name}"
+                        )
+                        record = container.characters.update(
+                            str(record["character_id"]),
+                            {"revision": record["revision"], "avatar": avatar},
+                        )
+                container.memory_service.rebuild(dry_run=False)
+            return {"success": True, "character": record}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/sessions")
+    async def create_session(payload: SessionCreateRequest):
+        try:
+            character = container.characters.get(payload.character_id)
+            if character.get("status") != "active":
+                raise ValueError("selected character is archived")
+            mode = "draw" if character.get("source") == "draw" else "custom"
+            session = container.sessions.ensure_session(
+                payload.session_id,
+                character_id=payload.character_id,
+                mode=mode,
+            )
+            container.characters.touch(payload.character_id)
+            return session
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/api/v1/chat")
     async def chat(payload: ChatRequest, x_request_id: str | None = Header(default=None)):
@@ -436,7 +939,18 @@ def create_app(
 
     @app.get("/api/v1/sessions")
     async def list_sessions():
-        return {"sessions": container.sessions.list_sessions()}
+        character_map = {
+            str(item["character_id"]): _character_summary(item)
+            for item in container.characters.list(include_archived=True)
+        }
+        sessions = container.sessions.list_sessions()
+        for session in sessions:
+            character = character_map.get(str(session.get("character_id") or ""))
+            if character:
+                session["character_name"] = character["display_name"]
+                session["character_avatar"] = character["avatar"]
+                session["character_source"] = character["source"]
+        return {"sessions": sessions}
 
     @app.get("/api/v1/sessions/{session_id}")
     async def get_session(session_id: str):
@@ -444,6 +958,14 @@ def create_app(
         session["messages"] = [
             item for item in session.get("messages", []) if not item.get("hidden")
         ]
+        character_id = str(session.get("character_id") or "")
+        if character_id:
+            try:
+                session["character"] = _character_summary(
+                    container.characters.get(character_id)
+                )
+            except KeyError:
+                session["character_missing"] = True
         return session
 
     @app.delete("/api/v1/sessions/{session_id}")
@@ -565,8 +1087,13 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/v1/memory/items")
-    async def memory_items(include_history: bool = Query(default=False)):
-        items = container.memory_service.list_items(include_history=include_history)
+    async def memory_items(
+        include_history: bool = Query(default=False),
+        character_id: str = Query(default="", max_length=64),
+    ):
+        items = container.memory_service.list_items(
+            include_history=include_history, character_id=character_id
+        )
         return {"items": items, "count": len(items)}
 
     @app.put("/api/v1/memory/items/{memory_key:path}")
@@ -599,10 +1126,18 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.post("/api/v1/memory/rebuild")
-    async def rebuild_memory(payload: MemoryRebuildRequest):
+    async def rebuild_memory(
+        payload: MemoryRebuildRequest,
+        character_id: str = Query(default="", max_length=64),
+    ):
         if not payload.dry_run and payload.confirmation != "REBUILD":
             raise HTTPException(status_code=422, detail="confirmation must be REBUILD")
-        return {"success": True, **container.memory_service.rebuild(dry_run=payload.dry_run)}
+        return {
+            "success": True,
+            **container.memory_service.rebuild(
+                dry_run=payload.dry_run, character_id=character_id
+            ),
+        }
 
     @app.get("/api/v1/chat/chunks")
     async def list_chat_chunks(session_id: str | None = Query(default=None)):
@@ -663,42 +1198,80 @@ def create_app(
         return {"success": True}
 
     @app.get("/api/v1/profiles/{name}")
-    async def get_profile(name: str):
-        return container.profiles.load_document(_profile_key(name))
+    async def get_profile(
+        name: str, character_id: str = Query(default="", max_length=64)
+    ):
+        return container.profiles.load_document(_profile_key(name), character_id)
 
     @app.put("/api/v1/profiles/{name}")
-    async def put_profile(name: str, payload: dict[str, Any]):
+    async def put_profile(
+        name: str,
+        payload: dict[str, Any],
+        character_id: str = Query(default="", max_length=64),
+    ):
         try:
             with container.database.transaction(
                 operation="user_direct_profile_edit", details={"profile": name}
             ):
-                value = container.profiles.save_document(_profile_key(name), payload)
-                rebuilt = container.memory_service.rebuild(dry_run=False)
+                value = container.profiles.save_document(
+                    _profile_key(name), payload, character_id
+                )
+                rebuilt = container.memory_service.rebuild(
+                    dry_run=False, character_id=character_id
+                )
                 container.audit.record(
                     "user_direct_profile_edit",
-                    {"profile": name, "revision": value.get("revision", 0)},
+                    {
+                        "profile": name,
+                        "character_id": character_id,
+                        "revision": value.get("revision", 0),
+                    },
                 )
             return {"success": True, "document": value, "memory_rebuild": rebuilt}
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/api/v1/profiles/{name}/history")
-    async def profile_history(name: str, limit: int = Query(default=20, ge=1, le=100)):
+    async def profile_history(
+        name: str,
+        limit: int = Query(default=20, ge=1, le=100),
+        character_id: str = Query(default="", max_length=64),
+    ):
+        if character_id and _profile_key(name) in {"ai_profile", "runtime_state"}:
+            return {"items": container.characters.history(character_id, limit)}
         return {"items": container.profiles.list_history(_profile_key(name), limit)}
 
     @app.post("/api/v1/profiles/{name}/restore")
-    async def restore_profile(name: str, payload: ProfileRestoreRequest):
+    async def restore_profile(
+        name: str,
+        payload: ProfileRestoreRequest,
+        character_id: str = Query(default="", max_length=64),
+    ):
         try:
             with container.database.transaction(
                 operation="user_direct_profile_restore",
                 details={"profile": name, "version_id": payload.version_id},
             ):
-                value = container.profiles.restore_history(
-                    _profile_key(name),
-                    payload.version_id,
-                    expected_revision=payload.expected_revision,
+                if character_id and _profile_key(name) in {
+                    "ai_profile",
+                    "runtime_state",
+                }:
+                    current = container.characters.get(character_id)
+                    restored = container.characters.restore(
+                        character_id,
+                        payload.version_id,
+                        int(current["revision"]),
+                    )
+                    value = restored[_profile_key(name)]
+                else:
+                    value = container.profiles.restore_history(
+                        _profile_key(name),
+                        payload.version_id,
+                        expected_revision=payload.expected_revision,
+                    )
+                rebuilt = container.memory_service.rebuild(
+                    dry_run=False, character_id=character_id
                 )
-                rebuilt = container.memory_service.rebuild(dry_run=False)
                 container.audit.record(
                     "user_direct_profile_restore",
                     {
@@ -714,13 +1287,16 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/api/v1/profiles/{name}/card")
-    async def profile_card(name: str):
-        document = container.profiles.load_document(_profile_key(name))
+    async def profile_card(
+        name: str, character_id: str = Query(default="", max_length=64)
+    ):
+        document = container.profiles.load_document(_profile_key(name), character_id)
         return {
             "name": name,
             "identity": document.get("identity", {}),
             "personality": document.get("personality", {}),
             "relationship": document.get("relationship_state", {}),
+            "roleplay": document.get("roleplay", {}),
             "revision": document.get("revision", 0),
             "updated_at": document.get("updated_at", ""),
         }
@@ -763,11 +1339,49 @@ def create_app(
     async def audio_status():
         return await audio.status()
 
+    @app.get("/api/v1/audio/diagnostics")
+    async def audio_diagnostics():
+        """Return operational voice state without audio, transcript, or credentials."""
+
+        status = await audio.status()
+        asr_detail = status.get("asr_detail")
+        native = asr_detail.get("native_capture", {}) if isinstance(asr_detail, dict) else {}
+        return {
+            "asr_ready": bool(status.get("asr_ready")),
+            "tts_ready": bool(status.get("tts_ready")),
+            "capture": {
+                key: native.get(key)
+                for key in (
+                    "capture_state",
+                    "capture_endpoint",
+                    "device_name",
+                    "source_sample_rate",
+                    "sample_rate",
+                    "first_pcm_ms",
+                    "last_pcm_age_ms",
+                    "subscribers",
+                    "restart_count",
+                    "last_restart_reason",
+                    "error_code",
+                    "error",
+                )
+            },
+            "tts_queue": status.get("tts_queue", {}),
+            "tts": {
+                "provider": status.get("tts_provider"),
+                "detail": status.get("tts_detail", {}),
+                "metrics": status.get("tts_metrics", {}),
+            },
+        }
+
     @app.post("/api/v1/audio/tts")
     async def synthesize(payload: TTSRequest):
         try:
             path = await audio.synthesize(
-                payload.text, request_id=payload.request_id, speed=payload.speed
+                payload.text,
+                request_id=payload.request_id,
+                speed=payload.speed,
+                voice_cue=payload.voice_cue,
             )
         except AudioProviderUnavailable as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -782,7 +1396,10 @@ def create_app(
     async def stream_synthesize(payload: TTSRequest):
         try:
             stream, sample_rate = await audio.stream_synthesize(
-                payload.text, request_id=payload.request_id, speed=payload.speed
+                payload.text,
+                request_id=payload.request_id,
+                speed=payload.speed,
+                voice_cue=payload.voice_cue,
             )
         except AudioProviderUnavailable as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -793,6 +1410,12 @@ def create_app(
                 "X-Audio-Format": "pcm_s16le",
                 "X-Audio-Sample-Rate": str(sample_rate),
                 "X-Audio-Channels": "1",
+                "X-TTS-Provider": settings.tts_provider,
+                "X-TTS-Text-Mode": (
+                    "full-response"
+                    if settings.tts_provider == "qwen3-vllm"
+                    else "streamed-segments"
+                ),
                 "Cache-Control": "no-store",
                 "X-Accel-Buffering": "no",
             },

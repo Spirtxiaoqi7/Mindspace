@@ -35,7 +35,6 @@ def build_graph(dependencies: Dependencies, *, checkpointer: Any | None = None):
     builder.add_node("compose_prompt", nodes.compose_prompt)
     builder.add_node("generate_candidate", nodes.generate_candidate)
     builder.add_node("parse_protocol", nodes.parse_protocol)
-    builder.add_node("repair_protocol", nodes.repair_protocol)
     builder.add_node("validate_role", nodes.validate_role)
     builder.add_node("validate_json_update", nodes.validate_json_update)
     builder.add_node("persist_turn", nodes.persist_turn)
@@ -61,11 +60,11 @@ def build_graph(dependencies: Dependencies, *, checkpointer: Any | None = None):
     builder.add_conditional_edges(
         "parse_protocol",
         nodes.route_protocol,
-        {"valid": "validate_role", "repair": "repair_protocol", "fail": "finalize_error"},
+        {"valid": "validate_role", "fail": "finalize_error"},
     )
-    builder.add_edge("repair_protocol", "parse_protocol")
-    # 此时 response.delta 可能已经展示并被 TTS 播放。角色校验失败只能阻止 JSON 写回，
-    # 不能再调用模型替换用户已经看见或听见的正文。
+    # Foreground role validation is deterministic diagnostics only.  Semantic
+    # role review and continuity summarization run after the visible turn, so a
+    # second model call can never delay the current reply.
     builder.add_edge("validate_role", "validate_json_update")
     builder.add_edge("validate_json_update", "persist_turn")
     builder.add_edge("persist_turn", END)

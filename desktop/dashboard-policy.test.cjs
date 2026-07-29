@@ -29,6 +29,20 @@ test("character voices use grouped dropdowns and separate download from activati
   assert.match(main, /尚未下载，请先点击“单独下载”/);
 });
 
+test("voice providers stay switchable after onboarding and the wizard can go back", () => {
+  const source = fs.readFileSync(path.join(__dirname, "src", "main.tsx"), "utf8");
+  const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
+  assert.match(source, /dashboardVoiceOptions/);
+  for (const provider of ["gpt-sovits", "cosyvoice", "qwen3-vllm", "siliconflow"]) {
+    assert.match(source, new RegExp(provider));
+  }
+  assert.match(source, /返回上一步/);
+  assert.match(source, /之前填写和保存的状态都已保留/);
+  assert.match(main, /action === "provider"/);
+  assert.match(main, /previousProvider !== selected && children\.has\(targetService\)/);
+  assert.match(main, /return observedTtsProvider \|\| "browser"/);
+});
+
 test("diagnostics are redacted and exposed through a dedicated IPC contract", () => {
   const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
   const preload = fs.readFileSync(path.join(__dirname, "preload.cjs"), "utf8");
@@ -38,7 +52,7 @@ test("diagnostics are redacted and exposed through a dedicated IPC contract", ()
   assert.match(preload, /diagnostics: \(\) => ipcRenderer\.invoke\("runtime:diagnostics"\)/);
 });
 
-test("product version is consistent across launcher, core, web and announcements", () => {
+test("Core, web and announcements share a version while Launcher is independently versioned", () => {
   const root = path.resolve(__dirname, "..");
   const desktop = JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8"));
   const frontend = JSON.parse(fs.readFileSync(path.join(root, "frontend", "package.json"), "utf8"));
@@ -48,8 +62,9 @@ test("product version is consistent across launcher, core, web and announcements
   const projectVersion = project.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
   const coreVersion = appVersion.match(/APP_VERSION\s*=\s*"([^"]+)"/)?.[1];
   assert.ok(projectVersion);
-  assert.equal(desktop.version, projectVersion);
+  assert.match(desktop.version, /^\d+\.\d+\.\d+$/);
   assert.equal(frontend.version, projectVersion);
   assert.equal(coreVersion, projectVersion);
   assert.equal(history[0].version, projectVersion);
+  assert.notEqual(desktop.version, projectVersion);
 });

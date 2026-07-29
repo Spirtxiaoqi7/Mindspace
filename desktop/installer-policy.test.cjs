@@ -5,12 +5,10 @@ const test = require("node:test");
 
 test("application upgrades never remove the private environment or user data", () => {
   const source = fs.readFileSync(path.join(__dirname, "build", "installer.nsh"), "utf8");
-  const upgradeGuard = source.indexOf("${ifNot} ${isUpdated}");
-  const environmentRemoval = source.indexOf('RMDir /r "$LOCALAPPDATA\\Mindspace\\environment"');
-  const dataRemoval = source.indexOf('RMDir /r "$LOCALAPPDATA\\Mindspace\\data"');
-  assert.notEqual(upgradeGuard, -1);
-  assert.equal(environmentRemoval > upgradeGuard, true);
-  assert.equal(dataRemoval > upgradeGuard, true);
+  assert.match(source, /!macro customUnInstall/);
+  assert.doesNotMatch(source, /RMDir \/r "\$LOCALAPPDATA\\Mindspace/);
+  assert.doesNotMatch(source, /RMDir "\$LOCALAPPDATA\\Mindspace/);
+  assert.match(source, /下载断点均已保留/);
   assert.match(source, /environment\.upgrade-preserve/);
   assert.match(source, /!macro customCheckAppRunning/);
   assert.match(source, /taskkill\.exe.*\/F \/T \/IM/);

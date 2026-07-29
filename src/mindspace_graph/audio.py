@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import mimetypes
+import time
 import wave
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -15,10 +17,32 @@ import httpx
 from mindspace_graph.gpt_sovits import voice_definition, voice_is_installed
 from mindspace_graph.settings import AppSettings
 from mindspace_graph.streaming_asr import FunASRRuntime
+from mindspace_graph.voice_render import (
+    infer_qwen3_voice_cue,
+    normalize_voice_cue,
+    pace_qwen3_base_text,
+    qwen3_instructions,
+)
 
 
 class AudioProviderUnavailable(RuntimeError):
     pass
+
+
+def qwen3_request_seed(request_id: str, voice_id: str) -> int:
+    """Return the stable sampling seed for one configured character voice.
+
+    ``request_id`` remains in the public helper signature for compatibility,
+    but it must not perturb the acoustic sampling path.  A new seed per reply
+    caused the same selected speaker to acquire a noticeably different timbre
+    from turn to turn. Text and prosody still change with the input; the fixed
+    character voice's acoustic baseline no longer does.
+    """
+
+    del request_id
+    material = f"mindspace-character-voice-v1:{voice_id.strip().lower()}".encode()
+    digest = int.from_bytes(hashlib.blake2s(material, digest_size=8).digest(), "big")
+    return digest & ((1 << 63) - 1)
 
 
 def sanitize_tts_text(text: str) -> str:
@@ -42,6 +66,12 @@ def sanitize_tts_text(text: str) -> str:
     return " ".join("".join(output).split()).strip()
 
 
+def is_speakable_tts_text(text: str) -> bool:
+    """Reject punctuation-only fragments before opening a streaming response."""
+
+    return any(character.isalnum() for character in sanitize_tts_text(text))
+
+
 class AudioService:
     def __init__(self, settings: AppSettings) -> None:
         self.settings = settings
@@ -55,6 +85,13 @@ class AudioService:
         # behind in GPT-SoVITS.
         self._local_tts_lock = asyncio.Lock()
         self._local_tts_waiters = 0
+        self._local_tts_active_request = ""
+        self._tts_metrics: dict[str, object] = {
+            "provider": settings.tts_provider,
+            "first_pcm_ms": None,
+            "completed_ms": None,
+            "cancel_reason": "",
+        }
         self._http = httpx.AsyncClient(
             timeout=httpx.Timeout(30.0, connect=5.0),
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
@@ -72,6 +109,12 @@ class AudioService:
             "browser_asr": True,
             "tts_ready": self.settings.tts_provider in {"browser", "mock"},
             "asr_ready": self.settings.asr_provider in {"browser", "mock"},
+            "tts_queue": {
+                "active_request_id": self._local_tts_active_request,
+                "waiting": self._local_tts_waiters,
+                "concurrency": 1,
+            },
+            "tts_metrics": dict(self._tts_metrics),
         }
         if self.settings.tts_provider in {"cosyvoice", "gpt-sovits"}:
             worker_url = (
@@ -108,6 +151,24 @@ class AudioService:
             except Exception as exc:  # noqa: BLE001
                 result["tts_ready"] = False
                 result["tts_error"] = str(exc)
+        elif self.settings.tts_provider == "qwen3-vllm":
+            try:
+                endpoint = self.settings.tts_qwen3_vllm_url.rstrip("/")
+                response = await self._http.get(f"{endpoint}/health", timeout=2)
+                response.raise_for_status()
+                result["tts_ready"] = True
+                result["tts_detail"] = {
+                    "provider": "qwen3-vllm",
+                    "model": self.settings.tts_qwen3_vllm_model,
+                    "voice": self.settings.tts_qwen3_vllm_voice,
+                    "task_type": self.settings.tts_qwen3_vllm_task_type,
+                    "language": self.settings.tts_qwen3_vllm_language,
+                    "sample_rate": 24_000,
+                    "endpoint": endpoint,
+                }
+            except Exception as exc:  # noqa: BLE001
+                result["tts_ready"] = False
+                result["tts_error"] = f"Qwen3-TTS 服务不可用：{exc}"
         elif self.settings.tts_provider == "siliconflow":
             configured = bool(
                 self.settings.tts_siliconflow_base_url
@@ -173,11 +234,13 @@ class AudioService:
                 cancelled = True
         return cancelled
 
-    async def synthesize(self, text: str, *, request_id: str, speed: float = 1.0) -> Path:
+    async def synthesize(
+        self, text: str, *, request_id: str, speed: float = 1.0, voice_cue: str = "neutral"
+    ) -> Path:
         self._register_current(request_id)
         try:
             text = sanitize_tts_text(text)
-            if not text:
+            if not is_speakable_tts_text(text):
                 raise AudioProviderUnavailable("没有可朗读的正文内容")
             provider = self.settings.tts_provider
             if provider == "browser":
@@ -187,17 +250,24 @@ class AudioService:
             if provider == "mock":
                 await asyncio.to_thread(self._write_silent_wav, output)
                 return output
-            if provider == "siliconflow":
+            if provider in {"siliconflow", "qwen3-vllm"}:
                 pcm = bytearray()
-                async for chunk in self._siliconflow_chunks(text, speed=speed):
+                chunks = (
+                    self._siliconflow_chunks(text, speed=speed)
+                    if provider == "siliconflow"
+                    else self._qwen3_vllm_chunks(
+                        text, speed=speed, voice_cue=voice_cue, request_id=request_id
+                    )
+                )
+                async for chunk in chunks:
                     pcm.extend(chunk)
                 if not pcm:
-                    raise AudioProviderUnavailable("SiliconFlow 没有返回音频")
+                    raise AudioProviderUnavailable(f"{provider} 没有返回音频")
                 await asyncio.to_thread(
                     self._write_pcm16_wav,
                     output,
                     bytes(pcm),
-                    self.settings.tts_siliconflow_sample_rate,
+                    self.settings.tts_siliconflow_sample_rate if provider == "siliconflow" else 24_000,
                 )
                 return output
             if provider not in {"cosyvoice", "gpt-sovits"}:
@@ -231,17 +301,17 @@ class AudioService:
             self._finish(request_id)
 
     async def stream_synthesize(
-        self, text: str, *, request_id: str, speed: float = 1.0
+        self, text: str, *, request_id: str, speed: float = 1.0, voice_cue: str = "neutral"
     ) -> tuple[AsyncIterator[bytes], int]:
         """Return raw mono PCM16 as it is produced instead of buffering a WAV."""
 
         text = sanitize_tts_text(text)
-        if not text:
+        if not is_speakable_tts_text(text):
             raise AudioProviderUnavailable("没有可朗读的正文内容")
         provider = self.settings.tts_provider
         if provider == "browser":
             raise AudioProviderUnavailable("browser_tts")
-        if provider not in {"mock", "cosyvoice", "siliconflow", "gpt-sovits"}:
+        if provider not in {"mock", "cosyvoice", "siliconflow", "gpt-sovits", "qwen3-vllm"}:
             raise AudioProviderUnavailable(f"unsupported TTS provider: {provider}")
 
         sample_rate = (
@@ -262,6 +332,12 @@ class AudioService:
                     return
                 if provider == "siliconflow":
                     async for chunk in self._siliconflow_chunks(text, speed=speed):
+                        yield chunk
+                    return
+                if provider == "qwen3-vllm":
+                    async for chunk in self._qwen3_vllm_chunks(
+                        text, speed=speed, voice_cue=voice_cue, request_id=request_id
+                    ):
                         yield chunk
                     return
                 worker_url = (
@@ -288,16 +364,21 @@ class AudioService:
                     async with self._local_tts_lock:
                         acquired = True
                         self._local_tts_waiters -= 1
-                        async with self._http.stream(
-                            "POST",
-                            f"{worker_url.rstrip('/')}/synthesize-stream",
-                            json=payload,
-                            timeout=timeout,
-                        ) as response:
-                            response.raise_for_status()
-                            async for chunk in response.aiter_bytes(chunk_size=16_384):
-                                if chunk:
-                                    yield chunk
+                        self._local_tts_active_request = request_id
+                        try:
+                            async with self._http.stream(
+                                "POST",
+                                f"{worker_url.rstrip('/')}/synthesize-stream",
+                                json=payload,
+                                timeout=timeout,
+                            ) as response:
+                                response.raise_for_status()
+                                async for chunk in response.aiter_bytes(chunk_size=16_384):
+                                    if chunk:
+                                        yield chunk
+                        finally:
+                            if self._local_tts_active_request == request_id:
+                                self._local_tts_active_request = ""
                 finally:
                     if not acquired:
                         self._local_tts_waiters = max(0, self._local_tts_waiters - 1)
@@ -305,6 +386,104 @@ class AudioService:
                 self._finish(request_id)
 
         return generate(), sample_rate
+
+    async def _qwen3_vllm_chunks(
+        self, text: str, *, speed: float, voice_cue: str, request_id: str = ""
+    ) -> AsyncIterator[bytes]:
+        """Serialize Qwen requests before they enter the resident vLLM engine."""
+
+        self._local_tts_waiters += 1
+        acquired = False
+        try:
+            async with self._local_tts_lock:
+                acquired = True
+                self._local_tts_waiters -= 1
+                active_request_id = request_id or "qwen3-stream"
+                self._local_tts_active_request = active_request_id
+                try:
+                    async for chunk in self._qwen3_vllm_chunks_unlocked(
+                        text, speed=speed, voice_cue=voice_cue, request_id=active_request_id
+                    ):
+                        yield chunk
+                finally:
+                    if self._local_tts_active_request == active_request_id:
+                        self._local_tts_active_request = ""
+        finally:
+            if not acquired:
+                self._local_tts_waiters = max(0, self._local_tts_waiters - 1)
+
+    async def _qwen3_vllm_chunks_unlocked(
+        self, text: str, *, speed: float, voice_cue: str, request_id: str
+    ) -> AsyncIterator[bytes]:
+        """Proxy Qwen3-vLLM's raw PCM stream without buffering a WAV file."""
+
+        task_type = self.settings.tts_qwen3_vllm_task_type
+        # Base voice-clone profiles carry the approved character timbre and
+        # reference delivery in a reusable local weight.  Passing a fresh
+        # natural-language style instruction on every request would reintroduce
+        # the cross-paragraph voice drift this profile is designed to remove.
+        resolved_voice_cue = infer_qwen3_voice_cue(text, voice_cue)
+        instructions = (
+            ""
+            if task_type == "Base"
+            else qwen3_instructions(resolved_voice_cue, speed=speed)
+        )
+        spoken_text = (
+            pace_qwen3_base_text(text, speed=speed)
+            if task_type == "Base"
+            else text
+        )
+        payload = {
+            "model": self.settings.tts_qwen3_vllm_model,
+            "input": spoken_text,
+            "voice": self.settings.tts_qwen3_vllm_voice,
+            # Keep one seed for the selected character voice across turns.
+            "seed": qwen3_request_seed(request_id, self.settings.tts_qwen3_vllm_voice),
+            "instructions": instructions,
+            "response_format": "pcm",
+            "stream": True,
+            "stream_format": "audio",
+            "task_type": task_type,
+            "language": self.settings.tts_qwen3_vllm_language,
+            # Build one complete acoustic context while keeping HTTP PCM
+            # streaming enabled; network streaming remains independent.
+            "non_streaming_mode": True,
+            # Base uses semantic punctuation above because vLLM does not
+            # support acoustic speed adjustment for streaming.
+            "max_new_tokens": 4096,
+        }
+        endpoint = f"{self.settings.tts_qwen3_vllm_url.rstrip('/')}/v1/audio/speech"
+        started = time.perf_counter()
+        first_pcm_ms: int | None = None
+        cancel_reason = ""
+        timeout = httpx.Timeout(connect=5, read=180, write=10, pool=5)
+        try:
+            async with self._http.stream("POST", endpoint, json=payload, timeout=timeout) as response:
+                if response.is_error:
+                    detail = (await response.aread()).decode("utf-8", errors="replace")[:300]
+                    raise AudioProviderUnavailable(
+                        f"Qwen3-TTS 请求失败（{response.status_code}）：{detail}"
+                    )
+                async for chunk in response.aiter_raw():
+                    if not chunk:
+                        continue
+                    if first_pcm_ms is None:
+                        first_pcm_ms = round((time.perf_counter() - started) * 1000)
+                    yield chunk
+        except asyncio.CancelledError:
+            cancel_reason = "request_cancelled"
+            raise
+        except httpx.HTTPError as exc:
+            raise AudioProviderUnavailable(f"无法连接 Qwen3-TTS：{exc}") from exc
+        finally:
+            self._tts_metrics = {
+                "provider": "qwen3-vllm",
+                "task_type": task_type,
+                "first_pcm_ms": first_pcm_ms,
+                "completed_ms": round((time.perf_counter() - started) * 1000),
+                "cancel_reason": cancel_reason,
+                "voice_cue": resolved_voice_cue,
+            }
 
     async def select_gpt_sovits_voice(self, voice_id: str) -> dict[str, object]:
         voice = voice_definition(voice_id)
@@ -324,6 +503,28 @@ class AudioService:
         if not result.get("ok"):
             raise AudioProviderUnavailable(str(result.get("error") or "GPT-SoVITS 音色切换失败"))
         return result
+
+    async def qwen3_vllm_voices(self) -> dict[str, object]:
+        """Return only server-advertised Qwen voices; never invent a catalog."""
+
+        endpoint = f"{self.settings.tts_qwen3_vllm_url.rstrip('/')}/v1/audio/voices"
+        try:
+            response = await self._http.get(endpoint, timeout=3)
+            response.raise_for_status()
+            payload = response.json()
+        except httpx.HTTPError as exc:
+            raise AudioProviderUnavailable(f"无法读取 Qwen3-TTS 音色：{exc}") from exc
+        voices = payload.get("voices") if isinstance(payload, dict) else []
+        items = [str(item).strip() for item in voices if str(item).strip()]
+        return {
+            "provider": "qwen3-vllm",
+            "active_voice": self.settings.tts_qwen3_vllm_voice,
+            "items": [
+                {"id": voice, "label": voice, "installed": True,
+                 "selected": voice == self.settings.tts_qwen3_vllm_voice}
+                for voice in items
+            ],
+        }
 
     def _siliconflow_payload(self, text: str, speed: float) -> dict[str, object]:
         if not self.settings.tts_siliconflow_api_key:

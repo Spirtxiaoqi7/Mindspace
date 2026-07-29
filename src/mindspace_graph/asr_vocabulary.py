@@ -26,7 +26,15 @@ MANAGED_FIELDS = {
     "agent.identity.name",
     "runtime.session.entities",
 }
-SKIP_KEYS = {"schema_version", "profile_type", "revision", "updated_at"}
+SKIP_KEYS = {
+    "schema_version",
+    "profile_type",
+    "revision",
+    "updated_at",
+    # A private prompt corpus is not a pronunciation dictionary. Compiling its
+    # prose into decoder hotwords would increase false corrections and ASR load.
+    "r18_protocol",
+}
 TERM_SPLIT = re.compile(r"[\s，。！？；：、,.!?;:（）()\[\]{}<>《》\"“”'‘’/\\|]+")
 LATIN_TERM = re.compile(r"[A-Za-z][A-Za-z0-9+_.-]{1,31}")
 

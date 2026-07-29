@@ -9,7 +9,8 @@ async function main() {
   const currentVersion = process.env.UPDATE_E2E_CURRENT || "0.3.0";
   const targetVersion = process.env.UPDATE_E2E_TARGET || "0.3.1";
   const launcherVersion = process.env.UPDATE_E2E_LAUNCHER || currentVersion;
-  let config = { updateUrl: process.env.UPDATE_E2E_URL || "http://127.0.0.1:9780/manifest.json", updateChannel: "stable" };
+  const channel = process.env.UPDATE_E2E_CHANNEL || "stable";
+  let config = { updateUrl: process.env.UPDATE_E2E_URL || "http://127.0.0.1:9780/manifest.json", updateChannel: channel };
   const manager = createUpdateManager({
     app: { getVersion: () => launcherVersion, getPath: () => userData },
     rootPath: () => root,

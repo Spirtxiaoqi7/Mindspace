@@ -38,6 +38,11 @@ logs/
 # Models and local voice material are distributed separately
 assets/models/
 assets/audio/**/*.wav
+payload.json
+
+# Locally sealed, user-authorized R18 source material.  The encrypted resource
+# is intentionally available to local packaging but is never committed.
+src/mindspace_graph/resources/r18-private-library.bin
 
 # CosyVoice is pinned as a Git submodule rather than vendored into this repository
 vendor/CosyVoice/
