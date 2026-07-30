@@ -50,7 +50,11 @@ def build_graph(dependencies: Dependencies, *, checkpointer: Any | None = None):
     builder.add_conditional_edges(
         "capability_route",
         nodes.route_capability_plan,
-        {"planner": "plan_capabilities", "execute": "execute_capabilities"},
+        {
+            "planner": "plan_capabilities",
+            "execute": "execute_capabilities",
+            "compose": "compose_prompt",
+        },
     )
     builder.add_edge("plan_capabilities", "execute_capabilities")
     builder.add_edge("execute_capabilities", "review_capabilities")

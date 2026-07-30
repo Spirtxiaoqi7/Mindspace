@@ -1,9 +1,18 @@
-const MINIMUM_QWEN_VRAM_MIB = 14_000;
+const MINIMUM_QWEN_VRAM_MIB = 15_500;
+const MINIMUM_QWEN_RAM_BYTES = 31 * 1024 ** 3;
 
 function evaluateQwenRuntimePreflight(input = {}) {
   const system = input.system || {};
   if (!system.nvidia) {
     return { eligible: false, code: "NVIDIA_REQUIRED", message: "Qwen3 实时语音需要兼容的 NVIDIA 显卡；未满足时不会提供安装或下载。" };
+  }
+  const memoryTotalBytes = Number(system.memoryTotalBytes || 0);
+  if (memoryTotalBytes > 0 && memoryTotalBytes < MINIMUM_QWEN_RAM_BYTES) {
+    return {
+      eligible: false,
+      code: "RAM_INSUFFICIENT",
+      message: `Qwen3 实时语音需要标称 32 GB 系统内存；检测到约 ${Math.round(memoryTotalBytes / 1024 ** 3)} GB。为避免系统失去响应，未开放安装。`,
+    };
   }
   if (!input.wslAvailable) {
     return { eligible: false, code: "WSL2_REQUIRED", message: "未检测到可用 WSL2；不会自动安装系统组件或下载大模型。" };
@@ -19,7 +28,7 @@ function evaluateQwenRuntimePreflight(input = {}) {
     return {
       eligible: false,
       code: "VRAM_INSUFFICIENT",
-      message: `Qwen3 实时语音至少需要 ${Math.ceil(MINIMUM_QWEN_VRAM_MIB / 1024)} GB 可用显存；检测到约 ${Math.round(vramMiB / 1024)} GB。为避免挤占 ASR/桌面显存，未开放安装。`,
+      message: `Qwen3 实时语音需要标称 16 GB 总显存；检测到约 ${Math.round(vramMiB / 1024)} GB。为避免挤占 ASR/桌面显存，未开放安装。`,
     };
   }
   if (input.portConflict) {
@@ -32,4 +41,4 @@ function evaluateQwenRuntimePreflight(input = {}) {
   };
 }
 
-module.exports = { MINIMUM_QWEN_VRAM_MIB, evaluateQwenRuntimePreflight };
+module.exports = { MINIMUM_QWEN_RAM_BYTES, MINIMUM_QWEN_VRAM_MIB, evaluateQwenRuntimePreflight };

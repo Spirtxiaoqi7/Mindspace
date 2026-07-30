@@ -23,6 +23,14 @@ from mindspace_graph.product_database import ProductDatabase
 
 
 class RetrieverPort(Protocol):
+    def prewarm(
+        self,
+        *,
+        session_id: str,
+        character_id: str,
+        messages: list[dict[str, Any]],
+    ) -> dict[str, Any]: ...
+
     def search_knowledge(self, query: str, k: int, **kwargs: Any) -> list[RetrievedChunk]: ...
 
     def search_chat(

@@ -65,6 +65,81 @@ class LocalKnowledgeRetriever:
         if not path.exists():
             _atomic_json(path, [])
 
+    def prewarm(
+        self,
+        *,
+        session_id: str,
+        character_id: str,
+        messages: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Load the local encoder and admit existing index vectors off the hot path.
+
+        The method is deliberately query-free: warming must not pretend that a
+        user asked for a retrieval, and it must not update exposure counters.
+        Conversation persistence remains the sole writer for chat turns.
+        """
+
+        knowledge_records = self._load()
+        knowledge_texts = [
+            str(item.get("text") or "")
+            for item in knowledge_records
+            if str(item.get("text") or "") and not isinstance(item.get("embedding"), list)
+        ]
+        chat_texts = [
+            str(item.get("content") or "")
+            for item in messages
+            if chat_message_retrieval_eligible(item) and str(item.get("content") or "")
+        ]
+        memory_records = (
+            self.memory_store.list_active(character_id)
+            if self.memory_store is not None
+            else []
+        )
+        missing_memory: list[tuple[str, str]] = []
+        for record in memory_records:
+            episode = record.get("episode", {})
+            text = str(episode.get("text") or "")
+            if text and not isinstance(episode.get("embedding"), list):
+                missing_memory.append(
+                    (str(episode.get("episode_id") or record.get("episode_id") or ""), text)
+                )
+
+        # Deduplicate without changing order.  The same sentence may be present
+        # in a recent-session projection and in a structured-memory episode.
+        texts = list(
+            dict.fromkeys(
+                [
+                    *knowledge_texts,
+                    *chat_texts,
+                    *(text for _episode_id, text in missing_memory),
+                ]
+            )
+        )
+        vectors = self._embed_many(texts)
+        vector_by_text = dict(zip(texts, vectors, strict=True))
+        pending_embeddings = {
+            episode_id: vector_by_text[text]
+            for episode_id, text in missing_memory
+            if episode_id and vector_by_text.get(text) is not None
+        }
+        if pending_embeddings and self.memory_store is not None:
+            set_many = getattr(self.memory_store, "set_episode_embeddings", None)
+            if callable(set_many):
+                set_many(pending_embeddings)
+            else:
+                for episode_id, vector in pending_embeddings.items():
+                    self.memory_store.set_episode_embedding(episode_id, vector)
+        return {
+            "session_id": session_id,
+            "character_id": character_id,
+            "knowledge_records": len(knowledge_records),
+            "chat_messages": len(chat_texts),
+            "memory_records": len(memory_records),
+            "embedded_texts": sum(vector is not None for vector in vectors),
+            "embedding_available": self._model() is not None,
+            "embedding_error": self._embedding_error,
+        }
+
     def _load(self) -> list[dict]:
         stat = self.path.stat()
         stamp = (stat.st_mtime_ns, stat.st_size)

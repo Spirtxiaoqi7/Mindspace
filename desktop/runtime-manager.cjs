@@ -1,5 +1,6 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
 const { canonical } = require("./update-manager.cjs");
@@ -177,6 +178,10 @@ function classifyError(error, stage = "installing") {
   let code = "INSTALL_FAILED";
   if (/failed to get the python codec|no module named ['"]?encodings|python path configuration/.test(normalized)) code = "PYTHON_RUNTIME_INVALID";
   else if (
+    /failed to create file.*externally-managed/.test(normalized)
+    || /系统找不到指定的路径.*os error 3/.test(normalized)
+  ) code = "PYTHON_INSTALL_PATH";
+  else if (
     ["ENOTFOUND", "EAI_AGAIN"].includes(causeCode)
     || /dns|域名|解析|err_name_not_resolved|could not resolve host/.test(normalized)
   ) code = "NETWORK_DNS";
@@ -193,7 +198,9 @@ function classifyError(error, stage = "installing") {
   else if (/probe|探针|import|导入/.test(normalized)) code = "PROBE_FAILED";
   const userMessage = code === "PYTHON_RUNTIME_INVALID"
     ? "Python 运行时不完整或与旧环境冲突；Mindspace 将自动重新校验并修复，点击“一键安装”即可继续。"
-    : message;
+    : code === "PYTHON_INSTALL_PATH"
+      ? "Python 安装目录在写入时被中断；Mindspace 将改用独立临时目录重建，不会覆盖用户数据。"
+      : message;
   return { code, stage, message: userMessage };
 }
 
@@ -280,12 +287,22 @@ function createRuntimeManager(options) {
 
   function detectSystem() {
     if (systemCache && Date.now() - systemCacheAt < 10_000) return systemCache;
-    const release = options.osRelease ? options.osRelease() : require("node:os").release();
+    const release = options.osRelease ? options.osRelease() : os.release();
     const major = Number(String(release).split(".")[0] || 0);
-    const gpuProbe = (options.spawnSync || spawnSync)("nvidia-smi.exe", ["--query-gpu=name,driver_version", "--format=csv,noheader"], {
+    const gpuProbe = (options.spawnSync || spawnSync)("nvidia-smi.exe", ["--query-gpu=name,driver_version,memory.total,memory.free", "--format=csv,noheader,nounits"], {
       encoding: "utf8", windowsHide: true, timeout: 4000,
     });
     const gpu = gpuProbe.status === 0 ? String(gpuProbe.stdout || "").trim() : "";
+    const gpuItems = gpu.split(/\r?\n/).filter(Boolean).map((line) => {
+      const columns = line.split(",").map((item) => item.trim());
+      return {
+        name: columns[0] || "",
+        driver: columns[1] || "",
+        totalMiB: Number(columns[2] || 0),
+        freeMiB: Number(columns[3] || 0),
+      };
+    }).filter((item) => item.name);
+    const selectedGpu = gpuItems.sort((left, right) => right.totalMiB - left.totalMiB)[0] || {};
     let freeBytes = 0;
     try {
       const disk = fs.statfsSync(paths.home);
@@ -303,6 +320,12 @@ function createRuntimeManager(options) {
       freeBytes,
       nvidia: Boolean(gpu),
       nvidiaDetail: gpu,
+      gpuName: selectedGpu.name || "",
+      gpuDriver: selectedGpu.driver || "",
+      vramTotalMiB: selectedGpu.totalMiB || 0,
+      vramFreeMiB: selectedGpu.freeMiB || 0,
+      memoryTotalBytes: Number(options.totalMemory?.() ?? os.totalmem()),
+      memoryFreeBytes: Number(options.freeMemory?.() ?? os.freemem()),
     };
     systemCacheAt = Date.now();
     return systemCache;
@@ -579,7 +602,7 @@ function createRuntimeManager(options) {
     } finally { fs.rmSync(staging, { recursive: true, force: true }); }
   }
 
-  async function runStreaming(component, executable, arguments_, environment, progressStart, progressEnd) {
+  async function runStreaming(component, executable, arguments_, environment, progressStart, progressEnd, messagePrefix = "") {
     await new Promise((resolve, reject) => {
       const child = (options.spawn || spawn)(executable, arguments_, {
         cwd: options.corePath(), env: environment, windowsHide: true, stdio: ["ignore", "pipe", "pipe"],
@@ -589,7 +612,12 @@ function createRuntimeManager(options) {
       const observe = (chunk) => {
         output += chunk.toString("utf8");
         tick = Math.min(progressEnd - 1, tick + 0.4);
-        setState(component.id, { status: "installing", progress: tick, message: output.trim().split(/\r?\n/).at(-1)?.slice(0, 160) || `正在安装 ${component.name}` });
+        const detail = output.trim().split(/\r?\n/).at(-1)?.slice(0, 160) || `正在安装 ${component.name}`;
+        setState(component.id, {
+          status: "installing",
+          progress: tick,
+          message: [messagePrefix, detail].filter(Boolean).join(" · "),
+        });
       };
       child.stdout.on("data", observe); child.stderr.on("data", observe);
       const cancel = () => (options.spawnSync || spawnSync)("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
@@ -637,7 +665,7 @@ function createRuntimeManager(options) {
         return;
       } finally { fs.rmSync(staging, { recursive: true, force: true }); }
     }
-    let reinstall = false;
+    let repairExisting = false;
     try {
       const existingExecutable = runProbe(uv.executable, [
         "python", "find", component.version, "--managed-python", "--no-python-downloads",
@@ -654,7 +682,7 @@ function createRuntimeManager(options) {
           writeLog("python.revalidated", { component: component.id, version: component.version });
           return;
         } catch (error) {
-          reinstall = true;
+          repairExisting = true;
           writeLog("python.invalid", {
             component: component.id,
             version: component.version,
@@ -662,7 +690,7 @@ function createRuntimeManager(options) {
           });
         }
       } else if (existingExecutable) {
-        reinstall = true;
+        repairExisting = true;
         writeLog("python.incomplete", {
           component: component.id,
           version: component.version,
@@ -670,59 +698,125 @@ function createRuntimeManager(options) {
         });
       }
     } catch {}
-    if (reinstall) {
+    if (!repairExisting) {
+      repairExisting = fs.readdirSync(paths.python, { withFileTypes: true }).some((entry) => (
+        entry.isDirectory()
+        && !entry.name.startsWith(".staging-")
+        && entry.name.includes(component.version)
+      ));
+    }
+    if (repairExisting) {
       setState(component.id, {
         status: "installing",
         progress: 5,
-        message: "检测到旧 Python 运行时不完整，正在自动重新安装",
+        message: "检测到旧 Python 运行时不完整，正在隔离重建",
       });
     }
-    const baseArguments = [
-      "python", "install", component.version, "--install-dir", paths.python,
-      "--cache-dir", path.join(paths.cache, "uv"), "--managed-python", "--no-bin", "--no-registry", "--system-certs",
-    ];
-    if (reinstall) baseArguments.push("--reinstall");
+
+    async function installIntoStaging(mirror = "", sourceLabel = "") {
+      const stagingParent = safeTarget(
+        paths.python,
+        `.staging-python-${component.version}-${process.pid}-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`,
+      );
+      fs.mkdirSync(stagingParent, { recursive: true });
+      const stagingEnvironment = privateEnvironment({
+        UV_MANAGED_PYTHON: "1",
+        UV_PYTHON_INSTALL_DIR: stagingParent,
+      });
+      const arguments_ = [
+        "python", "install", component.version, "--install-dir", stagingParent,
+        "--cache-dir", path.join(paths.cache, "uv"), "--managed-python", "--no-bin", "--no-registry", "--system-certs",
+      ];
+      if (mirror) arguments_.push("--mirror", mirror);
+      try {
+        await runStreaming(component, uv.executable, arguments_, stagingEnvironment, 5, 88, sourceLabel);
+        const stagedExecutable = runProbe(uv.executable, [
+          "python", "find", component.version, "--managed-python", "--no-python-downloads",
+        ], stagingEnvironment);
+        const stagedRoot = path.dirname(stagedExecutable);
+        const relativeRoot = path.relative(stagingParent, stagedRoot);
+        if (!relativeRoot || relativeRoot.startsWith("..") || path.isAbsolute(relativeRoot)) {
+          throw new Error("uv 返回了临时安装目录之外的 Python 路径");
+        }
+        if (!pythonRuntimeLooksComplete(stagedExecutable)) {
+          throw new Error("Python 临时安装不完整：缺少标准库");
+        }
+        const probe = runProbe(stagedExecutable, PYTHON_RUNTIME_PROBE, stagingEnvironment, 120_000);
+        const target = safeTarget(paths.python, path.basename(stagedRoot));
+        try {
+          promoteStaging(stagedRoot, target);
+        } catch (error) {
+          error.runtimeStage = "promotion";
+          throw error;
+        }
+        const finalExecutable = path.join(target, "python.exe");
+        const finalProbe = runProbe(finalExecutable, PYTHON_RUNTIME_PROBE, environment, 120_000);
+        writeMarker(component, finalExecutable, {
+          probe: finalProbe || probe,
+          python_validation: PYTHON_VALIDATION_REVISION,
+          repaired: repairExisting,
+          isolated_install: true,
+        });
+        writeCurrentPointer(paths.python, component, finalExecutable);
+        pruneVersionDirectories(paths.python, path.basename(target));
+      } finally {
+        try { fs.rmSync(stagingParent, { recursive: true, force: true }); } catch {}
+      }
+    }
+
     const downloadSource = normalizeDownloadSource(options.getDownloadSource?.());
+    const configuredMirror = downloadSource === "china" ? component.mirror || "" : "";
+    const selectedMirror = sourceHost(configuredMirror) === "douyinqijun.cn" ? "" : configuredMirror;
+    if (configuredMirror && !selectedMirror) {
+      setState(component.id, {
+        status: "installing",
+        progress: 5,
+        sourceHost: "github.com",
+        sourceFallback: false,
+        message: "正在通过 Astral 官方源安装 Python",
+      });
+      writeLog("python.source.selected", {
+        component: component.id,
+        source: "github.com/astral-sh/python-build-standalone",
+        skipped: sourceHost(configuredMirror),
+        reason: "control endpoint redirects to the same official upstream",
+      });
+    }
     try {
-      await runStreaming(component, uv.executable, downloadSource === "china" && component.mirror ? [...baseArguments, "--mirror", component.mirror] : baseArguments, environment, 5, 88);
+      await installIntoStaging(
+        selectedMirror,
+        selectedMirror ? "国内镜像" : "Astral 官方源",
+      );
     } catch (error) {
       if (controller.signal.aborted) throw error;
-      if (downloadSource !== "china" || !component.mirror) {
-        throw new Error(`Python 官方源安装失败：${describeError(error)}`);
+      if (error?.runtimeStage === "promotion") throw error;
+      if (!selectedMirror) {
+        throw new Error(`Python 安装未完成：${describeError(error)}`);
       }
       setState(component.id, {
         status: "installing",
         progress: Math.max(5, stateFor(component.id).progress || 0),
         sourceHost: "github.com",
         sourceFallback: true,
-        message: "国内 Python 镜像不可用，正在切换 Astral 官方源",
+        message: "首次安装未完成，正在使用全新临时目录和 Astral 官方源重试",
       });
-      writeLog("download.fallback", {
+      writeLog("python.install.retry", {
         component: component.id,
-        from: sourceHost(component.mirror),
+        from: sourceHost(selectedMirror),
         to: "github.com/astral-sh/python-build-standalone",
         reason: describeError(error),
       });
       try {
-        await runStreaming(component, uv.executable, baseArguments, environment, 5, 88);
+        await installIntoStaging("", "Astral 官方源（已自动回退）");
       } catch (officialError) {
         if (controller.signal.aborted) throw officialError;
+        if (officialError?.runtimeStage === "promotion") throw officialError;
         throw new Error(
-          `国内 Python 镜像与 Astral 官方源均不可用：${describeError(officialError)}`,
+          `Python 在国内镜像和 Astral 官方源下均未完成安装：${describeError(officialError)}`,
           { cause: officialError },
         );
       }
     }
-    const executable = runProbe(uv.executable, [
-      "python", "find", component.version, "--managed-python", "--no-python-downloads",
-    ], environment);
-    const probe = runProbe(executable, PYTHON_RUNTIME_PROBE, environment, 120_000);
-    writeMarker(component, executable, {
-      probe,
-      python_validation: PYTHON_VALIDATION_REVISION,
-      repaired: reinstall,
-    });
-    writeCurrentPointer(paths.python, component, executable);
   }
 
   async function installVenv(component) {

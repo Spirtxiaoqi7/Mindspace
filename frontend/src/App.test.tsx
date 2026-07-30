@@ -12,6 +12,7 @@ import App, {
   shouldSkipSpeechSegmentFailure,
   shouldSynthesizeStreamEvent,
   shouldBufferQwenReplyForSinglePass,
+  shouldFollowConversationScroll,
   voiceReconnectDelay,
   voiceMergeDelay,
 } from "./App";
@@ -41,6 +42,13 @@ it("buffers one complete Qwen reply for a single acoustic request", () => {
   expect(shouldBufferQwenReplyForSinglePass(audio("qwen3-vllm", false), true)).toBe(true);
   expect(shouldBufferQwenReplyForSinglePass(audio("qwen3-vllm", false), false)).toBe(false);
   expect(shouldBufferQwenReplyForSinglePass(audio("gpt-sovits", true), true)).toBe(false);
+});
+
+it("follows streamed conversation only while the user remains near the active turn", () => {
+  expect(shouldFollowConversationScroll(0)).toBe(true);
+  expect(shouldFollowConversationScroll(180)).toBe(true);
+  expect(shouldFollowConversationScroll(181)).toBe(false);
+  expect(shouldFollowConversationScroll(Number.NaN)).toBe(false);
 });
 
 it("keeps PCM16 sample alignment across arbitrary HTTP stream chunks", () => {
@@ -423,7 +431,8 @@ describe("Mindspace product interactions", () => {
 
   it("opens the reference inspector directly", async () => {
     await renderReady();
-    fireEvent.click(document.querySelector(".composer-row div button:last-child")!);
+    fireEvent.click(screen.getByText("更多"));
+    fireEvent.click(screen.getByRole("button", { name: /本轮引用/ }));
     const tabs = document.querySelectorAll(".inspector-tabs button");
     expect(tabs[1]).toHaveClass("active");
     expect(document.querySelector(".context-list")).toBeInTheDocument();
@@ -449,6 +458,29 @@ describe("Mindspace product interactions", () => {
     expect(typeof payload.client_timezone).toBe("string");
     expect(document.querySelectorAll(".message.user")).toHaveLength(0);
     expect(document.querySelectorAll(".message.assistant")).toHaveLength(1);
+  });
+
+  it("jumps the conversation viewport to the active turn after sending", async () => {
+    const user = userEvent.setup();
+    const scrollIntoView = vi.fn();
+    const originalScrollIntoView = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "scrollIntoView");
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    try {
+      await renderReady();
+      await user.type(screen.getByPlaceholderText("输入消息，或开启实时语音…"), "定位到本轮");
+      await user.click(screen.getByRole("button", { name: "发送消息" }));
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+      expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "end", behavior: "auto" });
+    } finally {
+      if (originalScrollIntoView) {
+        Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScrollIntoView);
+      } else {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+      }
+    }
   });
 
   it("persists the explicit R18 sexual-action mode and sends it as a request field", async () => {
@@ -648,13 +680,13 @@ describe("Mindspace product interactions", () => {
   it("closes the execution inspector and restores it from the top action", async () => {
     const user = userEvent.setup();
     await renderReady();
-    expect(document.querySelector(".app-shell")).toHaveClass("inspector-visible");
-    await user.click(screen.getByRole("button", { name: "关闭执行详情" }));
     expect(document.querySelector(".app-shell")).toHaveClass("inspector-hidden");
     expect(document.querySelector(".inspector")).not.toBeVisible();
     await user.click(screen.getByRole("button", { name: "执行详情" }));
     expect(document.querySelector(".app-shell")).toHaveClass("inspector-visible");
     expect(document.querySelector(".inspector")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "关闭执行详情" }));
+    expect(document.querySelector(".app-shell")).toHaveClass("inspector-hidden");
   });
 
   it("exposes TTS reference and dual avatar controls", async () => {

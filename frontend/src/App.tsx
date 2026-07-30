@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { consumeResumableEventStream, request } from "./api";
 import {
@@ -15,6 +15,7 @@ import {
 } from "./CharacterExperience";
 import type { AppView } from "./CharacterExperience";
 import { ActivitiesPage, JournalPage, MomentsPage } from "./SharedChapters";
+import { ScenePickerPage, sceneAssetPath } from "./SceneExperience";
 import type {
   AvatarConfig,
   AvatarEntry,
@@ -42,6 +43,7 @@ import type {
   VoiceSessionState,
   CharacterRecord,
   CharacterSummary,
+  ConversationScene,
 } from "./types";
 
 type ModalName = "settings" | "knowledge" | "memory" | "profile" | "diagnostics" | "voice-entry" | null;
@@ -260,6 +262,11 @@ const str = (value: unknown) => String(value ?? "");
 export function shouldBufferQwenReplyForSinglePass(settings: ProductSettings | null | undefined, voiceOpen: boolean): boolean {
   return settings?.audio.tts_provider === "qwen3-vllm"
     && (voiceOpen || bool(settings.audio.auto_tts));
+}
+
+export function shouldFollowConversationScroll(distanceFromBottom: number, threshold = 180): boolean {
+  return Number.isFinite(distanceFromBottom)
+    && distanceFromBottom <= Math.max(0, threshold);
 }
 
 async function requestWithTimeout<T>(
@@ -535,6 +542,7 @@ function App() {
   const [characters, setCharacters] = useState<CharacterSummary[]>([]);
   const [activeCharacterId, setActiveCharacterId] = useState("");
   const [activeActivitySessionId, setActiveActivitySessionId] = useState("");
+  const [conversationScene, setConversationScene] = useState<ConversationScene | null>(null);
   const [appView, setAppView] = useState<AppView>("modes");
   const [characterPickerOpen, setCharacterPickerOpen] = useState(false);
   const [characterPickerScope, setCharacterPickerScope] = useState<"all" | "custom">("all");
@@ -558,11 +566,15 @@ function App() {
   const [inspectionRunId, setInspectionRunId] = useState("");
   const runIdRef = useRef("");
   const [generating, setGenerating] = useState(false);
+  const conversationRef = useRef<HTMLElement | null>(null);
+  const conversationTailRef = useRef<HTMLDivElement | null>(null);
+  const followConversationRef = useRef(true);
+  const pendingConversationJumpRef = useRef(false);
   const [modal, setModal] = useState<ModalName>(null);
   const [modalDirty, setModalDirty] = useState(false);
   const [profileCardRole, setProfileCardRole] = useState<Role | null>(null);
   const [profileEditorRole, setProfileEditorRole] = useState<Role | "state">("user");
-  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("flow");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [events, setEvents] = useState<InspectorEvent[]>([]);
@@ -700,6 +712,36 @@ function App() {
   useEffect(() => { inputRef.current = input; }, [input]);
   useEffect(() => { generatingRef.current = generating; }, [generating]);
   useEffect(() => { roundRef.current = round; }, [round]);
+
+  useLayoutEffect(() => {
+    if (!messages.length || !followConversationRef.current) return;
+    const viewport = conversationRef.current;
+    const tail = conversationTailRef.current;
+    if (!viewport || !tail) return;
+    // Chat CSS normally uses smooth scrolling. New turns and streamed deltas
+    // must instead land deterministically so a long history cannot leave the
+    // active response hidden behind the composer.
+    const previousBehavior = viewport.style.scrollBehavior;
+    viewport.style.scrollBehavior = "auto";
+    if (typeof tail.scrollIntoView === "function") {
+      tail.scrollIntoView({ block: "end", behavior: "auto" });
+    } else {
+      viewport.scrollTop = viewport.scrollHeight;
+    }
+    viewport.style.scrollBehavior = previousBehavior;
+    pendingConversationJumpRef.current = false;
+  }, [messages]);
+
+  const handleConversationScroll = useCallback(() => {
+    const viewport = conversationRef.current;
+    if (!viewport || pendingConversationJumpRef.current) return;
+    const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    followConversationRef.current = shouldFollowConversationScroll(distanceFromBottom);
+  }, []);
+
+  const pauseConversationFollow = useCallback(() => {
+    followConversationRef.current = false;
+  }, []);
 
   const discardWarmVoiceCapture = useCallback((suspendContext = true) => {
     const warm = warmVoiceCaptureRef.current;
@@ -860,11 +902,26 @@ function App() {
             ? `/characters/${activeCharacterId}/journal`
             : view === "moments"
               ? `/characters/${activeCharacterId}/moments`
+              : view === "scenes"
+                ? `/chat/${sessionId}/scenes`
               : view === "activities"
                 ? "/activities"
                 : `/chat/${sessionId}`;
     window.history.replaceState(null, "", `#${path}`);
   }, [activeCharacterId, sessionId]);
+
+  const loadConversationScene = useCallback(async (id: string) => {
+    try {
+      const scene = await request<ConversationScene>(
+        `/api/v1/sessions/${encodeURIComponent(id)}/scene`,
+      );
+      setConversationScene(scene);
+      return scene;
+    } catch {
+      setConversationScene(null);
+      return null;
+    }
+  }, []);
 
   const openSession = useCallback(async (id: string) => {
     cancelIdleContinuation();
@@ -878,6 +935,7 @@ function App() {
     localStorage.setItem("mindspace.session", id);
     setActiveCharacterId(value.character_id || value.character?.character_id || "");
     setActiveActivitySessionId("");
+    void loadConversationScene(id);
     const loadedMessages = value.messages || [];
     const sameSession = id === sessionId;
     const recovering = readActiveRun()?.session_id === id;
@@ -889,7 +947,7 @@ function App() {
     setSidebarOpen(false);
     setAppView("chat");
     window.history.replaceState(null, "", `#/chat/${id}`);
-  }, [cancelIdleContinuation, sessionId]);
+  }, [cancelIdleContinuation, loadConversationScene, sessionId]);
 
   useEffect(() => {
     Promise.all([
@@ -1835,6 +1893,8 @@ function App() {
     const user: Message = { role: "user", content, round: targetRound, status: "complete", timestamp: clientSentAt };
     const assistant: Message = { role: "assistant", content: "", round: targetRound, status: "streaming", kind: initiative ? "initiative_response" : "message", initiative_trigger: initiativeTrigger };
     const outgoing = initiative ? [assistant] : [user, assistant];
+    followConversationRef.current = true;
+    pendingConversationJumpRef.current = true;
     setMessages((items) => [...(mode === "regenerate" ? items.filter((item) => item.round !== targetRound) : items), ...outgoing]);
     const persona = settings?.persona || {};
     const retrievalSettings = settings?.retrieval || {};
@@ -2864,13 +2924,14 @@ function App() {
     localStorage.setItem("mindspace.session", id);
     setActiveCharacterId(character.character_id);
     setActiveActivitySessionId("");
+    await loadConversationScene(id);
     setMessages([]); setRound(1); setEvents([]); setRetrieval([]); setSidebarOpen(false);
     setCharacterPickerOpen(false);
     setAppView("chat");
     window.history.replaceState(null, "", `#/chat/${id}`);
     await loadSessions();
     notify("已创建新对话");
-  }, [cancelIdleContinuation, cancelRun, generating, loadSessions, notify]);
+  }, [cancelIdleContinuation, cancelRun, generating, loadConversationScene, loadSessions, notify]);
 
   const newSession = useCallback(() => {
     setCharacterPickerScope("all");
@@ -2882,6 +2943,7 @@ function App() {
     await request(`/api/v1/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
     if (id === sessionId) {
       setMessages([]);
+      setConversationScene(null);
       navigate("modes");
     }
     await loadSessions();
@@ -3031,6 +3093,17 @@ function App() {
     />;
   }
 
+  if (activeCharacter && appView === "scenes") {
+    return <ScenePickerPage
+      character={activeCharacter}
+      sessionId={sessionId}
+      current={conversationScene}
+      onBack={() => navigate("chat")}
+      onChanged={setConversationScene}
+      notify={notify}
+    />;
+  }
+
   if (activeCharacter && appView === "moments") {
     return <MomentsPage
       character={activeCharacter}
@@ -3068,13 +3141,26 @@ function App() {
       <div className="account-card"><PortraitAvatar role="assistant" avatars={effectiveAvatars} label={characterName} className="small" onClick={() => setProfileCardRole("assistant")} /><button className="account-settings" onClick={() => navigate("characters")}><span><strong>{characterName}</strong><small><i /> 当前角色 · 已隔离</small></span><b>卡册</b></button></div>
     </aside>
 
-    <main className="workspace">
+    <main className={`workspace${conversationScene?.scene ? " scene-active" : ""}`}>
+      {conversationScene?.scene && <div
+        key={conversationScene.scene.scene_id}
+        className="chat-scene-background"
+        style={{ backgroundImage: `url("${sceneAssetPath(conversationScene.scene.asset_id)}")` }}
+        aria-hidden="true"
+      />}
       <header className="topbar"><button className="mobile-only mobile-menu" onClick={() => setSidebarOpen(true)} aria-label="打开会话栏">☰</button><div className="title-block"><h1>{title}</h1><span>{characterName} · {generating ? "正在运行编排" : `第 ${round} 轮 · 已就绪`}</span></div><div className="top-actions"><button className="chapter-heart-entry" onClick={() => navigate("moments")} title="打开共同篇章"><img src={`/assets/archive/icons/heart-${activeCharacter?.chapters?.heart_state === "trace" ? "trace" : activeCharacter?.chapters?.heart_state === "warm" ? "warm" : activeCharacter?.chapters?.heart_state === "glow" || activeCharacter?.chapters?.heart_state === "keepsake" ? "glow" : "empty"}.svg`} alt="" /><span>共同篇章</span><b>{activeCharacter?.chapters?.moment_count || 0}</b></button><button className="text-action" onClick={() => navigate("modes")}>模式大厅</button>{activeCharacter?.source === "draw" ? <button className="text-action" onClick={() => navigate("draw")}>重新抽卡</button> : <button className="text-action" onClick={() => navigate("draw")}>前往灵感抽卡</button>}<span className={`model-chip ${llmReady ? "" : "warning"}`} title={llmReady ? "真实 LLM API 已配置" : "LLM API 尚未配置"}><i />{llmReady ? str(settings?.llm.model || "LLM") : "LLM 未配置"}</span><button onClick={exportSession} title="导出会话" aria-label="导出会话">⇩</button><button className="text-action" onClick={showFlow} title="查看 LangGraph 节点执行过程">执行详情</button><button onClick={() => openModal("settings")} title="产品设置" aria-label="产品设置">⚙</button></div></header>
-      <section className="conversation">
+      <section
+        className="conversation"
+        ref={conversationRef}
+        onScroll={handleConversationScroll}
+        onWheel={(event) => { if (event.deltaY < 0) pauseConversationFollow(); }}
+        onTouchMove={pauseConversationFollow}
+      >
         {!messages.length && <div className="welcome-panel"><span className="eyebrow">PRIVATE · LOCAL · STATEFUL</span><h2>让每一次对话<br />都成为连续的记忆</h2><p>双源检索、角色一致性、状态写回与实时语音，都由可观察的 LangGraph 流程调度。</p><div className="prompt-grid">{["解释当前 LangGraph 节点如何调度", "总结知识库中最重要的三点", "检查当前角色和状态档案", "设计一个低延迟语音对话流程"].map((value) => <button key={value} onClick={() => void sendMessage(value)}><span>↗</span>{value}</button>)}</div></div>}
         <MessageList messages={messages} avatars={effectiveAvatars} userName={userName} characterName={characterName} onProfile={setProfileCardRole} onCopy={(text) => { void navigator.clipboard.writeText(text); notify("已复制回复"); }} onSpeak={speakMessage} onRegenerate={(value, targetRound) => void sendMessage(value, "regenerate", targetRound)} onInitiative={(targetRound) => void sendMessage("", "regenerate", targetRound, true)} onDelete={(messageId) => void deleteReply(messageId)} />
+        <div className="conversation-tail" ref={conversationTailRef} aria-hidden="true" />
       </section>
-      <section className="composer-wrap">{generating && <div className="run-strip"><span><i /> 正在流式执行 · {runId.slice(0, 8)}</span><button onClick={() => void cancelRun()}>停止生成</button></div>}{activeActivitySessionId && <div className="activity-context-strip"><span>活动现场已接入本轮 Prompt</span><button onClick={() => navigate("activities")}>查看活动</button><button onClick={() => setActiveActivitySessionId("")}>退出活动上下文</button></div>}<div className="composer"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} placeholder="输入消息，或开启实时语音…" rows={1} /><div className="composer-row"><div><button className="voice-entry" onClick={openVoiceEntry}>● 实时语音</button><button className={`adult-entry${adultMode ? " active" : ""}`} aria-pressed={adultMode} onClick={toggleAdultMode} title="开启或关闭 NSFW 模式">NSFW</button><select className="r18-style-select" value={r18StyleId} disabled={!adultMode} aria-label="R18 风格包" onChange={(event) => { const next = event.target.value; setR18StyleId(next); localStorage.setItem(R18_STYLE_STORAGE_KEY, next); }}><option value="high_intensity">高强度推进</option><option value="immersive_narrative">叙事沉浸</option><option value="dialogue_led">台词主导</option></select><button className="initiative-entry" disabled={generating} onClick={() => void sendMessage("", "primary", round, true)} title="不输入文字，让角色根据当前关系主动说点什么">✦ 让 AI 说点什么</button><button className="chapter-composer-entry" onClick={() => navigate("activities")}><img src="/assets/archive/icons/chapter-activity.svg" alt="" />陪伴活动</button><button className="chapter-composer-entry" onClick={() => navigate("journal")}><img src="/assets/archive/icons/chapter-journal.svg" alt="" />角色日记</button><button className="chapter-composer-entry" onClick={() => navigate("moments")}><img src="/assets/archive/icons/chapter-moments.svg" alt="" />共同片段</button><button onClick={() => openModal("knowledge")}>＋ 知识</button><button onClick={showContext}>本轮引用 <b>{retrieval.length}</b></button></div><button className="send" onClick={() => generating ? void cancelRun() : void sendMessage()} disabled={!generating && !input.trim()} aria-label={generating ? "停止生成" : "发送消息"}>{generating ? "■" : "↑"}</button></div></div><div className="composer-meta"><span>Enter 发送 · Shift+Enter 换行 · Esc 打断</span><button onClick={() => void clearCurrent()}>清空当前上下文</button></div></section>
+      <section className="composer-wrap">{generating && <div className="run-strip"><span><i /> 正在流式执行 · {runId.slice(0, 8)}</span><button onClick={() => void cancelRun()}>停止生成</button></div>}{activeActivitySessionId && <div className="activity-context-strip"><span>活动现场已接入本轮 Prompt</span><button className="chapter-control-button secondary" onClick={() => navigate("activities")}>查看活动</button><button className="chapter-control-button quiet" onClick={() => setActiveActivitySessionId("")}>退出活动</button></div>}<div className="composer"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} placeholder="输入消息，或开启实时语音…" rows={1} /><div className="composer-row"><div><button className="voice-entry" onClick={openVoiceEntry}>● 实时语音</button><button className={`adult-entry${adultMode ? " active" : ""}`} aria-pressed={adultMode} onClick={toggleAdultMode} title="开启或关闭 NSFW 模式">NSFW</button>{adultMode && <select className="r18-style-select" value={r18StyleId} aria-label="R18 风格包" onChange={(event) => { const next = event.target.value; setR18StyleId(next); localStorage.setItem(R18_STYLE_STORAGE_KEY, next); }}><option value="high_intensity">高强度推进</option><option value="immersive_narrative">叙事沉浸</option><option value="dialogue_led">台词主导</option></select>}<button className="initiative-entry" disabled={generating} onClick={() => void sendMessage("", "primary", round, true)} title="不输入文字，让角色根据当前关系主动说点什么">✦ 让 AI 说点什么</button><button className={`scene-entry${conversationScene?.scene ? " active" : ""}`} onClick={() => navigate("scenes")}><img src="/assets/archive/icons/activity-scene.svg" alt="" /><span>{conversationScene?.scene?.title || "场景"}</span></button><details className="composer-menu"><summary>共同篇章</summary><div><button className="chapter-composer-entry" onClick={() => navigate("activities")}><img src="/assets/archive/icons/chapter-activity.svg" alt="" />陪伴活动</button><button className="chapter-composer-entry" onClick={() => navigate("journal")}><img src="/assets/archive/icons/chapter-journal.svg" alt="" />角色日记</button><button className="chapter-composer-entry" onClick={() => navigate("moments")}><img src="/assets/archive/icons/chapter-moments.svg" alt="" />共同片段</button></div></details><details className="composer-menu"><summary>更多</summary><div><button onClick={() => openModal("knowledge")}>＋ 知识</button><button onClick={showContext}>本轮引用 <b>{retrieval.length}</b></button></div></details></div><button className="send" onClick={() => generating ? void cancelRun() : void sendMessage()} disabled={!generating && !input.trim()} aria-label={generating ? "停止生成" : "发送消息"}>{generating ? "■" : "↑"}</button></div></div><div className="composer-meta"><span>Enter 发送 · Shift+Enter 换行 · Esc 打断</span><button onClick={() => void clearCurrent()}>清空当前上下文</button></div></section>
     </main>
 
     <Inspector open={inspectorOpen} tab={inspectorTab} onTab={setInspectorTab} onClose={() => setInspectorOpen(false)} events={events} retrieval={retrieval} runId={inspectionRunId} />

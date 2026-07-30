@@ -92,6 +92,11 @@ main { width: min(1440px, 100%); height: calc(100vh - 108px); margin: auto; padd
 .service-card.online .service-state { color: #5f8268; }
 .service-card.online .service-state i { background: #6f9e7e; box-shadow: 0 0 0 3px rgba(111, 158, 126, 0.1); }
 .service-card > button { justify-self: end; align-self: end; padding: 4px 8px; color: #8a7369; border: 0; border-radius: 7px; background: rgba(117, 83, 67, 0.06); font-size: 0.4375rem; }
+.service-card.has-progress { grid-template-rows: auto auto auto; }
+.service-install-progress { grid-column: 1 / -1; min-width: 0; margin-top: 8px; }
+.service-install-progress > span { display: block; overflow: hidden; color: #7e6f68; font-size: 0.40625rem; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+.service-install-progress > div { height: 4px; margin-top: 5px; overflow: hidden; border-radius: 999px; background: rgba(106, 76, 61, 0.09); }
+.service-install-progress > div > i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--clay), var(--teal)); transition: width 0.25s ease; }
 .qwen-runtime-summary { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; align-items: baseline; margin-top: 10px; padding: 9px 12px; color: #76665e; border: 1px solid rgba(79, 137, 140, 0.16); border-radius: 11px; background: rgba(79, 137, 140, 0.06); font-size: 0.4375rem; }
 .qwen-runtime-summary strong { color: #39787c; font-size: 0.5rem; }
 .qwen-runtime-summary small { grid-column: 2; color: #87766d; font-size: 0.40625rem; }
@@ -135,6 +140,7 @@ main { width: min(1440px, 100%); height: calc(100vh - 108px); margin: auto; padd
 .voice-actions { display: flex; gap: 7px; }
 .voice-actions button { flex: none; padding: 7px 10px; color: #806b62; border: 0; border-radius: 8px; background: rgba(117, 83, 67, 0.07); font-size: 0.4375rem; }
 .voice-actions .voice-source { color: #4f7776; background: rgba(79, 137, 140, 0.09); }
+.voice-actions .remove { color: #a85448; background: rgba(176, 82, 65, 0.08); }
 .voice-selection.selected .voice-actions button:last-child { color: #4f7776; background: rgba(79, 137, 140, 0.11); }
 .component-all { padding: 7px 11px; color: var(--clay-dark); border: 1px solid rgba(103, 75, 61, 0.12); border-radius: 9px; background: rgba(255, 255, 255, 0.38); font-size: 0.5rem; }
 .environment-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
@@ -161,7 +167,15 @@ main { width: min(1440px, 100%); height: calc(100vh - 108px); margin: auto; padd
 .component-row.failed .component-copy > span { color: #a85448; }
 .component-progress { height: 3px; margin-top: 5px; overflow: hidden; border-radius: 4px; background: rgba(106, 76, 61, 0.08); }
 .component-progress i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--teal), #7cae98); transition: width 0.25s ease; }
-.component-row > button { padding: 6px 8px; color: #806b62; border: 0; border-radius: 8px; background: rgba(117, 83, 67, 0.06); font-size: 0.4375rem; }
+.component-actions { display: flex; flex-direction: column; gap: 5px; }
+.component-actions button { padding: 6px 8px; color: #806b62; border: 0; border-radius: 8px; background: rgba(117, 83, 67, 0.06); font-size: 0.4375rem; }
+.component-actions .remove { color: #a85448; background: rgba(176, 82, 65, 0.08); }
+.component-actions button:disabled { cursor: not-allowed; opacity: 0.48; }
+.storage-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.component-all.primary { color: #fffaf4; border-color: var(--clay); background: linear-gradient(135deg, #bd7055, #a95b46); }
+.storage-alignment { margin: 8px 0 0; padding: 7px 9px; border-radius: 9px; font-size: 0.4375rem; }
+.storage-alignment.ready { color: #52775e; background: rgba(110, 153, 119, 0.1); }
+.storage-alignment.recommended { color: #8d674f; background: rgba(190, 147, 89, 0.12); }
 
 .update-panel { margin-top: 11px; }
 .update-banner { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin: 4px 0 12px; padding: 11px 15px; color: #64483d; border: 1px solid rgba(184, 101, 73, 0.2); border-radius: 13px; background: linear-gradient(100deg, rgba(255, 243, 229, 0.94), rgba(231, 245, 239, 0.86)); box-shadow: 0 10px 28px rgba(101, 72, 56, 0.07); }

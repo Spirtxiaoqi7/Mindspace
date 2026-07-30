@@ -26,6 +26,13 @@ desktop/bootstrap/
 *.exe
 *.blockmap
 
+# The NSIS policy is source code even though electron-builder keeps it below a
+# directory named build. Keep generated files ignored and track only the
+# reviewed installer include.
+!desktop/build/
+desktop/build/*
+!desktop/build/installer.nsh
+
 # Runtime state, downloads, logs, signing keys and user data
 runtime/
 logs/

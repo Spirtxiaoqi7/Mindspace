@@ -1,4 +1,4 @@
-# Mindspace 0.7.0 共同篇章架构
+# Mindspace 0.7.2 共同篇章与会话场景架构
 
 ## 目标与边界
 
@@ -10,7 +10,8 @@
 
 - 角色日记：用户主动生成或手写，始终是角色主观叙事。
 - 共同片段：活动完成后先形成候选，用户确认后才进入时间线。
-- 三种活动：场景同行、默契问答、片刻故事。
+- 两种活动：默契问答、片刻故事。
+- 会话场景：独立切换聊天背景，并为下一轮提供一句临时地点描述；不属于活动。
 - 美术清单 v2 与按需资源包安装基础。
 
 不包含金币、商店、衣柜、送礼、好感数值或模型直接改状态。
@@ -25,6 +26,7 @@
 | `RelationshipMoment` | candidate / saved / archived | 否，`narrative_only` | 用户确认接口 |
 | `ActivityDefinition` | 静态只读 | 不适用 | 产品版本 |
 | `ActivitySession` | active / interrupted / completed | 否，临时活动上下文 | 服务端 reducer |
+| `ConversationScene` | 当前会话 + 角色默认继承 | 否，临时场景上下文 | 用户直接切换 |
 
 这些记录存入 `ProductDatabase` 的独立文档命名空间，不写入 `runtime_state`。活动动作必须同时携带：
 
@@ -45,6 +47,15 @@
 
 Prompt Inspector 会显示该层。其可见级别是 `ephemeral_activity_session`，并固定
 `eligible_for_json_evidence=false`。
+
+会话存在场景时，服务端另行解析 `ConversationScene`，只增加一条动态 System 消息：
+
+```text
+【当前场景】两个人现在在xxx。
+```
+
+该层标记为 `ephemeral_conversation_scene`，不会进入人物档案、长期记忆、RAG 或 JSON
+写回证据，也不会增加模型调用。前端不能在聊天请求中伪造场景内容。
 
 已保存日记和共同片段不会全量进入 Prompt，也不写入全局向量库。当前角色、当前问题命中简单
 相关性匹配时，最多召回三条，标记为 `narrative_only_not_profile_evidence`。草稿、候选片段和
@@ -83,6 +94,10 @@ GET  /api/v1/characters/{id}/activity-sessions
 POST /api/v1/activities/{activity_id}/sessions
 GET  /api/v1/activity-sessions/{session_id}
 POST /api/v1/activity-sessions/{session_id}/actions
+
+GET  /api/v1/scenes
+GET  /api/v1/sessions/{session_id}/scene
+PUT  /api/v1/sessions/{session_id}/scene
 ```
 
 ## 资源包安全

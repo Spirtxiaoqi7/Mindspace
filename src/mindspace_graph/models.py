@@ -21,6 +21,11 @@ class ApiConfig(BaseModel):
 
 class RetrievalSettings(BaseModel):
     rag_enabled: bool = True
+    # This is a server-owned runtime gate.  ConversationService overwrites both
+    # fields before the graph starts, so a client cannot force a cold retriever
+    # onto the foreground path.
+    ready: bool = True
+    deferred_reason: str = Field(default="", max_length=100)
     knowledge_enabled: bool = True
     chat_enabled: bool = True
     structured_memory_enabled: bool = True
@@ -128,6 +133,17 @@ class ActivityPromptContext(BaseModel):
     eligible_for_json_evidence: Literal[False] = False
 
 
+class ScenePromptContext(BaseModel):
+    """Server-resolved visual scene for the current conversation."""
+
+    scene_id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=120)
+    location: str = Field(min_length=1, max_length=240)
+    asset_id: str = Field(min_length=1, max_length=120)
+    visibility: Literal["ephemeral_conversation_scene"] = "ephemeral_conversation_scene"
+    eligible_for_json_evidence: Literal[False] = False
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10_000)
     session_id: str = Field(default_factory=lambda: str(uuid4()))
@@ -158,6 +174,9 @@ class ChatRequest(BaseModel):
     # repository. It is present on the request model only so downstream nodes
     # receive a typed, immutable snapshot for this run.
     activity_context: ActivityPromptContext | None = None
+    # Resolved only from the server-side session binding. The client cannot
+    # inject an arbitrary scene sentence into the model input.
+    scene_context: ScenePromptContext | None = None
     input_evidence: InputEvidence | None = None
     user_name: str = "用户"
     user_persona: str = ""

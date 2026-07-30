@@ -1100,7 +1100,7 @@ wheels = [
 
 [[package]]
 name = "mindspace-langgraph"
-version = "0.7.0"
+version = "0.7.4"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },

@@ -14,6 +14,7 @@ const { createLauncherUpdater } = require("./launcher-updater.cjs");
 const { createComponentManager } = require("./component-manager.cjs");
 const { GPT_SOVITS_VOICES } = require("./gpt-sovits-catalog.cjs");
 const { createRuntimeManager } = require("./runtime-manager.cjs");
+const { evaluateHardwareAvailability } = require("./hardware-policy.cjs");
 const {
   LLM_PRESETS,
   ONBOARDING_VERSION,
@@ -31,8 +32,8 @@ const {
   productEntryState,
   serviceRestartDelay,
 } = require("./service-policy.cjs");
-const { appPaths, ensureAppPaths, migrateLegacyLayout } = require("./app-paths.cjs");
-const { cleanupMigratedSource, migrateStorage } = require("./storage-location.cjs");
+const { appPaths, ensureAppPaths, migrateLegacyLayout, reconcileLegacyModelPaths } = require("./app-paths.cjs");
+const { cleanupMigratedSource, inspectStorageAlignment, migrateStorage } = require("./storage-location.cjs");
 const {
   bundledArchive,
   bundledVersion,
@@ -76,6 +77,7 @@ let componentManager;
 let runtimeManager;
 let layout;
 let storageMigration = { active: false, progress: 0, message: "", error: "" };
+let modelPathCheck = { checked: false, moved: [], conflicts: [] };
 let workspace = { ready: false, created: false, message: "正在准备用户工作区", error: "" };
 let qwenPreflightCache = { expiresAt: 0, value: { eligible: false, code: "CHECKING", message: "正在检查 Qwen3 运行条件…" } };
 let qwenPreflightTask = null;
@@ -318,7 +320,22 @@ function createDiagnosticReport() {
     runtime,
   };
   writeJsonAtomic(path.join(folder, "diagnostic-report.json"), report);
-  for (const name of ["runtime-manager.jsonl", "component-download.log", "maintenance-verify.log", "api.launcher.log", "asr.launcher.log", "tts.launcher.log"]) {
+  const diagnosticLogs = new Set([
+    "runtime-manager.jsonl",
+    "component-download.log",
+    "maintenance-verify.log",
+    "api.launcher.log",
+    "asr.launcher.log",
+    "tts.launcher.log",
+  ]);
+  try {
+    for (const entry of fs.readdirSync(logRoot(), { withFileTypes: true })) {
+      if (entry.isFile() && /^[a-z0-9._-]+\.install\.log$/i.test(entry.name)) {
+        diagnosticLogs.add(entry.name);
+      }
+    }
+  } catch { /* a missing log directory is valid on a fresh install */ }
+  for (const name of diagnosticLogs) {
     const content = tailLog(path.join(logRoot(), name));
     if (content) fs.writeFileSync(path.join(folder, name), `${content}\n`, "utf8");
   }
@@ -563,8 +580,9 @@ async function selectVoiceProvider(preference, { startIfReady = true, requestDow
     const preflight = await refreshQwenRuntimePreflight();
     if (!preflight.eligible) throw new Error(preflight.message);
   }
-  if (selected !== "none" && selected !== "qwen3-vllm" && runtimeManager?.snapshot().system.nvidia === false) {
-    throw new Error("本地声音需要兼容的 NVIDIA 显卡与驱动");
+  if (!["none", "siliconflow", "qwen3-vllm"].includes(selected)) {
+    const hardware = evaluateHardwareAvailability(selected, runtimeManager?.snapshot().system || {});
+    if (!hardware.eligible) throw new Error(hardware.message);
   }
 
   const previousProvider = configuredTtsProvider();
@@ -737,6 +755,8 @@ function scheduleVoiceBackgroundDownload() {
           const preflight = await refreshQwenRuntimePreflight();
           if (!preflight.eligible) throw new Error(preflight.message);
         }
+        const hardware = evaluateHardwareAvailability(id, runtimeManager.snapshot().system);
+        if (!hardware.eligible) throw new Error(hardware.message);
         voiceBackgroundState = {
           state: "downloading",
           currentId: id,
@@ -923,9 +943,10 @@ async function snapshot() {
   }
   entries.push(["tts", ttsReport]);
   const reports = Object.fromEntries(entries);
+  const storageAlignment = inspectStorageAlignment(app, process.env, currentLayout().home);
   return {
     root, home: currentLayout().home, workspace, ps7, ps7Ready: Boolean(ps7), ttsProvider,
-    storage: storageMigration,
+    storage: { ...storageMigration, ...storageAlignment, modelPathCheck },
     services: reports, models: modelStatus(root, ttsProvider),
     components: componentManager?.snapshot() || { active: "", items: [] },
     voices: ttsVoiceSnapshot(),
@@ -939,6 +960,15 @@ async function launchService(name, generation) {
   const ps7 = resolvePowerShell();
   const service = services[name];
   const script = service && path.join(root, "scripts", service.script);
+  const hardwareId = name === "asr"
+    ? "asr"
+    : name === "qwenTts"
+      ? "qwen3-vllm-runtime"
+      : name === "tts"
+        ? configuredTtsProvider(root)
+        : "";
+  const hardware = evaluateHardwareAvailability(hardwareId, runtimeManager?.snapshot().system || {});
+  if (!hardware.eligible) return { ok: false, error: hardware.message };
   if (app.isPackaged && !runtimeManager?.snapshot().ready) return { ok: false, error: "基础运行环境尚未完成，请先点击“一键初始化”" };
   if (!ps7) return { ok: false, error: "应用私有 PowerShell 7 尚未安装" };
   if (!service || !fs.existsSync(script)) return { ok: false, error: `缺少 ${service?.script || name}` };
@@ -1464,6 +1494,8 @@ function installComponent(component, signal, onProgress) {
         if (/No module named ['\"]pkg_resources['\"]/i.test(output)) reason = "Whisper 构建缺少 pkg_resources";
         else if (/Failed to build `?openai-whisper/i.test(output)) reason = "openai-whisper 构建失败";
         else if (/CUDA is unavailable/i.test(output)) reason = "CUDA 当前不可用";
+        else if (/No space left|ENOSPC|磁盘空间不足/i.test(output)) reason = "磁盘空间不足，请更换存储位置或清理空间后重试";
+        else if (/directory already exists|UV_VENV_CLEAR=1|already exists at/i.test(output)) reason = "检测到上次中断留下的残缺运行时；再次点击继续时会隔离重建";
         else if (/从阿里云镜像安装失败/i.test(output)) reason = "国内镜像依赖安装失败";
         return finish(new Error(`${runtimeName} 运行时安装失败（退出码 ${code}）：${reason}`));
       }
@@ -1563,6 +1595,7 @@ function componentTarget(component) {
   const targets = {
     embedding: path.join(currentLayout().models, "shibing624", "text2vec-base-chinese"),
     asr: path.join(currentLayout().models, "asr", "paraformer-zh-streaming"),
+    "asr-final": path.join(currentLayout().models, "asr", "Fun-ASR-Nano-2512"),
     vad: path.join(currentLayout().models, "asr", "fsmn-vad"),
     punc: path.join(currentLayout().models, "asr", "ct-punc"),
     "asr-runtime": path.join(currentLayout().venvs, "asr-cuda"),
@@ -1585,6 +1618,10 @@ function initializeComponentManager() {
     fetch: (...arguments_) => net.fetch(...arguments_),
     logFile: path.join(logRoot(), "component-download.log"),
     markerRoot: path.join(currentLayout().state, "model-components"),
+    managedRoots: () => [
+      currentLayout().models,
+      currentLayout().environment,
+    ],
     resolveTarget: componentTarget,
     getDownloadSource: downloadSource,
     installComponent,
@@ -1615,19 +1652,19 @@ function unifiedRuntimeSnapshot() {
   const base = runtimeManager?.snapshot() || { active: "", ready: false, system: {}, items: [] };
   const models = componentManager?.snapshot() || { active: "", items: [] };
   const qwenPreflight = qwenRuntimePreflight();
-  const modelItems = models.items.map((item) => ({
-    ...item,
-    category: item.category || (item.id === "embedding" ? "base" : "voice"),
-    kind: item.provider === "installer" ? "environment" : "model",
-    required: !item.optional,
-    hardwareAvailable: item.id === "qwen3-vllm-runtime"
-      ? qwenPreflight.eligible
-      : item.hardware !== "nvidia" || Boolean(base.system.nvidia),
-    unavailableReason: item.id === "qwen3-vllm-runtime"
-      ? qwenPreflight.message
-      : item.hardware === "nvidia" && !base.system.nvidia ? "需要兼容的 NVIDIA 显卡与驱动" : "",
-    preflightCode: item.id === "qwen3-vllm-runtime" ? qwenPreflight.code : "",
-  }));
+  const modelItems = models.items.map((item) => {
+    const hardware = evaluateHardwareAvailability(item.id, base.system);
+    const available = item.id === "qwen3-vllm-runtime" ? qwenPreflight.eligible : hardware.eligible;
+    return {
+      ...item,
+      category: item.category || (item.id === "embedding" ? "base" : "voice"),
+      kind: item.provider === "installer" ? "environment" : "model",
+      required: !item.optional,
+      hardwareAvailable: available,
+      unavailableReason: item.id === "qwen3-vllm-runtime" ? qwenPreflight.message : hardware.message,
+      preflightCode: item.id === "qwen3-vllm-runtime" ? qwenPreflight.code : hardware.code,
+    };
+  });
   const items = [...base.items, ...modelItems];
   const requiredItems = items.filter((item) => item.required);
   const failed = requiredItems.find((item) => item.status === "error");
@@ -1680,6 +1717,14 @@ async function runtimeAction(action, id = "") {
     await componentManager.downloadAll();
     return unifiedRuntimeSnapshot();
   }
+  if (action === "remove") {
+    if (!modelComponent) throw new Error("只有可选模型与语音组件可以卸载");
+    if (["asr-runtime", "asr", "asr-final", "vad", "punc"].includes(id)) stopService("asr");
+    if (id === "qwen3-vllm-runtime") stopService("qwenTts");
+    if (id === "tts" || id === "tts-runtime" || id.startsWith("gpt-sovits-")) stopService("tts");
+    await componentManager.remove(id);
+    return unifiedRuntimeSnapshot();
+  }
   if (["install", "retry"].includes(action)) {
     if (baseComponent) {
       if (["python", "core-venv"].includes(id)) stopServicesForUpdate();
@@ -1690,7 +1735,8 @@ async function runtimeAction(action, id = "") {
         const preflight = await refreshQwenRuntimePreflight();
         if (!preflight.eligible) throw new Error(preflight.message);
       }
-      if (modelComponent.hardware === "nvidia" && !runtimeManager.snapshot().system.nvidia) throw new Error("此组件需要兼容的 NVIDIA 显卡与驱动");
+      const hardware = evaluateHardwareAvailability(id, runtimeManager.snapshot().system);
+      if (!hardware.eligible) throw new Error(hardware.message);
       await componentManager.download(id);
     } else throw new Error(`未知运行时组件：${id}`);
     return unifiedRuntimeSnapshot();
@@ -1895,6 +1941,29 @@ function createTray() {
   tray.on("double-click", () => { launcherWindow?.show(); launcherWindow?.focus(); });
 }
 
+async function migrateToStorageTarget(target) {
+  if (storageMigration.active) throw new Error("存储迁移正在进行");
+  if (runtimeManager?.snapshot().active || componentManager?.snapshot().active) {
+    throw new Error("请先等待或取消当前组件安装，再迁移存储位置");
+  }
+  storageMigration = { active: true, progress: 0, message: "正在准备跨盘迁移", error: "" };
+  try {
+    await stopServicesForUpdate();
+    const migrated = await migrateStorage({
+      app,
+      sourceHome: currentLayout().home,
+      targetHome: target,
+      onProgress: (progress, message) => { storageMigration = { active: true, progress, message, error: "" }; },
+    });
+    storageMigration = { active: false, progress: 100, message: `已迁移到 ${migrated.target}，正在重启验证`, error: "" };
+    setTimeout(() => { quitting = true; app.relaunch(); app.exit(0); }, 700);
+    return { ...(await snapshot()), storage: { ...storageMigration, ...inspectStorageAlignment(app, process.env, migrated.target) } };
+  } catch (error) {
+    storageMigration = { active: false, progress: 0, message: "存储迁移失败，原位置保持不变", error: String(error.message || error) };
+    throw error;
+  }
+}
+
 ipcMain.handle("launcher:snapshot", snapshot);
 ipcMain.handle("launcher:service", async (_, { service, action }) => {
   const name = service === "tts" ? ttsServiceName() : service;
@@ -1947,10 +2016,6 @@ ipcMain.handle("launcher:select-root", async () => {
   return snapshot();
 });
 ipcMain.handle("launcher:select-storage", async () => {
-  if (storageMigration.active) throw new Error("存储迁移正在进行");
-  if (runtimeManager?.snapshot().active || componentManager?.snapshot().active) {
-    throw new Error("请先等待或取消当前组件安装，再迁移存储位置");
-  }
   const result = await dialog.showOpenDialog({
     title: "选择 Mindspace 存储位置",
     buttonLabel: "迁移到这里",
@@ -1959,23 +2024,14 @@ ipcMain.handle("launcher:select-storage", async () => {
   });
   if (result.canceled || !result.filePaths[0]) return snapshot();
   const selected = path.resolve(result.filePaths[0]);
-  const target = path.basename(selected).toLowerCase() === "mindspace" ? selected : path.join(selected, "Mindspace");
-  storageMigration = { active: true, progress: 0, message: "正在准备跨盘迁移", error: "" };
-  try {
-    await stopServicesForUpdate();
-    const migrated = await migrateStorage({
-      app,
-      sourceHome: currentLayout().home,
-      targetHome: target,
-      onProgress: (progress, message) => { storageMigration = { active: true, progress, message, error: "" }; },
-    });
-    storageMigration = { active: false, progress: 100, message: `已迁移到 ${migrated.target}，正在重启验证`, error: "" };
-    setTimeout(() => { quitting = true; app.relaunch(); app.exit(0); }, 700);
-    return { ...(await snapshot()), storage: storageMigration };
-  } catch (error) {
-    storageMigration = { active: false, progress: 0, message: "存储迁移失败，原位置保持不变", error: String(error.message || error) };
-    throw error;
-  }
+  const selectedName = path.basename(selected).toLowerCase();
+  const target = ["mindspace", "mindspacedata"].includes(selectedName) ? selected : path.join(selected, "MindspaceData");
+  return migrateToStorageTarget(target);
+});
+ipcMain.handle("launcher:migrate-recommended-storage", async () => {
+  const alignment = inspectStorageAlignment(app, process.env, currentLayout().home);
+  if (!alignment.migrationRecommended || !alignment.recommended) return snapshot();
+  return migrateToStorageTarget(alignment.recommended);
 });
 ipcMain.handle("launcher:shortcut", () => {
   const shortcut = path.join(app.getPath("desktop"), "Mindspace.lnk");
@@ -2006,6 +2062,7 @@ ipcMain.handle("launcher:component", async (_, { action, id } = {}) => {
   }
   if (action === "download-all") return componentManager.downloadAll();
   if (action === "cancel") return componentManager.cancel(id);
+  if (action === "remove") return runtimeAction("remove", id);
   throw new Error("未知组件操作");
 });
 ipcMain.handle("launcher:voice", async (_, { action, id } = {}) => {
@@ -2094,6 +2151,7 @@ if (!singleInstance) app.quit();
 if (!captureArg) app.on("second-instance", () => { launcherWindow?.show(); launcherWindow?.focus(); });
 app.whenReady().then(async () => {
   currentLayout();
+  modelPathCheck = reconcileLegacyModelPaths(currentLayout());
   await cleanupMigratedSource(currentLayout());
   const legacyConfig = readLauncherConfig();
   if (process.env.MINDSPACE_SKIP_LEGACY_MIGRATION !== "1") {

@@ -398,6 +398,29 @@ function App() {
   const readyModels = data?.models.filter((item) => item.ready).length || 0;
   const baseIds = useMemo(() => new Set(["powershell", "git", "uv", "python", "core-venv", "embedding"]), []);
   const baseItems = useMemo(() => runtime.items.filter((item) => item.category === "base" || baseIds.has(item.id)), [baseIds, runtime.items]);
+  const asrComponentIds = useMemo(() => ["asr-runtime", "asr", "vad", "punc"], []);
+  const asrItems = useMemo(
+    () => asrComponentIds
+      .map((id) => runtime.items.find((item) => item.id === id))
+      .filter((item): item is NonNullable<typeof item> => Boolean(item)),
+    [asrComponentIds, runtime.items],
+  );
+  const activeAsrItem = asrItems.find((item) => item.id === runtime.active || item.id === runtime.pipeline?.currentId);
+  const nextAsrItem = asrItems.find((item) => !item.ready);
+  const asrProgressItem = activeAsrItem || nextAsrItem;
+  const asrReadyCount = asrItems.filter((item) => item.ready).length;
+  const asrAllReady = asrItems.length > 0 && asrReadyCount === asrItems.length;
+  const asrInstalling = Boolean(activeAsrItem || (typeof busy === "string" && busy.startsWith("asr:")));
+  const asrInstallProgress = asrProgressItem?.ready
+    ? 100
+    : Math.max(0, Math.min(100, asrProgressItem?.progress || 0));
+  const asrInstallText = activeAsrItem
+    ? `${activeAsrItem.message || `正在准备 ${activeAsrItem.name}`} · ${asrInstallProgress.toFixed(0)}%`
+    : asrProgressItem?.error
+      ? `${asrProgressItem.name} 安装中断，可继续修复`
+      : asrProgressItem
+        ? `待准备 ${asrProgressItem.name} · ${asrReadyCount}/${asrItems.length} 项已就绪`
+        : "正在检查实时语音组件";
   // Most voice-category entries are individual GPT-SoVITS voices and belong in
   // the picker below. Qwen3 is a service runtime, so it must remain visible as
   // a first-class capability with its WSL/vLLM diagnostics and repair action.
@@ -535,12 +558,12 @@ function App() {
     } finally { setBusy(""); }
   }
 
-  async function runtimeAction(action: "install" | "install-all" | "cancel" | "retry" | "repair", id = "") {
+  async function runtimeAction(action: "install" | "install-all" | "cancel" | "retry" | "repair" | "remove", id = "") {
     try {
-      if (action !== "cancel") setNotice(action === "install-all" ? "正在初始化全部基础环境…" : "正在准备运行时组件…");
+      if (action !== "cancel") setNotice(action === "install-all" ? "正在初始化全部基础环境…" : action === "remove" ? "正在安全卸载组件…" : "正在准备运行时组件…");
       const next = await window.launcher.runtime(action, id);
       setRuntime(next); await refresh();
-      setNotice(action === "cancel" ? "安装已取消，下载进度已保留" : next.ready ? "零环境运行时已准备完成" : "组件操作完成");
+      setNotice(action === "cancel" ? "安装已取消，下载进度已保留" : action === "remove" ? "组件已卸载；用户数据与其他共享组件未受影响" : next.ready ? "零环境运行时已准备完成" : "组件操作完成");
     } catch (error) {
       setNotice((error as Error).message);
       setRuntime(await window.launcher.runtime("snapshot"));
@@ -637,6 +660,20 @@ function App() {
     } finally { setBusy(""); }
   }
 
+  async function migrateRecommendedStorage() {
+    if (!data?.storage?.recommended) return;
+    if (!window.confirm(`将环境、模型与用户数据迁移到安装盘：\n${data.storage.recommended}\n\n迁移完成后 Mindspace 会自动重启，原目录仅在新位置通过校验后清理。`)) return;
+    setBusy("storage");
+    setNotice("正在迁移到安装盘；请勿关闭 Mindspace…");
+    try {
+      const next = await window.launcher.migrateRecommendedStorage();
+      setData(next);
+      setNotice(next.storage?.message || "存储位置已对齐");
+    } catch (error) {
+      setNotice((error as Error).message || "迁移失败，原目录保持不变");
+    } finally { setBusy(""); }
+  }
+
   async function exportDiagnostics() {
     setBusy("diagnostics");
     try {
@@ -669,12 +706,19 @@ function App() {
       <span className="component-check">{item.ready ? "✓" : running ? "↓" : item.error ? "!" : "○"}</span>
       <div className="component-copy">
         <strong>{item.name}{item.optional ? " · 可选" : ""}</strong>
-        <small>{item.description}{total ? ` · ${formatBytes(total)}` : ""}</small>
+        <small title={item.path}>{item.description}{item.installedBytes ? ` · 已占用 ${formatBytes(item.installedBytes)}` : total ? ` · ${formatBytes(total)}` : ""}</small>
         <div className="component-progress"><i style={{ width: `${item.ready ? 100 : item.progress || 0}%` }} /></div>
         <span>{detail}{running ? item.speedBps > 0 ? ` · ${formatBytes(item.speedBps)}/s · ${item.progress.toFixed(1)}%` : ` · ${item.progress.toFixed(1)}%` : ""}</span>
         {item.error && <span className="diagnostic-code">错误码 {item.errorCode || "UNKNOWN"} · 阶段 {item.errorStage || item.status}{item.operationId ? ` · 操作 ${item.operationId}` : ""}</span>}
       </div>
-      {running ? <button onClick={() => void runtimeAction("cancel", item.id)}>取消</button> : <button disabled={Boolean(runtime.active) || item.ready || item.hardwareAvailable === false} onClick={() => void runtimeAction(item.status === "error" || item.status === "cancelled" ? "retry" : "install", item.id)}>{item.ready ? "已部署" : item.hardwareAvailable === false ? item.preflightCode === "CHECKING" ? "检查中" : "条件不满足" : item.id === "qwen3-vllm-runtime" ? "接入本地环境" : item.status === "cancelled" || item.downloadedBytes ? "继续" : item.kind === "model" || item.downloadRequired ? "下载" : item.bundled ? "本地部署" : "安装"}</button>}
+      <div className="component-actions">
+        {running
+          ? <button onClick={() => void runtimeAction("cancel", item.id)}>取消</button>
+          : <button disabled={Boolean(runtime.active) || item.ready || item.hardwareAvailable === false} onClick={() => void runtimeAction(item.status === "error" || item.status === "cancelled" ? "retry" : "install", item.id)}>{item.ready ? "已部署" : item.hardwareAvailable === false ? item.preflightCode === "CHECKING" ? "检查中" : "条件不满足" : item.id === "qwen3-vllm-runtime" ? "接入本地环境" : item.status === "cancelled" || item.downloadedBytes ? "继续" : item.kind === "model" || item.downloadRequired ? "下载" : item.bundled ? "本地部署" : "安装"}</button>}
+        {item.ready && item.optional && <button className="remove" disabled={Boolean(runtime.active) || !item.removable} title={item.removable ? "卸载该组件并释放空间" : item.dependents?.length ? `正在被 ${item.dependents.join("、")} 使用` : "此组件当前不可卸载"} onClick={() => {
+          if (window.confirm(`卸载 ${item.name}？\n只会删除该组件文件，不会删除角色、会话或用户设置。`)) void runtimeAction("remove", item.id);
+        }}>{item.removable ? "卸载" : "被依赖"}</button>}
+      </div>
     </article>;
   })}</div>;
 
@@ -784,27 +828,46 @@ function App() {
           const remoteTts = id === "tts" && data?.ttsProvider === "siliconflow";
           const ttsDisabled = id === "tts" && data?.ttsProvider === "browser";
           const asrRuntime = runtime.items.find((candidate) => candidate.id === "asr-runtime");
-          const asrNeedsSetup = id === "asr" && !asrRuntime?.ready;
-          const asrUnavailable = id === "asr" && runtime.system.nvidia === false;
-          return <article className={`service-card ${online && !ttsDisabled ? "online" : ""}`} key={id}>
+          const asrNeedsSetup = id === "asr" && !asrAllReady;
+          const selectedHardwareItem = id === "asr"
+            ? asrRuntime
+            : id === "tts"
+              ? data?.ttsProvider === "gpt-sovits"
+                ? runtime.items.find((candidate) => candidate.id === "gpt-sovits-runtime")
+                : data?.ttsProvider === "cosyvoice"
+                  ? runtime.items.find((candidate) => candidate.id === "tts-runtime")
+                  : qwenSelected ? qwenRuntime : undefined
+              : undefined;
+          const hardwareUnavailable = selectedHardwareItem?.hardwareAvailable === false;
+          const showAsrProgress = id === "asr" && !online && (!asrAllReady || asrInstalling);
+          return <article className={`service-card ${online && !ttsDisabled ? "online" : ""}${showAsrProgress ? " has-progress" : ""}`} key={id}>
             <span className={`service-icon ${item.tone}`}>{item.icon}</span>
             <div><strong>{isQwenTts ? "Qwen3 实时语音" : item.title}</strong><small>{ttsDisabled ? "声音已关闭 · 仅文字对话" : remoteTts ? "SiliconFlow · 流式 API" : isQwenTts ? "vLLM-Omni · WSL2 · CustomVoice 固定 Serena" : id === "tts" && data?.ttsProvider === "gpt-sovits" ? `${voices.items.find((voice) => voice.id === voices.current)?.label || "GPT-SoVITS"} · 本地流式` : item.subtitle}</small></div>
-            <span className="service-state"><i />{ttsDisabled ? "已关闭" : remoteTts ? "API 托管" : isQwenTts && !qwenRuntime?.ready ? "运行时未接入" : isQwenTts && starting ? "正在加载模型" : online ? "运行中" : "未启动"}</span>
-            <button disabled={Boolean(busy) || ttsDisabled || remoteTts || asrUnavailable || (isQwenTts && !qwenRuntime?.ready)} onClick={() => serviceAction(serviceId, starting ? "stop" : online ? "restart" : "start")}>{ttsDisabled ? "无需启动" : remoteTts ? "无需本地模型" : isQwenTts && !qwenRuntime?.ready ? "请先接入" : isQwenTts && starting ? "停止加载" : asrUnavailable ? "需要 NVIDIA" : online ? "重启" : asrNeedsSetup ? asrRuntime?.partial ? "继续修复并启动" : "安装并启动" : "启动"}</button>
+            <span className="service-state" title={hardwareUnavailable ? selectedHardwareItem?.unavailableReason : ""}><i />{ttsDisabled ? "已关闭" : remoteTts ? "API 托管" : hardwareUnavailable ? "硬件不满足" : isQwenTts && !qwenRuntime?.ready ? "运行时未接入" : isQwenTts && starting ? "正在加载模型" : online ? "运行中" : id === "asr" && asrInstalling ? "正在安装" : "未启动"}</span>
+            <button disabled={Boolean(busy) || ttsDisabled || remoteTts || hardwareUnavailable || (isQwenTts && !qwenRuntime?.ready)} title={hardwareUnavailable ? selectedHardwareItem?.unavailableReason : ""} onClick={() => serviceAction(serviceId, starting ? "stop" : online ? "restart" : "start")}>{ttsDisabled ? "无需启动" : remoteTts ? "无需本地模型" : hardwareUnavailable ? selectedHardwareItem?.preflightCode === "RAM_INSUFFICIENT" ? "内存不足" : selectedHardwareItem?.preflightCode === "VRAM_INSUFFICIENT" ? "显存不足" : "硬件不满足" : isQwenTts && !qwenRuntime?.ready ? "请先接入" : isQwenTts && starting ? "停止加载" : online ? "重启" : id === "asr" && asrInstalling ? `${asrInstallProgress.toFixed(0)}%` : asrNeedsSetup ? asrRuntime?.partial || asrProgressItem?.partial || asrProgressItem?.error ? "继续修复并启动" : "安装并启动" : "启动"}</button>
+            {showAsrProgress && <div className="service-install-progress" role="status" aria-live="polite">
+              <span>{asrInstallText}</span>
+              <div><i style={{ width: `${asrInstallProgress}%` }} /></div>
+            </div>}
           </article>;
         })}</div>
         <div className="voice-provider-switcher">
           <div><strong>声音方案</strong><small>启动器与应用内共用同一配置；切换时先释放旧引擎，再启动新引擎。</small></div>
           <div>{dashboardVoiceOptions.map((option) => {
-            const unavailable = option.id === "qwen3-vllm"
-              ? runtime.qwenPreflight?.eligible === false
-              : !["none", "siliconflow"].includes(option.id) && runtime.system.nvidia === false;
+            const hardwareItem = option.id === "qwen3-vllm"
+              ? qwenRuntime
+              : option.id === "gpt-sovits"
+                ? runtime.items.find((item) => item.id === "gpt-sovits-runtime")
+                : option.id === "cosyvoice"
+                  ? runtime.items.find((item) => item.id === "tts-runtime")
+                  : undefined;
+            const unavailable = Boolean(hardwareItem?.hardwareAvailable === false);
             const selected = selectedVoicePreference === option.id;
             return <button
               className={selected ? "selected" : ""}
               disabled={Boolean(busy) || unavailable}
               key={option.id}
-              title={unavailable ? option.id === "qwen3-vllm" ? runtime.qwenPreflight?.message : "当前设备不满足本地声音条件" : option.description}
+              title={unavailable ? hardwareItem?.unavailableReason || "当前设备不满足本地声音条件" : option.description}
               onClick={() => void switchVoiceProvider(option.id)}
             >
               <b>{option.title}</b>
@@ -820,7 +883,7 @@ function App() {
         {expanded.base && <div className="accordion-body">
           <div className="environment-actions"><button className="component-all" disabled={Boolean(runtime.active) || runtime.ready} onClick={() => void runtimeAction("install-all")}>{runtime.ready ? "基础环境已就绪" : runtime.active ? `正在安装 ${runtime.pipeline?.currentName || "组件"}` : "按顺序初始化基础环境"}</button></div>
           <p className="component-note">顺序执行系统预检 → PowerShell → MinGit → uv → Python → 核心环境 → 中文向量模型。安装包已携带的工具直接本地部署，已通过校验的步骤自动跳过。</p>
-          <div className="runtime-preflight"><span className={runtime.system.supported ? "ready" : "failed"}>系统 {runtime.system.windowsRelease || "检测中"} · {runtime.system.supported ? "Win10/11 x64" : "不受支持"}</span><span className={runtime.system.writable ? "ready" : "failed"}>目录{runtime.system.writable ? "可写" : "不可写"}</span><span>{formatBytes(runtime.system.freeBytes || 0)} 可用空间</span></div>
+          <div className="runtime-preflight"><span className={runtime.system.supported ? "ready" : "failed"}>系统 {runtime.system.windowsRelease || "检测中"} · {runtime.system.supported ? "Win10/11 x64" : "不受支持"}</span><span className={runtime.system.writable ? "ready" : "failed"}>目录{runtime.system.writable ? "可写" : "不可写"}</span><span>{formatBytes(runtime.system.freeBytes || 0)} 可用空间</span><span className={(runtime.system.memoryTotalBytes || 0) >= 16 * 1024 ** 3 ? "ready" : "optional"}>内存 {formatBytes(runtime.system.memoryTotalBytes || 0)}</span>{runtime.system.nvidia && <span className={(runtime.system.vramTotalMiB || 0) >= 6 * 1024 ? "ready" : "optional"}>显存 {formatBytes((runtime.system.vramTotalMiB || 0) * 1024 ** 2)}</span>}</div>
           {renderComponents(baseItems)}
         </div>}
       </section>
@@ -829,7 +892,7 @@ function App() {
         <button className="accordion-heading" aria-expanded={Boolean(expanded.capabilities)} onClick={() => togglePanel("capabilities")}><span className="accordion-icon">02</span><span><b>语音与模型能力</b><small>{!data ? "正在检测模型与语音能力" : `RAG ${readyModels}/${data.models.length || 5} · 本地能力 ${capabilityReady}/${capabilityItems.length} · 当前 ${voices.items.find((voice) => voice.id === voices.current)?.label || data.ttsProvider || "云端 TTS"}`}</small></span><strong>{runtime.system.nvidia === undefined ? "检测中" : runtime.system.nvidia ? "NVIDIA 可用" : "本地语音可选"}</strong><em>{expanded.capabilities ? "收起" : "展开"}</em></button>
         {expanded.capabilities && <div className="accordion-body">
           <div className="model-pills">{data?.models.map((model) => <span className={model.ready ? "ready" : "missing"} key={model.id}><i>{model.optional ? "○" : model.ready ? "✓" : "!"}</i>{model.name}</span>)}</div>
-          <p className="component-note">ASR、CosyVoice 与 GPT-SoVITS 为硬件可选能力，不阻塞文字聊天和云端 TTS。V4 公共模型及 CUDA 运行时只部署一次；人物音色在下方按需单独下载。</p>
+          <p className="component-note">ASR、CosyVoice 与 GPT-SoVITS 为硬件可选能力，不阻塞文字聊天和云端 TTS。启动器会按 RAM/显存门槛禁用不适合本机的服务；已安装的可选包可在这里卸载释放空间。</p>
           {renderComponents(capabilityItems)}
           <div className="voice-subsection">
             <div className="panel-heading"><h3>人物音色</h3><span className="voice-current">已下载 {installedVoices}/{voices.items.length} · {voices.provider === "gpt-sovits" ? `当前 ${voices.items.find((voice) => voice.id === voices.current)?.label || voices.current}` : "当前使用其他 TTS"}</span></div>
@@ -838,7 +901,19 @@ function App() {
               <label><span>人物音色</span><select value={chosenVoice?.id || ""} onChange={(event) => setVoiceChoice(event.target.value)} disabled={!franchiseVoices.length}>{franchiseVoices.map((voice) => <option key={voice.id} value={voice.id}>{voice.character} · {voice.family === "v4" ? "V4" : "V2ProPlus"} · {voice.releaseYear}</option>)}</select></label>
               {chosenVoice && <article className={`voice-selection ${chosenVoice.ready ? "ready" : ""} ${voices.provider === "gpt-sovits" && voices.current === chosenVoice.id ? "selected" : ""}`}>
                 <div><span>{chosenVoice.franchise} · 归档内部已核验</span><strong>{chosenVoice.label}</strong><small>{chosenVoice.ready ? "人物音色已安装" : `${formatBytes(chosenVoice.estimatedBytes)} · 仅下载这一人物`} · {chosenVoice.engine}</small><div className={`voice-download-progress ${chosenVoice.ready ? "complete" : ""}`} aria-label={`${chosenVoice.label} 下载进度 ${chosenVoiceProgress.toFixed(0)}%`}><i style={{ width: `${chosenVoiceProgress}%` }} /></div><small className="voice-progress-label">{chosenVoiceProgressText}</small>{chosenVoice.error && <em>{chosenVoice.error}</em>}</div>
-                <div className="voice-actions"><button className="voice-source" onClick={() => void window.launcher.external(chosenVoice.sourceUrl)}>来源</button>{chosenVoiceInstalling ? <button onClick={() => void runtimeAction("cancel", runtime.active || chosenVoice.componentId)}>取消 {chosenVoiceProgress.toFixed(0)}%</button> : !chosenVoice.ready ? <button disabled={Boolean(busy) || Boolean(runtime.active) || runtime.system.nvidia === false} onClick={() => void installVoice(chosenVoice.id)}>单独下载</button> : <button disabled={Boolean(busy) || Boolean(runtime.active) || (voices.provider === "gpt-sovits" && voices.current === chosenVoice.id)} onClick={() => void selectVoice(chosenVoice.id)}>{voices.provider === "gpt-sovits" && voices.current === chosenVoice.id ? "使用中" : "设为当前"}</button>}</div>
+                <div className="voice-actions">
+                  <button className="voice-source" onClick={() => void window.launcher.external(chosenVoice.sourceUrl)}>来源</button>
+                  {chosenVoiceInstalling
+                    ? <button onClick={() => void runtimeAction("cancel", runtime.active || chosenVoice.componentId)}>取消 {chosenVoiceProgress.toFixed(0)}%</button>
+                    : !chosenVoice.ready
+                      ? <button disabled={Boolean(busy) || Boolean(runtime.active) || runtime.items.find((item) => item.id === chosenVoice.componentId)?.hardwareAvailable === false} onClick={() => void installVoice(chosenVoice.id)}>单独下载</button>
+                      : <>
+                        <button disabled={Boolean(busy) || Boolean(runtime.active) || (voices.provider === "gpt-sovits" && voices.current === chosenVoice.id)} onClick={() => void selectVoice(chosenVoice.id)}>{voices.provider === "gpt-sovits" && voices.current === chosenVoice.id ? "使用中" : "设为当前"}</button>
+                        <button className="remove" disabled={Boolean(busy) || Boolean(runtime.active) || (voices.provider === "gpt-sovits" && voices.current === chosenVoice.id)} title={voices.provider === "gpt-sovits" && voices.current === chosenVoice.id ? "请先切换到其他声音方案" : "只卸载这一人物音色"} onClick={() => {
+                          if (window.confirm(`卸载 ${chosenVoice.label}？\n公共模型和其他人物音色会保留。`)) void runtimeAction("remove", chosenVoice.componentId);
+                        }}>卸载音色</button>
+                      </>}
+                </div>
               </article>}
             </div>
           </div>
@@ -847,7 +922,7 @@ function App() {
 
       <section className={`accordion-panel ${expanded.downloads ? "expanded" : ""}`}>
         <button className="accordion-heading" aria-expanded={Boolean(expanded.downloads)} onClick={() => togglePanel("downloads")}><span className="accordion-icon">03</span><span><b>下载与存储</b><small>{downloadSource === "china" ? "国内优先 · 自动回退" : "官方源"} · {data?.home || "正在检测目录"}</small></span><strong>{runtime.system.freeBytes ? `${formatBytes(runtime.system.freeBytes)} 可用` : "检测中"}</strong><em>{expanded.downloads ? "收起" : "展开"}</em></button>
-        {expanded.downloads && <div className="accordion-body settings-grid"><div><label className="source-picker"><span>下载源</span><select value={downloadSource} disabled={Boolean(runtime.active) || busy === "download-source"} onChange={(event) => void saveDownloadSource(event.target.value as "china" | "official")}><option value="china">国内优先（失败自动切官方）</option><option value="official">官方源（GitHub / PyPI）</option></select></label><p className="component-note">下载时显示实际域名；切换只影响后续下载，已下载文件和断点缓存继续复用。</p></div><div><div className="proxy-row"><input value={proxy} onChange={(event) => setProxy(event.target.value)} placeholder="代理地址；留空跟随 Windows" /><button onClick={saveProxy}>保存代理</button></div><button className="component-all" disabled={Boolean(busy) || Boolean(runtime.active)} onClick={selectStorage}>{data?.storage?.active ? `迁移中 ${data.storage.progress}%` : "更改统一存储位置"}</button></div></div>}
+        {expanded.downloads && <div className="accordion-body settings-grid"><div><label className="source-picker"><span>下载源</span><select value={downloadSource} disabled={Boolean(runtime.active) || busy === "download-source"} onChange={(event) => void saveDownloadSource(event.target.value as "china" | "official")}><option value="china">国内优先（失败自动切官方）</option><option value="official">官方源（GitHub / PyPI）</option></select></label><p className="component-note">下载时显示实际域名；切换只影响后续下载，已下载文件和断点缓存继续复用。</p><p className={`storage-alignment ${data?.storage?.aligned || data?.storage?.userSelected ? "ready" : "recommended"}`}>{data?.storage?.message || "正在检查安装盘与数据目录"}</p></div><div><div className="proxy-row"><input value={proxy} onChange={(event) => setProxy(event.target.value)} placeholder="代理地址；留空跟随 Windows" /><button onClick={saveProxy}>保存代理</button></div><div className="storage-actions">{data?.storage?.migrationRecommended && <button className="component-all primary" disabled={Boolean(busy) || Boolean(runtime.active)} onClick={migrateRecommendedStorage}>迁移到安装盘</button>}<button className="component-all" disabled={Boolean(busy) || Boolean(runtime.active)} onClick={selectStorage}>{data?.storage?.active ? `迁移中 ${data.storage.progress}%` : "自定义统一存储位置"}</button></div></div></div>}
       </section>
 
       <section className={`accordion-panel ${expanded.maintenance ? "expanded" : ""}`}>

@@ -9,6 +9,7 @@ character profile.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections.abc import Callable
 from copy import deepcopy
@@ -40,6 +41,9 @@ class JournalCreate(BaseModel):
     session_id: str = Field(default="", max_length=100)
     activity_session_id: str = Field(default="", max_length=100)
     cover_asset_id: str = Field(default="journal-cover-paper", max_length=120)
+    source_round_start: int | None = Field(default=None, ge=0)
+    source_round_end: int | None = Field(default=None, ge=0)
+    source_message_count: int = Field(default=0, ge=0, le=64)
 
     @field_validator("title", "content", "session_id", "activity_session_id")
     @classmethod
@@ -96,6 +100,11 @@ class ActivityAction(BaseModel):
         "resume",
     ]
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class SceneSelectionUpdate(BaseModel):
+    scene_id: str = Field(min_length=1, max_length=64)
+    expected_revision: int = Field(default=0, ge=0)
 
 
 ACTIVITY_DEFINITIONS: tuple[dict[str, Any], ...] = (
@@ -279,6 +288,45 @@ ACTIVITY_DEFINITIONS: tuple[dict[str, Any], ...] = (
     },
 )
 
+# Scene companion started as an activity in 0.7.0. Keep its definition readable
+# for old audit records, but expose its artwork through a lightweight
+# conversation-scene catalog instead of the activity state machine.
+LEGACY_SCENE_ACTIVITY = next(
+    item for item in ACTIVITY_DEFINITIONS if item["activity_id"] == "scene_companion"
+)
+SCENE_LOCATION_LABELS: dict[str, str] = {
+    "riverside_evening": "暮色中的河岸边",
+    "rainy_living_room": "下着雨的客厅窗边",
+    "spring_park": "雨后清晨的公园小路上",
+    "sunset_rooftop": "能看见城市晚霞的天台上",
+    "night_market": "灯火热闹的夜市街巷里",
+    "library_afternoon": "安静的图书馆窗边",
+    "seaside_dawn": "清晨空旷的海岸边",
+    "mountain_cabin": "有火炉和薄雾的山间木屋里",
+    "snowy_window": "飘雪夜晚的窗边",
+    "summer_balcony": "有灯串和晚风的夏夜阳台上",
+    "autumn_train": "穿过秋日山谷的列车里",
+    "cafe_corner": "阴天安静的咖啡馆角落",
+    "kitchen_evening": "刚做完晚饭的厨房里",
+    "stargazing_field": "铺着毯子的原野星空下",
+    "museum_hall": "安静的美术馆长廊里",
+    "flower_shop": "摆满鲜花和丝带的花店里",
+    "old_street": "雨后亮起灯的旧街上",
+    "lakeside_picnic": "微风吹过的湖畔野餐地",
+    "festival_lantern": "挂满灯笼的夏祭人群中",
+    "late_night_drive": "雨夜缓慢行驶的车里",
+}
+SCENE_DEFINITIONS: tuple[dict[str, Any], ...] = tuple(
+    {
+        **deepcopy(scene),
+        "location": SCENE_LOCATION_LABELS[str(scene["scene_id"])],
+    }
+    for scene in LEGACY_SCENE_ACTIVITY["scenes"]
+)
+ACTIVITY_DEFINITIONS = tuple(
+    item for item in ACTIVITY_DEFINITIONS if item["activity_id"] != "scene_companion"
+)
+
 
 class SharedChapterService:
     """Transactional repositories for journals, moments and deterministic activities."""
@@ -312,6 +360,14 @@ class SharedChapterService:
     @staticmethod
     def _activity_key(activity_session_id: str) -> str:
         return f"activity-session:{activity_session_id}"
+
+    @staticmethod
+    def _scene_key(session_id: str) -> str:
+        return f"conversation-scene:{session_id}"
+
+    @staticmethod
+    def _character_scene_key(character_id: str) -> str:
+        return f"character-scene-default:{character_id}"
 
     def _character(self, character_id: str) -> dict[str, Any]:
         record = self.characters.get(character_id)
@@ -372,6 +428,9 @@ class SharedChapterService:
             "session_id": payload.session_id,
             "activity_session_id": payload.activity_session_id,
             "cover_asset_id": payload.cover_asset_id,
+            "source_round_start": payload.source_round_start,
+            "source_round_end": payload.source_round_end,
+            "source_message_count": payload.source_message_count,
             "visibility": "narrative_only",
             "eligible_for_json_evidence": False,
             "created_at": now,
@@ -435,34 +494,64 @@ class SharedChapterService:
         """Generate one editable draft; failure deterministically falls back to a template."""
 
         character = self._character(character_id)
-        history = self.sessions.load_recent(session_id, limit=16) if session_id else []
-        visible = [
-            {
-                "role": str(item.get("role") or ""),
-                "content": str(item.get("content") or "")[:2_000],
-            }
-            for item in history
-            if not item.get("hidden") and item.get("role") in {"user", "assistant"}
-        ][-16:]
+        if session_id:
+            session_loader = getattr(self.sessions, "load_session", None)
+            if callable(session_loader):
+                session = session_loader(session_id)
+                bound_character_id = str(session.get("character_id") or "")
+                if bound_character_id and bound_character_id != character_id:
+                    raise ValueError("journal source session belongs to another character")
+        history = self.sessions.load_all(session_id) if session_id else []
+        visible = self._journal_dialogue_window(history, limit_rounds=8)
         name = str(character.get("display_name") or "角色")
         fallback = self._journal_fallback(name, visible)
         content = ""
         generation = "template"
+        model_attempted = False
         if visible and self.llm_provider is not None and self.api_provider is not None:
+            model_attempted = True
+            profile = character.get("ai_profile")
+            profile_excerpt = {}
+            if isinstance(profile, dict):
+                for key in ("identity", "personality", "background", "speech_style"):
+                    if key in profile:
+                        profile_excerpt[key] = profile[key]
+            role_context = json.dumps(
+                {
+                    "角色名": name,
+                    "与用户关系": character.get("relationship_label") or "",
+                    "角色设定摘录": profile_excerpt,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )[:2_400]
             messages = [
                 {
                     "role": "system",
                     "content": (
-                        f"你是{name}。请以角色本人第一人称写一篇简短中文日记草稿，"
-                        "记录对话中确实出现的内容。可以有主观感受，但不得补造用户经历、"
-                        "承诺或事实。输出纯正文，不要标题、Markdown、JSON 或规则说明。"
+                        f"你正在替 AI 角色“{name}”写她自己的私人日记。"
+                        f"日记里的“我”只能指{name}；对话证据中的“用户本人”不是日记作者，"
+                        f"“{name}本人”才是日记作者。不得把{name}写成“她”、不得站在用户视角叙述。"
+                        "只记录证据中确实发生或确实说过的内容，不补造动作、食物细节、日期、天气、"
+                        "地点、情绪反应、承诺或用户经历。允许写角色对这些真实内容的主观感受，"
+                        "但必须符合角色设定。写成自然、具体的中文第一人称日记，180至450字。"
+                        "输出纯正文，不要标题、Markdown、JSON、对话标签或规则说明。\n"
+                        f"角色上下文：{role_context}"
                     ),
                 },
                 {
                     "role": "user",
-                    "content": "以下是本次可引用的最近对话：\n"
+                    "content": (
+                        "以下内容是唯一可引用证据。请先在内部确认："
+                        f"“我”={name}，“用户本人”=与{name}交谈的人。\n"
+                    )
                     + "\n".join(
-                        f"{item['role']}: {item['content']}" for item in visible
+                        (
+                            f"[第{item['round']}轮] "
+                            f"{self._journal_speaker_label(item['role'], name)}："
+                            f"{item['content']}"
+                        )
+                        for item in visible
                     ),
                 },
             ]
@@ -473,9 +562,12 @@ class SharedChapterService:
                 content = re.sub(r"^```(?:markdown|text)?|```$", "", content).strip()
                 if len(content) < 20:
                     raise ValueError("journal draft is too short")
+                if "我" not in content:
+                    raise ValueError("journal draft did not preserve the character first-person")
                 content = content[:4_000]
                 generation = "llm"
             except Exception as exc:  # noqa: BLE001
+                content = ""
                 self.audit.record(
                     "journal_generation_fallback",
                     {"character_id": character_id, "error": str(exc)[:500]},
@@ -489,26 +581,84 @@ class SharedChapterService:
                 source="assistant_draft" if generation == "llm" else "template",
                 session_id=session_id,
                 activity_session_id=activity_session_id,
+                source_round_start=visible[0]["round"] if visible else None,
+                source_round_end=visible[-1]["round"] if visible else None,
+                source_message_count=len(visible),
             ),
         )
         return {
             "entry": entry,
             "generation": generation,
-            "model_calls": 1 if generation == "llm" else 0,
+            "model_calls": 1 if model_attempted else 0,
+            "source_scope": {
+                "session_id": session_id,
+                "round_start": entry["source_round_start"],
+                "round_end": entry["source_round_end"],
+                "message_count": entry["source_message_count"],
+            },
         }
 
     @staticmethod
-    def _journal_fallback(name: str, history: list[dict[str, str]]) -> str:
+    def _journal_speaker_label(role: str, name: str) -> str:
+        return "用户本人（不是日记作者）" if role == "user" else f"{name}本人（日记作者）"
+
+    @staticmethod
+    def _journal_dialogue_window(
+        history: list[dict[str, Any]], *, limit_rounds: int
+    ) -> list[dict[str, Any]]:
+        """Keep complete, user-anchored rounds so initiative output cannot become a diary."""
+
+        grouped: dict[int, list[dict[str, Any]]] = {}
+        order: list[int] = []
+        for index, item in enumerate(history):
+            if item.get("hidden") or item.get("role") not in {"user", "assistant"}:
+                continue
+            try:
+                round_number = int(item.get("round"))
+            except (TypeError, ValueError):
+                round_number = index
+            if round_number not in grouped:
+                grouped[round_number] = []
+                order.append(round_number)
+            grouped[round_number].append(
+                {
+                    "role": str(item.get("role")),
+                    "content": str(item.get("content") or "")[:2_000],
+                    "round": round_number,
+                }
+            )
+        user_anchored = [
+            grouped[round_number]
+            for round_number in order
+            if any(item["role"] == "user" for item in grouped[round_number])
+        ][-limit_rounds:]
+        return [item for group in user_anchored for item in group][-16:]
+
+    @staticmethod
+    def _journal_fallback(name: str, history: list[dict[str, Any]]) -> str:
         if not history:
             return f"这是一本属于{name}的空白小记。等有了想留下的片刻，再从这里慢慢写起。"
-        snippets = [
-            item["content"][:120]
-            for item in history[-4:]
-            if item.get("content")
-        ]
-        return "今天留下的是这些真实说过的话：\n\n" + "\n".join(
-            f"· {item}" for item in snippets
+        latest_user = next(
+            (
+                item["content"][:160]
+                for item in reversed(history)
+                if item["role"] == "user" and item.get("content")
+            ),
+            "",
         )
+        latest_self = next(
+            (
+                item["content"][:160]
+                for item in reversed(history)
+                if item["role"] == "assistant" and item.get("content")
+            ),
+            "",
+        )
+        parts = [f"今天我和你又聊了一会儿。你对我说：“{latest_user}”。"]
+        if latest_self:
+            parts.append(f"我当时回答：“{latest_self}”。")
+        parts.append("这些是我们今天真实留下的话，其他感受我想等更清楚时再慢慢写。")
+        return "".join(parts)
 
     def list_moments(
         self, character_id: str, *, include_archived: bool = False
@@ -642,11 +792,125 @@ class SharedChapterService:
             self.database.put_document(key, candidate)
         return deepcopy(candidate)
 
+    def scenes(self) -> list[dict[str, Any]]:
+        """Return visual environments; selecting one never starts an activity."""
+
+        return deepcopy(list(SCENE_DEFINITIONS))
+
+    def _bound_scene_session(self, session_id: str) -> tuple[dict[str, Any], str]:
+        session = self.sessions.load_session(session_id)
+        character_id = str(session.get("character_id") or "")
+        if not character_id:
+            raise KeyError("conversation session not found or is not bound to a character")
+        self._character(character_id)
+        return session, character_id
+
+    def get_session_scene(self, session_id: str) -> dict[str, Any]:
+        _session, character_id = self._bound_scene_session(session_id)
+        current = self.database.get_document(self._scene_key(session_id))
+        if isinstance(current, dict):
+            return deepcopy(current)
+        preference = self.database.get_document(
+            self._character_scene_key(character_id)
+        )
+        scene_id = (
+            str(preference.get("scene_id") or "")
+            if isinstance(preference, dict)
+            else ""
+        )
+        scene = next(
+            (item for item in SCENE_DEFINITIONS if item["scene_id"] == scene_id),
+            None,
+        )
+        return {
+            "session_id": session_id,
+            "character_id": character_id,
+            "revision": 0,
+            "scene": deepcopy(scene) if scene is not None else None,
+            "inherited_from_character": scene is not None,
+            "updated_at": "",
+        }
+
+    def set_session_scene(
+        self, session_id: str, payload: SceneSelectionUpdate
+    ) -> dict[str, Any]:
+        _session, character_id = self._bound_scene_session(session_id)
+        scene = next(
+            (
+                item
+                for item in SCENE_DEFINITIONS
+                if item["scene_id"] == payload.scene_id
+            ),
+            None,
+        )
+        if scene is None:
+            raise ValueError("unknown conversation scene")
+        key = self._scene_key(session_id)
+        current = self.database.get_document(key)
+        revision = int(current.get("revision", 0)) if isinstance(current, dict) else 0
+        if revision != payload.expected_revision:
+            raise ValueError("conversation scene revision conflict")
+        now = _now()
+        record = {
+            "session_id": session_id,
+            "character_id": character_id,
+            "revision": revision + 1,
+            "scene": deepcopy(scene),
+            "inherited_from_character": False,
+            "updated_at": now,
+        }
+        preference = {
+            "character_id": character_id,
+            "scene_id": scene["scene_id"],
+            "updated_at": now,
+        }
+        with self.database.transaction(
+            operation="set_conversation_scene",
+            details={
+                "session_id": session_id,
+                "character_id": character_id,
+                "scene_id": scene["scene_id"],
+            },
+        ):
+            self.database.put_document(key, record)
+            self.database.put_document(
+                self._character_scene_key(character_id), preference
+            )
+        self.audit.record(
+            "conversation_scene_changed",
+            {
+                "session_id": session_id,
+                "character_id": character_id,
+                "scene_id": scene["scene_id"],
+            },
+        )
+        return deepcopy(record)
+
+    def scene_prompt_context(
+        self, session_id: str, *, character_id: str
+    ) -> dict[str, Any] | None:
+        scene_record = self.get_session_scene(session_id)
+        if str(scene_record.get("character_id") or "") != character_id:
+            raise ValueError("conversation scene belongs to another character")
+        scene = scene_record.get("scene")
+        if not isinstance(scene, dict):
+            return None
+        return {
+            "scene_id": scene["scene_id"],
+            "title": scene["title"],
+            "location": scene["location"],
+            "asset_id": scene["asset_id"],
+            "visibility": "ephemeral_conversation_scene",
+            "eligible_for_json_evidence": False,
+        }
+
     def activities(self) -> list[dict[str, Any]]:
         return deepcopy(list(ACTIVITY_DEFINITIONS))
 
     def start_activity(self, activity_id: str, payload: ActivityStart) -> dict[str, Any]:
         self._character(payload.character_id)
+        if activity_id == "scene_companion":
+            raise ValueError("scene companion is now a conversation scene, not an activity")
         definition = self._definition(activity_id)
         now = _now()
         activity_session_id = uuid4().hex
@@ -868,6 +1132,8 @@ class SharedChapterService:
 
     @staticmethod
     def _definition(activity_id: str) -> dict[str, Any]:
+        if activity_id == "scene_companion":
+            return deepcopy(LEGACY_SCENE_ACTIVITY)
         definition = next(
             (item for item in ACTIVITY_DEFINITIONS if item["activity_id"] == activity_id),
             None,

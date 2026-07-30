@@ -5,11 +5,16 @@ const test = require("node:test");
 
 test("launcher dashboard groups components instead of flattening the homepage", () => {
   const source = fs.readFileSync(path.join(__dirname, "src", "main.tsx"), "utf8");
+  const styles = fs.readFileSync(path.join(__dirname, "src", "styles.css"), "utf8");
   for (const panel of ["base", "capabilities", "downloads", "maintenance"]) {
     assert.match(source, new RegExp(`expanded\\.${panel}`));
   }
   assert.match(source, /failedItems\.some[\s\S]*setExpanded/);
   assert.match(source, /runtime\.pipeline/);
+  assert.match(source, /asrComponentIds/);
+  assert.match(source, /service-install-progress/);
+  assert.match(source, /asrInstallProgress/);
+  assert.match(styles, /\.service-install-progress/);
   assert.match(source, /导出诊断报告/);
   assert.doesNotMatch(source, /runtime\.items\.map\(\(item\) =>/);
 });
@@ -48,6 +53,8 @@ test("diagnostics are redacted and exposed through a dedicated IPC contract", ()
   const preload = fs.readFileSync(path.join(__dirname, "preload.cjs"), "utf8");
   assert.match(main, /function redactDiagnosticText/);
   assert.match(main, /\[REDACTED\]/);
+  assert.match(main, /\\\.install\\\.log/);
+  assert.match(main, /diagnosticLogs\.add/);
   assert.match(main, /runtime:diagnostics/);
   assert.match(preload, /diagnostics: \(\) => ipcRenderer\.invoke\("runtime:diagnostics"\)/);
 });

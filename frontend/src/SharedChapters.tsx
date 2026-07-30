@@ -89,14 +89,28 @@ export function JournalPage({
   const generate = async () => {
     setBusy(true);
     try {
-      const result = await request<{ entry: JournalEntry; generation: string }>(
+      const result = await request<{
+        entry: JournalEntry;
+        generation: string;
+        source_scope?: {
+          round_start?: number | null;
+          round_end?: number | null;
+          message_count?: number;
+        };
+      }>(
         `/api/v1/characters/${encodeURIComponent(character.character_id)}/journal/generate`,
         { method: "POST", body: JSON.stringify({ session_id: sessionId }) },
       );
       await load();
       await onChanged?.();
       setSelected(result.entry);
-      notify(result.generation === "llm" ? "日记草稿已生成，确认保存前仍可编辑" : "模型不可用，已生成本地可编辑草稿");
+      const scope = result.source_scope;
+      const sourceLabel = scope?.message_count
+        ? `，依据当前会话第 ${scope.round_start}–${scope.round_end} 轮的 ${scope.message_count} 条消息`
+        : "";
+      notify(result.generation === "llm"
+        ? `角色第一人称日记已生成${sourceLabel}，保存前仍可编辑`
+        : `模型不可用，已根据当前会话生成第一人称本地草稿${sourceLabel}`);
     } finally {
       setBusy(false);
     }
@@ -135,9 +149,9 @@ export function JournalPage({
 
   return <ChapterShell title="角色日记" eyebrow="SHARED CHAPTERS · JOURNAL" character={character} onBack={onBack}>
     <div className="chapter-toolbar">
-      <p>日记只在你点击时生成，最多调用模型一次；失败时仍会留下本地草稿。</p>
+      <p>由 {character.display_name} 以自己的第一人称写作，只引用当前会话最近八轮真实对话；不会把用户写成日记作者。</p>
       <button className="chapter-primary" disabled={busy} onClick={() => void generate()}>
-        {busy ? "正在整理…" : "根据最近对话生成草稿"}
+        {busy ? "正在整理…" : "让角色写一篇日记"}
       </button>
     </div>
     <div className="journal-layout">
@@ -178,7 +192,12 @@ export function JournalPage({
           <input aria-label="日记标题" value={selected.title} onChange={(event) => setSelected({ ...selected, title: event.target.value })} />
           <textarea aria-label="日记正文" value={selected.content} onChange={(event) => setSelected({ ...selected, content: event.target.value })} />
           <footer>
-            <span>主观叙事 · 不作为人物档案证据</span>
+            <span>
+              {selected.source_message_count
+                ? `来源：当前会话第 ${selected.source_round_start}–${selected.source_round_end} 轮 · ${selected.source_message_count} 条可见消息`
+                : "手写或旧版草稿 · 无对话来源范围"}
+              {" · "}主观叙事，不作为人物档案证据
+            </span>
             <button className="danger-text" onClick={() => void remove(selected)}>删除</button>
             <button className="chapter-primary" onClick={() => void save()}>保存日记</button>
           </footer>
@@ -272,8 +291,7 @@ export function ActivitiesPage({
     [current?.activity_id, definitions],
   );
   const canComplete = Boolean(current && (
-    (current.activity_id === "scene_companion" && current.phase === "conversation")
-    || (current.activity_id === "mutual_questions"
+    (current.activity_id === "mutual_questions"
       && Array.isArray(current.state.answers)
       && current.state.answers.length > 0)
     || (current.activity_id === "story_choices" && current.phase === "node:ending")
@@ -327,32 +345,23 @@ export function ActivitiesPage({
     </> : <section className="activity-stage">
       <header>
         <div><span className="eyebrow">当前活动</span><h2>{definition?.title}</h2><p>{definition?.description}</p></div>
-        <button onClick={() => setCurrent(null)}>返回活动列表</button>
+        <button className="chapter-control-button secondary" onClick={() => setCurrent(null)}>返回活动列表</button>
       </header>
-      {current.activity_id === "scene_companion" && current.phase === "choose_scene" && <div className="scene-grid">
-        {definition?.scenes?.map((scene) => <button key={scene.scene_id} onClick={() => void act("select_scene", { scene_id: scene.scene_id })}>
-          <img src={assetPath(scene.asset_id)} alt="" loading="lazy" /><strong>{scene.title}</strong><span>{scene.description}</span>
-        </button>)}
-      </div>}
-      {current.activity_id === "scene_companion" && current.phase === "conversation" && <div className="activity-action-panel">
-        <p>场景已锁定。继续对话时，服务端会把当前活动作为临时 System 层提供给角色。</p>
-        <button className="chapter-primary" onClick={() => onContinueChat(current.activity_session_id)}>进入持续对话</button>
-      </div>}
       {current.activity_id === "mutual_questions" && <div className="activity-action-panel">
         {typeof current.state.current_question === "string"
           ? <><blockquote>{current.state.current_question}</blockquote><textarea value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="写下你的回答" /><button className="chapter-primary" disabled={!answer.trim()} onClick={() => void act("answer_question", { answer })}>提交回答</button></>
           : <button className="chapter-primary" onClick={() => void act("draw_question")}>抽取一个问题</button>}
-        <button onClick={() => onContinueChat(current.activity_session_id)}>带着当前问题去对话</button>
+        <button className="chapter-control-button secondary" onClick={() => onContinueChat(current.activity_session_id)}>带着当前问题去对话</button>
       </div>}
       {current.activity_id === "story_choices" && <div className="activity-action-panel">
         <blockquote>{definition?.nodes?.[current.phase.replace("node:", "")]?.text}</blockquote>
         <div className="story-choices">{definition?.nodes?.[current.phase.replace("node:", "")]?.choices.map((choice) =>
-          <button key={choice.choice_id} onClick={() => void act("choose_story", { choice_id: choice.choice_id })}>{choice.label}</button>
+          <button className="chapter-control-button secondary" key={choice.choice_id} onClick={() => void act("choose_story", { choice_id: choice.choice_id })}>{choice.label}</button>
         )}</div>
-        <button onClick={() => onContinueChat(current.activity_session_id)}>让角色回应此刻</button>
+        <button className="chapter-control-button secondary" onClick={() => onContinueChat(current.activity_session_id)}>让角色回应此刻</button>
       </div>}
       {current.status === "active" && <footer className="activity-stage-footer">
-        <button onClick={() => void act("cancel")}>中断并保留现场</button>
+        <button className="chapter-control-button quiet" onClick={() => void act("cancel")}>中断并保留现场</button>
         <button className="chapter-primary" disabled={!canComplete} onClick={() => void act("complete")}>完成并生成候选片段</button>
       </footer>}
       {current.status === "interrupted" && <div className="activity-action-panel">

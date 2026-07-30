@@ -1,7 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { JournalPage } from "./SharedChapters";
-import type { CharacterSummary, JournalEntry } from "./types";
+import type {
+  CharacterSummary,
+  JournalEntry,
+} from "./types";
 
 const character: CharacterSummary = {
   character_id: "character-a",
@@ -30,6 +33,9 @@ const entry: JournalEntry = {
   session_id: "session-a",
   activity_session_id: "",
   cover_asset_id: "journal-cover-paper",
+  source_round_start: 3,
+  source_round_end: 6,
+  source_message_count: 8,
   visibility: "narrative_only",
   eligible_for_json_evidence: false,
   created_at: "2026-07-30T00:00:00Z",
@@ -44,7 +50,11 @@ it("keeps generated journals editable and labels them as non-profile evidence", 
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
     const url = String(input);
     if (url.endsWith("/journal/generate") && init.method === "POST") {
-      return new Response(JSON.stringify({ entry, generation: "llm" }), { status: 200 });
+      return new Response(JSON.stringify({
+        entry,
+        generation: "llm",
+        source_scope: { round_start: 3, round_end: 6, message_count: 8 },
+      }), { status: 200 });
     }
     return new Response(JSON.stringify({ items: [entry], count: 1 }), { status: 200 });
   });
@@ -60,11 +70,14 @@ it("keeps generated journals editable and labels them as non-profile evidence", 
   );
 
   expect(await screen.findByText("雨夜小记")).toBeInTheDocument();
-  expect(screen.getByText("主观叙事 · 不作为人物档案证据")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "根据最近对话生成草稿" }));
+  expect(screen.getByText(/主观叙事，不作为人物档案证据/)).toBeInTheDocument();
+  expect(screen.getByText(/当前会话第 3–6 轮/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "让角色写一篇日记" }));
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
     "/api/v1/characters/character-a/journal/generate",
     expect.objectContaining({ method: "POST" }),
   ));
-  expect(notify).toHaveBeenCalledWith("日记草稿已生成，确认保存前仍可编辑");
+  expect(notify).toHaveBeenCalledWith(
+    "角色第一人称日记已生成，依据当前会话第 3–6 轮的 8 条消息，保存前仍可编辑",
+  );
 });

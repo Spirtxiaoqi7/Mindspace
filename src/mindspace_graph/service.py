@@ -30,7 +30,13 @@ from mindspace_graph.emotion_disabled import DisabledEmotionCoordinator
 from mindspace_graph.entity_registry import EntityRegistry
 from mindspace_graph.graph import build_graph
 from mindspace_graph.memory_service import StructuredMemoryService
-from mindspace_graph.models import ActivityPromptContext, ApiConfig, ChatRequest, ChatResponse
+from mindspace_graph.models import (
+    ActivityPromptContext,
+    ApiConfig,
+    ChatRequest,
+    ChatResponse,
+    ScenePromptContext,
+)
 from mindspace_graph.ports import Dependencies
 from mindspace_graph.product_config import ProductConfigStore
 from mindspace_graph.product_database import ProductDatabase
@@ -164,6 +170,8 @@ class ConversationService:
         )
         self._stream_runs: dict[str, BufferedStreamRun] = {}
         self._stream_runs_lock = asyncio.Lock()
+        self._retrieval_ready: set[tuple[str, str]] = set()
+        self._retrieval_warmups: dict[tuple[str, str], asyncio.Task[None]] = {}
         if self.dependencies.database is not None:
             # Any row still marked running belongs to a prior process. Preserve
             # its checkpoint and close it as interrupted; never replay the graph.
@@ -196,6 +204,8 @@ class ConversationService:
             )
 
     def close(self) -> None:
+        for task in self._retrieval_warmups.values():
+            task.cancel()
         for resource in (
             self.dependencies.llm,
             self.dependencies.capabilities,
@@ -211,6 +221,7 @@ class ConversationService:
             for run in self._stream_runs.values()
             if run.task is not None and not run.task.done()
         ]
+        tasks.extend(task for task in self._retrieval_warmups.values() if not task.done())
         for task in tasks:
             task.cancel()
         if tasks:
@@ -251,12 +262,29 @@ class ConversationService:
                     request.activity_session_id, character_id=character_id
                 )
             )
+        scene_context = None
+        if self.dependencies.activities is not None:
+            resolved_scene = self.dependencies.activities.scene_prompt_context(
+                request.session_id, character_id=character_id
+            )
+            if resolved_scene is not None:
+                scene_context = ScenePromptContext.model_validate(resolved_scene)
         api = ApiConfig(
             api_key=self.settings.llm_api_key,
             base_url=self.settings.llm_base_url,
             model=self.settings.llm_model,
             temperature=request.api.temperature,
             max_tokens=request.api.max_tokens,
+        )
+        retrieval_key = (request.session_id, character_id)
+        retrieval_ready = (
+            not request.retrieval.rag_enabled or retrieval_key in self._retrieval_ready
+        )
+        retrieval = request.retrieval.model_copy(
+            update={
+                "ready": retrieval_ready,
+                "deferred_reason": "" if retrieval_ready else "index_warmup_pending",
+            }
         )
         return request.model_copy(
             update={
@@ -269,19 +297,87 @@ class ConversationService:
                 "character_name": str(ai_identity.get("name") or request.character_name),
                 "system_prompt": str(character.get("system_prompt") or ""),
                 "activity_context": activity_context,
+                "scene_context": scene_context,
+                "retrieval": retrieval,
             }
+        )
+
+    def _kick_retrieval_warmup(self, request: ChatRequest) -> None:
+        """Warm retrieval only after the foreground turn has been committed."""
+
+        if not request.retrieval.rag_enabled:
+            return
+        key = (request.session_id, request.character_id)
+        if key in self._retrieval_ready:
+            return
+        existing = self._retrieval_warmups.get(key)
+        if existing is not None and not existing.done():
+            return
+        prewarm = getattr(self.dependencies.retriever, "prewarm", None)
+        if not callable(prewarm):
+            self._retrieval_ready.add(key)
+            return
+        messages = self.dependencies.sessions.load_all(request.session_id)
+
+        async def worker() -> None:
+            started = time.perf_counter()
+            self.dependencies.audit.record(
+                "retrieval_warmup_started",
+                {
+                    "session_id": request.session_id,
+                    "character_id": request.character_id,
+                },
+            )
+            try:
+                details = await asyncio.to_thread(
+                    prewarm,
+                    session_id=request.session_id,
+                    character_id=request.character_id,
+                    messages=messages,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - foreground chat already succeeded
+                self.dependencies.audit.record(
+                    "retrieval_warmup_failed",
+                    {
+                        "session_id": request.session_id,
+                        "character_id": request.character_id,
+                        "error": str(exc)[:500],
+                    },
+                )
+            else:
+                self._retrieval_ready.add(key)
+                self.dependencies.audit.record(
+                    "retrieval_warmup_completed",
+                    {
+                        "session_id": request.session_id,
+                        "character_id": request.character_id,
+                        "elapsed_ms": round((time.perf_counter() - started) * 1000, 1),
+                        "details": details,
+                    },
+                )
+            finally:
+                self._retrieval_warmups.pop(key, None)
+
+        self._retrieval_warmups[key] = asyncio.create_task(
+            worker(),
+            name=f"retrieval-warmup-{request.session_id[:12]}",
         )
 
     async def invoke(self, request: ChatRequest, request_id: str | None = None) -> ChatResponse:
         request_id = request_id or uuid4().hex
         self.cancellation.start(request_id)
         response: ChatResponse | None = None
+        server_request = self._server_request(request)
         try:
             result = await self.graph.ainvoke(
-                {"request": self._server_request(request), "request_id": request_id},
+                {"request": server_request, "request_id": request_id},
                 config={"recursion_limit": 20},
             )
             response = result["response"]
+            if response.status == "success":
+                self._kick_retrieval_warmup(server_request)
         finally:
             self.cancellation.finish(request_id)
             self.compaction.kick()
@@ -476,9 +572,10 @@ class ConversationService:
         await self._publish_stream(run, events.sequence, accepted)
         final: ChatResponse | None = None
         run_finished = False
+        server_request = self._server_request(request)
         try:
             async for part in self.graph.astream(
-                {"request": self._server_request(request), "request_id": request_id},
+                {"request": server_request, "request_id": request_id},
                 config={"recursion_limit": 20},
                 stream_mode=["tasks", "updates", "custom"],
                 version="v2",
@@ -524,6 +621,7 @@ class ConversationService:
             else:
                 self.cancellation.finish(request_id)
                 run_finished = True
+                self._kick_retrieval_warmup(server_request)
                 self.compaction.kick()
                 self.role_audit.kick()
                 payload = events.sse(

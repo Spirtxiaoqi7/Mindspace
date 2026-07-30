@@ -742,6 +742,24 @@ def build_prompt(
                 "persistence_eligible": False,
             }
         )
+    if request.scene_context is not None:
+        pending_events.append(
+            {
+                "kind": "scene_context",
+                "role": "system",
+                "content": f"【当前场景】两个人现在在{request.scene_context.location}。",
+                "metadata": {
+                    "round": request.round,
+                    "scene_id": request.scene_context.scene_id,
+                    "visibility": "ephemeral_conversation_scene",
+                    "eligible_for_json_evidence": False,
+                },
+                "ephemeral": True,
+                "ui_visible": False,
+                "retrieval_eligible": False,
+                "persistence_eligible": False,
+            }
+        )
     if request.activity_context is not None:
         activity_context = request.activity_context.model_dump(mode="json")
         pending_events.append(

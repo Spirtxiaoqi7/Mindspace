@@ -13,6 +13,11 @@ test("application upgrades never remove the private environment or user data", (
   assert.match(source, /!macro customCheckAppRunning/);
   assert.match(source, /taskkill\.exe.*\/F \/T \/IM/);
   assert.match(source, /nsProcess::FindProcess/);
+  assert.match(source, /!macro mindspaceRetryOldUninstall LABEL_SUFFIX/);
+  assert.match(source, /customUnInstallCheckCurrentUser/);
+  assert.match(source, /mindspace-preupgrade-uninstaller\.exe/);
+  assert.match(source, /\/KEEP_APP_DATA \/currentuser/);
+  assert.match(source, /\/SD IDOK/);
   assert.doesNotMatch(source, /DeleteRegValue HKCU "\$\{UNINSTALL_REGISTRY_KEY\}" "UninstallString"/);
   assert.match(source, /!macro customInstall/);
   assert.match(source, /IfFileExists "\$LOCALAPPDATA\\Mindspace\\environment\\\*" restoreEnvironmentDone/);
@@ -23,4 +28,5 @@ test("application upgrades never remove the private environment or user data", (
 test("all runtime policy modules are included in the packaged application", () => {
   const config = JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8"));
   assert.equal(config.build.files.includes("service-policy.cjs"), true);
+  assert.equal(config.build.files.includes("hardware-policy.cjs"), true);
 });

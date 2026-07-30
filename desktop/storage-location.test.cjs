@@ -5,8 +5,51 @@ const path = require("node:path");
 const test = require("node:test");
 const { appPaths } = require("./app-paths.cjs");
 const {
-  assertStorageTarget, cleanupMigratedSource, migrateStorage, readHomeLocation,
+  assertStorageTarget, cleanupMigratedSource, inspectStorageAlignment,
+  installAlignedHome, migrateStorage, readHomeLocation, writeHomeLocation,
 } = require("./storage-location.cjs");
+
+test("fresh packaged installs keep large data beside the selected install directory", (context) => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-install-aligned-"));
+  context.after(() => fs.rmSync(fixture, { recursive: true, force: true }));
+  const install = path.join(fixture, "Apps", "Mindspace");
+  const userData = path.join(fixture, "user-data");
+  fs.mkdirSync(install, { recursive: true });
+  const app = {
+    isPackaged: true,
+    getPath: (name) => name === "exe" ? path.join(install, "Mindspace.exe") : userData,
+  };
+  const expected = path.join(fixture, "Apps", "MindspaceData");
+  assert.equal(installAlignedHome(app), expected);
+  assert.equal(readHomeLocation(app, { LOCALAPPDATA: path.join(fixture, "local") }), expected);
+  assert.equal(expected.startsWith(`${install}${path.sep}`), false);
+  assert.equal(inspectStorageAlignment(app, {}, expected).aligned, true);
+});
+
+test("existing LocalAppData payload is preserved and offered a safe migration", (context) => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-install-legacy-"));
+  context.after(() => fs.rmSync(fixture, { recursive: true, force: true }));
+  const local = path.join(fixture, "local");
+  const legacy = path.join(local, "Mindspace");
+  const install = path.join(fixture, "Apps", "Mindspace");
+  const userData = path.join(fixture, "user-data");
+  fs.mkdirSync(path.join(legacy, "data"), { recursive: true });
+  fs.mkdirSync(install, { recursive: true });
+  fs.writeFileSync(path.join(legacy, "data", "launcher.json"), "{}");
+  const app = {
+    isPackaged: true,
+    getPath: (name) => name === "exe" ? path.join(install, "Mindspace.exe") : userData,
+  };
+  assert.equal(readHomeLocation(app, { LOCALAPPDATA: local }), legacy);
+  const report = inspectStorageAlignment(app, { LOCALAPPDATA: local }, legacy);
+  assert.equal(report.migrationRecommended, true);
+  assert.equal(report.recommended, path.join(fixture, "Apps", "MindspaceData"));
+
+  const custom = path.join(fixture, "custom", "Mindspace");
+  writeHomeLocation(app, custom);
+  assert.equal(inspectStorageAlignment(app, { LOCALAPPDATA: local }, custom).userSelected, true);
+  assert.equal(inspectStorageAlignment(app, { LOCALAPPDATA: local }, custom).migrationRecommended, false);
+});
 
 test("custom storage location persists outside LocalAppData", async (context) => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-storage-"));

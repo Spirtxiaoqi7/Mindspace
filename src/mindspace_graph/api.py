@@ -54,6 +54,7 @@ from mindspace_graph.shared_chapters import (
     JournalUpdate,
     MomentCreate,
     MomentUpdate,
+    SceneSelectionUpdate,
 )
 from mindspace_graph.streaming_asr import (
     ASRSessionOptions,
@@ -634,6 +635,29 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/v1/scenes")
+    async def list_scenes():
+        items = container.chapters.scenes()
+        return {"items": items, "count": len(items)}
+
+    @app.get("/api/v1/sessions/{session_id}/scene")
+    async def get_session_scene(session_id: str):
+        try:
+            return container.chapters.get_session_scene(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.put("/api/v1/sessions/{session_id}/scene")
+    async def set_session_scene(session_id: str, payload: SceneSelectionUpdate):
+        try:
+            return container.chapters.set_session_scene(session_id, payload)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            message = str(exc)
+            status = 409 if "revision conflict" in message else 422
+            raise HTTPException(status_code=status, detail=message) from exc
 
     @app.get("/api/v1/activities")
     async def list_activities():

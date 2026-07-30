@@ -9,7 +9,8 @@ param(
     [string]$ExpectedVersion = '0.5.52',
     [string]$ExpectedCoreVersion = '',
     [string]$ExecutableName = 'Mindspace.exe',
-    [string]$ReportDirectory
+    [string]$ReportDirectory,
+    [double]$MaxRunningUpgradeSeconds = 20
 )
 
 $ErrorActionPreference = 'Stop'
@@ -73,6 +74,7 @@ $result = [ordered]@{
     schema_version = '1.0.0'
     expected_version = $ExpectedVersion
     expected_core_version = $ExpectedCoreVersion
+    max_running_upgrade_seconds = $MaxRunningUpgradeSeconds
     installer = $Installer
     installer_sha256 = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLowerInvariant()
     installer_bytes = (Get-Item -LiteralPath $Installer).Length
@@ -137,8 +139,8 @@ try {
     if ($remaining.Count) {
         throw '覆盖安装后仍有旧版 QA 进程存活'
     }
-    if ($result.running_upgrade_seconds -gt 20) {
-        throw "运行中覆盖安装耗时超过 20 秒：$($result.running_upgrade_seconds)"
+    if ($result.running_upgrade_seconds -gt $MaxRunningUpgradeSeconds) {
+        throw "运行中覆盖安装耗时超过 $MaxRunningUpgradeSeconds 秒：$($result.running_upgrade_seconds)"
     }
     if (-not (Test-Path -LiteralPath $sentinelPath)) {
         throw '覆盖安装改写了隔离用户数据'

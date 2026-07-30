@@ -13,6 +13,7 @@ type AppView =
   | "chat"
   | "journal"
   | "moments"
+  | "scenes"
   | "activities";
 
 interface CharacterOption {
@@ -178,6 +179,7 @@ export function DrawWorkshop({
   const [error, setError] = useState("");
   const [advanced, setAdvanced] = useState(false);
   const [customTrait, setCustomTrait] = useState("");
+  const [traitNotice, setTraitNotice] = useState("");
   const [pendingAvatar, setPendingAvatar] = useState<File | null>(null);
   const [pendingAvatarUrl, setPendingAvatarUrl] = useState("");
   const [selectedAvatar, setSelectedAvatar] = useState("/assets/characters/placeholder-1.webp");
@@ -216,13 +218,33 @@ export function DrawWorkshop({
 
   const toggleTrait = (label: string) => {
     setError("");
-    setInput((current) => {
-      if (current.core_traits.includes(label)) {
-        return { ...current, core_traits: current.core_traits.filter((item) => item !== label) };
-      }
-      if (current.core_traits.length >= 2) return { ...current, core_traits: [current.core_traits[1], label] };
-      return { ...current, core_traits: [...current.core_traits, label] };
-    });
+    setTraitNotice("");
+    if (input.core_traits.includes(label)) {
+      setInput((current) => ({
+        ...current,
+        core_traits: current.core_traits.filter((item) => item !== label),
+      }));
+      return true;
+    }
+    if (input.core_traits.length >= 2) {
+      setTraitNotice("已经选满 2 项，请先取消一项，再加入新的核心性格。");
+      return false;
+    }
+    setInput((current) => ({
+      ...current,
+      core_traits: [...current.core_traits, label],
+    }));
+    return true;
+  };
+
+  const addCustomTrait = () => {
+    const label = customTrait.trim();
+    if (!label) return;
+    if (input.core_traits.includes(label)) {
+      setTraitNotice(`“${label}”已经在当前选择中。`);
+      return;
+    }
+    if (toggleTrait(label)) setCustomTrait("");
   };
 
   const randomize = () => {
@@ -417,7 +439,11 @@ export function DrawWorkshop({
             const selected = input.core_traits.includes(item.label);
             return <button key={item.id} className={selected ? "selected" : ""} disabled={!selected && Boolean(reason)} title={reason} onClick={() => toggleTrait(item.label)}><i>{selected ? "✓" : "◇"}</i><span>{item.label}<small>{reason || "可与其他性格组合"}</small></span></button>;
           })}</div>
-          <div className="custom-trait-entry"><input value={customTrait} onChange={(event) => setCustomTrait(event.target.value)} placeholder="自定义核心性格" /><button disabled={!customTrait.trim()} onClick={() => { toggleTrait(customTrait.trim()); setCustomTrait(""); }}>加入选择</button></div>
+          <div className="custom-trait-entry"><input value={customTrait} onChange={(event) => { setCustomTrait(event.target.value); setTraitNotice(""); }} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) { event.preventDefault(); addCustomTrait(); } }} placeholder="自定义核心性格" /><button disabled={!customTrait.trim()} onClick={addCustomTrait}>加入选择</button></div>
+          {input.core_traits.filter((label) => !optionMap.has(label)).length > 0 && <div className="custom-trait-selections" aria-label="已选择的自定义核心性格">
+            {input.core_traits.filter((label) => !optionMap.has(label)).map((label) => <button key={label} onClick={() => toggleTrait(label)} title="点击取消选择"><span>自定义</span>{label}<b>×</b></button>)}
+          </div>}
+          {traitNotice && <div className="trait-selection-notice" role="status">{traitNotice}</div>}
           <div className="selection-heading"><strong>人格缺陷 · 选 1 项</strong></div>
           <div className="flaw-grid">{options?.flaws.map((item) => {
             const reason = disabledReason(item);

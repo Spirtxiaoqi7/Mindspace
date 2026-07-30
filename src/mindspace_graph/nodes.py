@@ -161,6 +161,11 @@ class NodeFactory:
         request = state["request"]
         settings = request.retrieval
         chunks = []
+        if not settings.ready:
+            return {
+                "knowledge_chunks": [],
+                "trace": ["retrieve_knowledge_deferred"],
+            }
         capability_allowed = (
             self.deps.capabilities is None
             or self.deps.capabilities.enabled("local_knowledge_enabled")
@@ -184,6 +189,11 @@ class NodeFactory:
         request = state["request"]
         settings = request.retrieval
         chunks = []
+        if not settings.ready:
+            return {
+                "chat_chunks": [],
+                "trace": ["retrieve_chat_deferred"],
+            }
         capability_allowed = (
             self.deps.capabilities is None
             or self.deps.capabilities.enabled("local_knowledge_enabled")
@@ -231,10 +241,13 @@ class NodeFactory:
                     "knowledge": len(state.get("knowledge_chunks", [])),
                     "chat": len(state.get("chat_chunks", [])),
                     "ranked": [item.model_dump(mode="json") for item in ranked],
+                    "ready": request.retrieval.ready,
+                    "deferred_reason": request.retrieval.deferred_reason,
                 },
             }
         )
-        return {"ranked_context": ranked, "trace": ["rank_context"]}
+        trace = "rank_context" if request.retrieval.ready else "rank_context_deferred"
+        return {"ranked_context": ranked, "trace": [trace]}
 
     def capability_route(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
         """先用确定性规则路由能力，再判断是否值得支付一次私有规划调用。
@@ -278,13 +291,23 @@ class NodeFactory:
             "available_capabilities": available,
             "capability_policy": policy,
             "capability_plan": plan,
+            # Keep the state shape stable even when ordinary chat bypasses the
+            # two empty execution/review nodes.
+            "capability_results": [],
+            "capability_notice": "",
             "preflight_required": preflight_required,
             "trace": ["capability_route"],
         }
 
     @staticmethod
     def route_capability_plan(state: TurnState) -> str:
-        return "planner" if state.get("preflight_required", False) else "execute"
+        if state.get("preflight_required", False):
+            return "planner"
+        plan = state.get("capability_plan") or CapabilityPlan()
+        if plan.decision == "use_capabilities" and plan.calls:
+            return "execute"
+        # Ordinary companion chat should not traverse two empty tool nodes.
+        return "compose"
 
     def plan_capabilities(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
         """执行一次非流式私有规划；失败时只保留服务端能够确定授权的调用。"""

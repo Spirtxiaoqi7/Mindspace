@@ -52,6 +52,12 @@ test("runtime failures expose stable diagnostic codes", () => {
   );
   assert.equal(pythonFailure.code, "PYTHON_RUNTIME_INVALID");
   assert.doesNotMatch(pythonFailure.message, /sys\.path|ModuleNotFoundError/);
+  const installPathFailure = classifyError(
+    new Error("failed to create file `C:\\Mindspace\\python\\Lib\\EXTERNALLY-MANAGED`: 系统找不到指定的路径。 (os error 3)"),
+    "installing",
+  );
+  assert.equal(installPathFailure.code, "PYTHON_INSTALL_PATH");
+  assert.doesNotMatch(installPathFailure.message, /EXTERNALLY-MANAGED|os error 3/);
 });
 
 test("private Python processes do not inherit host interpreter state", () => {
@@ -156,17 +162,15 @@ function signedManifest(component) {
   return { manifest: { ...unsigned, signature: { algorithm: "ed25519", value } }, publicKey };
 }
 
-test("an old Python marker is strongly revalidated and a broken runtime is reinstalled", async (context) => {
+test("an incomplete Python runtime is rebuilt in isolation before atomic promotion", async (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-python-repair-"));
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const uvExecutable = path.join(root, "tools", "uv", "1.0.0", "uv.exe");
   const pythonExecutable = path.join(root, "python", "cpython-3.11.15-windows-x86_64-none", "python.exe");
   fs.mkdirSync(path.dirname(uvExecutable), { recursive: true });
-  fs.mkdirSync(path.join(path.dirname(pythonExecutable), "Lib", "encodings"), { recursive: true });
+  fs.mkdirSync(path.dirname(pythonExecutable), { recursive: true });
   fs.writeFileSync(uvExecutable, "fixture");
   fs.writeFileSync(pythonExecutable, "fixture");
-  fs.writeFileSync(path.join(path.dirname(pythonExecutable), "Lib", "encodings", "__init__.py"), "");
-  fs.writeFileSync(path.join(path.dirname(pythonExecutable), "Lib", "os.py"), "");
   const uvComponent = {
     id: "uv", name: "uv", description: "fixture", version: "1.0.0", kind: "archive",
     required: true, dependencies: [], size: 1, sha256: "a".repeat(64),
@@ -194,8 +198,8 @@ test("an old Python marker is strongly revalidated and a broken runtime is reins
   fs.writeFileSync(path.join(markers, "python.json"), JSON.stringify({
     id: "python", version: "3.11.15", executable: pythonExecutable,
   }));
-  let repaired = false;
   let installArguments = [];
+  let installDirectory = "";
   const manager = createRuntimeManager({
     paths,
     corePath: () => root,
@@ -203,21 +207,27 @@ test("an old Python marker is strongly revalidated and a broken runtime is reins
     publicKeyPath,
     getDownloadSource: () => "official",
     osRelease: () => "10.0.22621",
-    spawnSync: (executable, arguments_) => {
+    spawnSync: (executable, arguments_, options = {}) => {
       if (executable === "nvidia-smi.exe") return { status: 1, stdout: "", stderr: "" };
       if (executable === uvExecutable && arguments_[0] === "python" && arguments_[1] === "find") {
-        return { status: 0, stdout: pythonExecutable, stderr: "" };
+        const installRoot = options.env?.UV_PYTHON_INSTALL_DIR || paths.python;
+        return {
+          status: 0,
+          stdout: path.join(installRoot, "cpython-3.11.15-windows-x86_64-none", "python.exe"),
+          stderr: "",
+        };
       }
-      if (executable === pythonExecutable && arguments_[0] === "-c") {
-        return repaired
-          ? { status: 0, stdout: "mindspace-python-ready", stderr: "" }
-          : { status: 1, stdout: "", stderr: "ModuleNotFoundError: No module named 'encodings'" };
-      }
+      if (arguments_[0] === "-c") return { status: 0, stdout: "mindspace-python-ready", stderr: "" };
       return { status: 0, stdout: "ok", stderr: "" };
     },
     spawn: (_executable, arguments_) => {
       installArguments = arguments_;
-      repaired = true;
+      installDirectory = arguments_[arguments_.indexOf("--install-dir") + 1];
+      const stagedRoot = path.join(installDirectory, "cpython-3.11.15-windows-x86_64-none");
+      fs.mkdirSync(path.join(stagedRoot, "Lib", "encodings"), { recursive: true });
+      fs.writeFileSync(path.join(stagedRoot, "python.exe"), "replacement");
+      fs.writeFileSync(path.join(stagedRoot, "Lib", "encodings", "__init__.py"), "");
+      fs.writeFileSync(path.join(stagedRoot, "Lib", "os.py"), "");
       const child = new EventEmitter();
       child.pid = 1234;
       child.stdout = new EventEmitter();
@@ -228,10 +238,19 @@ test("an old Python marker is strongly revalidated and a broken runtime is reins
   });
   const result = await manager.install("python");
   assert.equal(result.items.find((item) => item.id === "python").ready, true);
-  assert.equal(installArguments.includes("--reinstall"), true);
+  assert.equal(installArguments.includes("--reinstall"), false);
+  assert.match(installDirectory, /\.staging-python-3\.11\.15-/);
+  assert.notEqual(path.resolve(installDirectory), path.resolve(paths.python));
+  assert.equal(fs.readFileSync(pythonExecutable, "utf8"), "replacement");
+  assert.equal(pythonRuntimeLooksComplete(pythonExecutable), true);
+  assert.equal(
+    fs.readdirSync(paths.python).some((name) => name.startsWith(".staging-python-")),
+    false,
+  );
   const marker = JSON.parse(fs.readFileSync(path.join(markers, "python.json"), "utf8"));
   assert.equal(marker.python_validation, 1);
   assert.equal(marker.repaired, true);
+  assert.equal(marker.isolated_install, true);
 });
 
 test("runtime manifests require a valid Ed25519 signature", () => {
@@ -388,7 +407,9 @@ test("runtime Python processes prefer the selected source and expose bounded off
   assert.match(source, /downloadSource === "official" \? OFFICIAL_PYPI_INDEX : DOMESTIC_PYPI_INDEX/);
   assert.match(source, /UV_DEFAULT_INDEX: packageIndex/);
   assert.match(source, /PIP_INDEX_URL: packageIndex/);
-  assert.match(source, /国内 Python 镜像不可用，正在切换 Astral 官方源/);
+  assert.match(source, /首次安装未完成，正在使用全新临时目录和 Astral 官方源重试/);
+  assert.match(source, /\.staging-python-/);
+  assert.doesNotMatch(source, /baseArguments\.push\("--reinstall"\)/);
   assert.match(source, /阿里云 PyPI 不可用，正在切换 PyPI 官方源/);
   const initializer = main.slice(main.indexOf("function initializeRuntimeManager"), main.indexOf("function unifiedRuntimeSnapshot"));
   assert.match(initializer, /bundledRoot: app\.isPackaged/);
@@ -402,4 +423,23 @@ test("launcher creates its window only after update and runtime managers are rea
   assert.ok(windowIndex > startup.indexOf("initializeUpdateManager()"));
   assert.ok(windowIndex > startup.indexOf("initializeRuntimeManager()"));
   assert.ok(windowIndex > startup.indexOf("initializeComponentManager()"));
+});
+
+test("desktop package embeds uv and CPython for offline first-run bootstrap", () => {
+  const packageConfig = JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8"));
+  const resources = packageConfig.build?.extraResources || [];
+  assert.equal(
+    resources.some((entry) => (
+      entry.from === "bootstrap/runtime-bundle/uv"
+      && entry.to === "runtime/bundled/uv"
+    )),
+    true,
+  );
+  assert.equal(
+    resources.some((entry) => (
+      entry.from === "bootstrap/runtime-bundle/python"
+      && entry.to === "runtime/bundled/python"
+    )),
+    true,
+  );
 });

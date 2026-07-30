@@ -93,6 +93,9 @@ export interface JournalEntry {
   session_id: string;
   activity_session_id: string;
   cover_asset_id: string;
+  source_round_start?: number | null;
+  source_round_end?: number | null;
+  source_message_count?: number;
   visibility: "narrative_only";
   eligible_for_json_evidence: false;
   created_at: string;
@@ -115,13 +118,12 @@ export interface RelationshipMoment {
 }
 
 export interface ActivityDefinition {
-  activity_id: "scene_companion" | "mutual_questions" | "story_choices";
+  activity_id: "mutual_questions" | "story_choices";
   title: string;
   description: string;
   icon_asset_id: string;
   cover_asset_id: string;
   initial_phase: string;
-  scenes?: Array<{ scene_id: string; title: string; description: string; asset_id: string }>;
   questions?: string[];
   nodes?: Record<string, {
     text: string;
@@ -139,6 +141,23 @@ export interface ActivitySession {
   status: "active" | "completed" | "interrupted";
   state: Record<string, unknown>;
   created_at: string;
+  updated_at: string;
+}
+
+export interface SceneDefinition {
+  scene_id: string;
+  title: string;
+  description: string;
+  location: string;
+  asset_id: string;
+}
+
+export interface ConversationScene {
+  session_id: string;
+  character_id: string;
+  revision: number;
+  scene: SceneDefinition | null;
+  inherited_from_character: boolean;
   updated_at: string;
 }
 

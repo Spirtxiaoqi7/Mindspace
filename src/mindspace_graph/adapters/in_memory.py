@@ -30,6 +30,20 @@ class InMemoryRetriever:
     knowledge: list[RetrievedChunk] = field(default_factory=list)
     chat: list[RetrievedChunk] = field(default_factory=list)
 
+    def prewarm(
+        self,
+        *,
+        session_id: str,
+        character_id: str,
+        messages: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return {
+            "session_id": session_id,
+            "character_id": character_id,
+            "message_count": len(messages),
+            "provider": "in_memory",
+        }
+
     @staticmethod
     def _search(query: str, chunks: list[RetrievedChunk], k: int) -> list[RetrievedChunk]:
         query_terms = set(re.findall(r"[\w\u4e00-\u9fff]+", query.lower()))
