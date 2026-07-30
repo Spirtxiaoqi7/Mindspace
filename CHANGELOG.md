@@ -3,7 +3,7 @@
 Mindspace 使用语义化版本号。机器可读的同源记录位于
 [`docs/release-history.json`](docs/release-history.json)。
 
-## 0.7.0 - 候选版本
+## 0.7.0 - 2026-07-30
 
 ### 共同篇章与二次元典藏手账
 
@@ -21,7 +21,10 @@ Mindspace 使用语义化版本号。机器可读的同源记录位于
 - 增加可重复执行的 `scripts/build_art_library.py`，统一安全裁剪、WebP 压缩、Manifest
   字节数与 SHA-256，并硬校验内置资源不超过 15MB。
 - 增加可选资源包的断点续传、SHA-256、ZIP 安全校验、staging 与失败回滚基础。
-- Core / Web 升至 0.7.0；Launcher 保持 0.5.52。功能 Beta 闭环完成前不发布热更新。
+- Core / Web 升至 0.7.0；Launcher 保持 0.5.52。已完成真实工作区升级、
+  零环境安装、运行中覆盖、卸载保数、回滚和主界面视觉验收。
+- 本地完整安装包已生成并通过 QA；官网热更新目录尚未发布，发布状态与校验值见
+  `docs/RELEASE_VERIFICATION_0.7.0.md`。
 
 ## 0.6.0 - 2026-07-30
 

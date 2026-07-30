@@ -30,6 +30,8 @@ $AllowedTargets = @(
     'docs\QWEN3_TTS_RUNTIME.md',
     'docs\MULTI_CHARACTER_ARCHITECTURE.md',
     'docs\CHARACTER_ART_LIBRARY.md',
+    'docs\ART_PREVIEW_PROVENANCE_0.7.0.md',
+    'docs\SHARED_CHAPTERS_ARCHITECTURE.md',
     'docs\CHARACTER_CARD_PACKAGE.md',
     'docs\MIGRATION_ROLLBACK_0.6.0.md',
     'docs\DEVELOPMENT_DESIGN_HISTORY.md',

@@ -7,7 +7,8 @@ param(
     [Parameter(Mandatory)]
     [string]$HomeRoot,
     [string]$ExpectedVersion = '0.5.52',
-    [string]$ExecutableName = 'MindspaceInstallerQA.exe',
+    [string]$ExpectedCoreVersion = '',
+    [string]$ExecutableName = 'Mindspace.exe',
     [string]$ReportDirectory
 )
 
@@ -71,6 +72,7 @@ $previousSkipMigration = $env:MINDSPACE_SKIP_LEGACY_MIGRATION
 $result = [ordered]@{
     schema_version = '1.0.0'
     expected_version = $ExpectedVersion
+    expected_core_version = $ExpectedCoreVersion
     installer = $Installer
     installer_sha256 = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLowerInvariant()
     installer_bytes = (Get-Item -LiteralPath $Installer).Length
@@ -104,8 +106,20 @@ try {
     if (-not (Test-Path -LiteralPath $capturePath -PathType Leaf)) {
         throw '首次启动未生成 Launcher 验收截图'
     }
-    if (-not (Test-Path -LiteralPath (Join-Path $HomeRoot 'application\core\pyproject.toml'))) {
+    $coreProject = Join-Path $HomeRoot 'application\core\pyproject.toml'
+    if (-not (Test-Path -LiteralPath $coreProject)) {
         throw '首次启动未展开内置 Core'
+    }
+    $coreVersionMatch = Select-String -LiteralPath $coreProject -Pattern '^version\s*=\s*"([^"]+)"' |
+        Select-Object -First 1
+    $coreVersion = if ($coreVersionMatch) {
+        $coreVersionMatch.Matches[0].Groups[1].Value
+    } else {
+        ''
+    }
+    $result.bootstrap_core_version = $coreVersion
+    if ($ExpectedCoreVersion -and $coreVersion -ne $ExpectedCoreVersion) {
+        throw "内置 Core 版本不一致：期望 $ExpectedCoreVersion，实际 $coreVersion"
     }
     $result.first_launch_capture = $capturePath
     $result.bootstrap_core_ready = $true
