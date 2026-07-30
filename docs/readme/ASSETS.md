@@ -24,6 +24,7 @@ Core / Web `0.7.4` 与 Launcher `0.5.54`，没有重绘或伪造产品控件。
 | `04-chapters.webp` | 共同篇章与角色日记 | 隔离的 0.7.4 React UI |
 | `05-memory-prompt.webp` | 记忆中心与 Prompt Inspector | 隔离的 0.7.4 React UI |
 | `06-voice-launcher.webp` | 实时语音与桌面 Launcher | 隔离 UI 与安装 QA 截图 |
+| `github-render-desktop.png` | GitHub 分支页面的实际 README 首屏 | GitHub 公开页面验收 |
 
 图片只增加文档用窗口框、圆角、阴影、渐变背景、“演示数据”标识和尺寸压缩；
 不会添加应用中不存在的按钮、状态或能力。
@@ -67,3 +68,5 @@ node .\scripts\update-readme-history.mjs
 
 发布前必须再次检查成品中不存在真实用户名、本机路径、API Key、私人头像和真实
 对话内容。
+
+`github-render-desktop.png` 只用于记录发布验收，不在 README 正文中递归展示。
