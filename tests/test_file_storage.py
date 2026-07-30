@@ -102,7 +102,10 @@ def test_initiative_signal_is_internal_and_excluded_from_recall(tmp_path):
     assert stored[0]["hidden"] is True
     assert stored[1]["kind"] == "initiative_response"
     assert [item["role"] for item in recent] == ["assistant"]
-    assert [item["text"] for item in chunks] == ["那我陪你听一会儿雨声。"]
+    # The proactive reply remains visible in recent dialogue, but raw model
+    # prose is no longer a long-term retrieval source.
+    assert chunks == []
+    assert stored[1]["retrieval_class"] == "raw_initiative"
     assert sessions.list_sessions()[0]["message_count"] == 1
 
     assistant_id = stored[1]["message_id"]

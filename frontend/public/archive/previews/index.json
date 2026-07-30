@@ -1,0 +1,70 @@
+{
+  "schema_version": "1.0.0",
+  "approval_status": "approved_2026-07-30",
+  "items": [
+    {
+      "id": "icon-journal-preview",
+      "category": "icon",
+      "path": "/assets/archive/previews/icon-journal-preview.svg"
+    },
+    {
+      "id": "heart-empty-preview",
+      "category": "heart",
+      "path": "/assets/archive/previews/heart-empty-preview.svg"
+    },
+    {
+      "id": "heart-trace-preview",
+      "category": "heart",
+      "path": "/assets/archive/previews/heart-trace-preview.svg"
+    },
+    {
+      "id": "heart-warm-preview",
+      "category": "heart",
+      "path": "/assets/archive/previews/heart-warm-preview.svg"
+    },
+    {
+      "id": "heart-glow-preview",
+      "category": "heart",
+      "path": "/assets/archive/previews/heart-glow-preview.svg"
+    },
+    {
+      "id": "scene-riverside-preview",
+      "category": "scene",
+      "path": "/assets/archive/previews/scene-riverside-preview.webp"
+    },
+    {
+      "id": "scene-rainy-room-preview",
+      "category": "scene",
+      "path": "/assets/archive/previews/scene-rainy-room-preview.webp"
+    },
+    {
+      "id": "frame-journal-preview",
+      "category": "frame",
+      "path": "/assets/archive/previews/frame-journal-preview.svg"
+    },
+    {
+      "id": "frame-activity-preview",
+      "category": "frame",
+      "path": "/assets/archive/previews/frame-activity-preview.svg"
+    },
+    {
+      "id": "state-journal-empty-preview",
+      "category": "state",
+      "path": "/assets/archive/previews/state-journal-empty-preview.webp"
+    },
+    {
+      "id": "state-journal-generating-preview",
+      "category": "state",
+      "path": "/assets/archive/previews/state-journal-generating-preview.webp"
+    },
+    {
+      "id": "state-journal-recover-preview",
+      "category": "state",
+      "path": "/assets/archive/previews/state-journal-recover-preview.webp"
+    }
+  ],
+  "expanded_library": {
+    "manifest": "/assets/archive/manifest.json",
+    "asset_count": 171
+  }
+}

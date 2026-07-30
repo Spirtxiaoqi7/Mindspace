@@ -236,3 +236,48 @@ test("component paths cannot escape their target directory", () => {
   assert.throws(() => safeFile(root, "../outside.bin"), /不安全路径/);
   assert.equal(safeFile(root, "nested/model.bin"), path.join(root, "nested", "model.bin"));
 });
+
+test("package manager removes an optional component without deleting a shared target", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-component-remove-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const shared = path.join(root, "models", "shared");
+  fs.mkdirSync(shared, { recursive: true });
+  fs.writeFileSync(path.join(shared, "base.bin"), "base");
+  fs.writeFileSync(path.join(shared, "voice.bin"), "voice");
+  const catalog = [
+    { id: "base", name: "Base", provider: "static", target: "shared", required: ["base.bin"], optional: true, estimatedBytes: 4 },
+    { id: "voice", name: "Voice", provider: "static", target: "shared", required: ["voice.bin"], optional: true, estimatedBytes: 5 },
+  ];
+  const manager = createComponentManager({
+    rootPath: () => root,
+    catalog,
+    resolveTarget: () => shared,
+    managedRoots: () => [path.join(root, "models")],
+    markerRoot: path.join(root, "state"),
+  });
+  assert.equal(manager.snapshot().items[1].removable, true);
+  const result = await manager.remove("voice");
+  assert.equal(result.items[1].ready, false);
+  assert.equal(fs.existsSync(path.join(shared, "base.bin")), true);
+  assert.equal(fs.existsSync(path.join(shared, "voice.bin")), false);
+});
+
+test("package manager protects required packages and active dependents", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-component-remove-dependency-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const name of ["runtime", "voice"]) {
+    fs.mkdirSync(path.join(root, name), { recursive: true });
+    fs.writeFileSync(path.join(root, name, "ready"), "yes");
+  }
+  const manager = createComponentManager({
+    rootPath: () => root,
+    managedRoots: () => [root],
+    catalog: [
+      { id: "runtime", name: "Runtime", provider: "static", target: "runtime", required: ["ready"], optional: true },
+      { id: "voice", name: "Voice", provider: "static", target: "voice", required: ["ready"], optional: true, dependencies: ["runtime"] },
+      { id: "core", name: "Core", provider: "static", target: "core", required: ["ready"], optional: false },
+    ],
+  });
+  await assert.rejects(manager.remove("runtime"), /请先卸载/);
+  await assert.rejects(manager.remove("core"), /基础组件/);
+});

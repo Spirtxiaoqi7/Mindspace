@@ -50,6 +50,26 @@ class ProductConfigStore:
                 self._config["llm"]["mode"] = "openai"
             if self._config["appearance"].get("theme") == "system":
                 self._config["appearance"]["theme"] = "mindscape"
+            loaded_audio = (
+                loaded.get("audio", {}) if isinstance(loaded, dict) else {}
+            )
+            if "tts_qwen3_vllm_task_type" not in loaded_audio:
+                # Migrate only configurations written before the task type
+                # existed. Later explicit voice choices remain user-owned.
+                self._config["audio"]["tts_qwen3_vllm_task_type"] = "CustomVoice"
+                self._config["audio"]["tts_qwen3_vllm_voice"] = "serena"
+            elif (
+                str(self._config["audio"].get("tts_qwen3_vllm_task_type")).lower()
+                == "base"
+                and self._config["audio"].get("tts_qwen3_vllm_voice")
+                == "mindspace_mature_alluring"
+            ):
+                # 0.5.41/0.5.42 briefly shipped the Base clone profile. It
+                # stabilised timbre but removed CustomVoice's actual prosody
+                # controls. Restore the expressive engine once, while leaving
+                # every unrelated user setting intact.
+                self._config["audio"]["tts_qwen3_vllm_task_type"] = "CustomVoice"
+                self._config["audio"]["tts_qwen3_vllm_voice"] = "serena"
             loaded_schema_version = str(self._config.get("schema_version") or "")
             if loaded_schema_version == "1.0.0":
                 # 250 ms was the old fixed endpoint and truncated hesitant Chinese.
@@ -65,6 +85,26 @@ class ProductConfigStore:
             # shipped default; longer user-selected windows remain untouched.
             if self._config["audio"].get("asr_utterance_merge_ms") == 350:
                 self._config["audio"]["asr_utterance_merge_ms"] = 1100
+            # Earlier releases shipped listening gates that were too strict for
+            # quiet Mandarin. Migrate only the exact former defaults so a user's
+            # deliberately tuned values are not overwritten.
+            if self._config["audio"].get("asr_listening_energy_threshold_db") in {
+                -45,
+                -36,
+            }:
+                self._config["audio"]["asr_listening_energy_threshold_db"] = -50.0
+            if self._config["audio"].get("asr_listening_min_speech_ms") == 160:
+                self._config["audio"]["asr_listening_min_speech_ms"] = 120
+            if self._config["audio"].get("asr_barge_in_energy_threshold_db") in {
+                -30,
+                -27,
+            }:
+                self._config["audio"]["asr_barge_in_energy_threshold_db"] = -38.0
+            if self._config["audio"].get("asr_energy_threshold_db") == -35:
+                self._config["audio"]["asr_energy_threshold_db"] = -50.0
+            if self._config["audio"].get("asr_noise_gate_db") in {-45, -42}:
+                self._config["audio"]["asr_noise_gate_db"] = -55.0
+            self._config["audio"]["asr_adaptive_noise_enabled"] = False
             if loaded != self._config:
                 _atomic_json(path, self._config)
         else:
@@ -151,6 +191,11 @@ class ProductConfigStore:
                 "tts_siliconflow_sample_rate": self.settings.tts_siliconflow_sample_rate,
                 "tts_gpt_sovits_worker_url": self.settings.tts_gpt_sovits_worker_url,
                 "tts_gpt_sovits_voice": self.settings.tts_gpt_sovits_voice,
+                "tts_qwen3_vllm_url": self.settings.tts_qwen3_vllm_url,
+                "tts_qwen3_vllm_model": self.settings.tts_qwen3_vllm_model,
+                "tts_qwen3_vllm_voice": self.settings.tts_qwen3_vllm_voice,
+                "tts_qwen3_vllm_task_type": self.settings.tts_qwen3_vllm_task_type,
+                "tts_qwen3_vllm_language": self.settings.tts_qwen3_vllm_language,
                 "tts_speed": 1.0,
                 "auto_tts": self.settings.auto_tts,
                 "asr_provider": self.settings.asr_provider,
@@ -159,18 +204,25 @@ class ProductConfigStore:
                 "asr_model": self.settings.asr_model,
                 "asr_auto_send": True,
                 "asr_silence_ms": 600,
-                "asr_energy_threshold_db": -35.0,
-                "asr_noise_gate_db": -42.0,
+                "asr_energy_threshold_db": -50.0,
+                "asr_noise_gate_db": -55.0,
                 "asr_min_speech_ms": 120,
-                "asr_listening_energy_threshold_db": -36.0,
-                "asr_listening_min_speech_ms": 160,
-                "asr_barge_in_energy_threshold_db": -27.0,
-                "asr_barge_in_min_speech_ms": 420,
+                # Quiet or unclear Mandarin reaches FunASR VAD instead of being
+                # discarded by the inexpensive pre-VAD energy candidate gate.
+                "asr_listening_energy_threshold_db": -50.0,
+                "asr_listening_min_speech_ms": 120,
+                # Playback remains stricter than ordinary listening. The API
+                # applies a further -4 dB candidate allowance before VAD and
+                # semantic echo arbitration decide whether to interrupt TTS.
+                "asr_barge_in_energy_threshold_db": -38.0,
+                "asr_barge_in_min_speech_ms": 300,
                 "asr_candidate_release_ms": 280,
                 "asr_barge_in_cooldown_ms": 1500,
                 "asr_false_candidate_backoff_ms": 3000,
                 "asr_duplicate_text_window_ms": 3000,
-                "asr_adaptive_noise_enabled": True,
+                # Retained for settings-file compatibility. Runtime arbitration
+                # now uses stable gates plus VAD instead of a startup calibration.
+                "asr_adaptive_noise_enabled": False,
                 "asr_noise_calibration_ms": 1500,
                 "asr_listening_noise_margin_db": 10.0,
                 "asr_barge_in_noise_margin_db": 16.0,
@@ -235,6 +287,13 @@ class ProductConfigStore:
         self.settings.tts_siliconflow_sample_rate = int(audio["tts_siliconflow_sample_rate"])
         self.settings.tts_gpt_sovits_worker_url = str(audio["tts_gpt_sovits_worker_url"])
         self.settings.tts_gpt_sovits_voice = str(audio["tts_gpt_sovits_voice"])
+        self.settings.tts_qwen3_vllm_url = str(audio["tts_qwen3_vllm_url"])
+        self.settings.tts_qwen3_vllm_model = str(audio["tts_qwen3_vllm_model"])
+        self.settings.tts_qwen3_vllm_voice = str(audio["tts_qwen3_vllm_voice"])
+        self.settings.tts_qwen3_vllm_task_type = str(
+            audio["tts_qwen3_vllm_task_type"]
+        )
+        self.settings.tts_qwen3_vllm_language = str(audio["tts_qwen3_vllm_language"])
         self.settings.auto_tts = bool(audio["auto_tts"])
         self.settings.asr_provider = str(audio["asr_provider"])
         self.settings.asr_base_url = str(audio["asr_base_url"])
@@ -343,9 +402,10 @@ class ProductConfigStore:
             "cosyvoice",
             "siliconflow",
             "gpt-sovits",
+            "qwen3-vllm",
         }:
             raise ValueError(
-                "audio.tts_provider must be browser, mock, cosyvoice, siliconflow, or gpt-sovits"
+                "audio.tts_provider must be browser, mock, cosyvoice, siliconflow, gpt-sovits, or qwen3-vllm"
             )
         audio["tts_speed"] = max(0.5, min(2.0, float(audio["tts_speed"])))
         audio["tts_siliconflow_base_url"] = (
@@ -364,6 +424,20 @@ class ProductConfigStore:
         audio["tts_gpt_sovits_voice"] = str(audio["tts_gpt_sovits_voice"]).strip()
         if audio["tts_gpt_sovits_voice"] not in GPT_SOVITS_VOICES:
             raise ValueError("unsupported GPT-SoVITS voice")
+        audio["tts_qwen3_vllm_url"] = str(audio["tts_qwen3_vllm_url"]).strip().rstrip("/")
+        if not audio["tts_qwen3_vllm_url"].startswith(("http://", "https://")):
+            raise ValueError("audio.tts_qwen3_vllm_url must be an HTTP URL")
+        audio["tts_qwen3_vllm_model"] = str(audio["tts_qwen3_vllm_model"]).strip()
+        audio["tts_qwen3_vllm_voice"] = str(audio["tts_qwen3_vllm_voice"]).strip().lower()
+        task_type = str(audio["tts_qwen3_vllm_task_type"]).strip()
+        if task_type.lower() not in {"base", "customvoice"}:
+            raise ValueError("audio.tts_qwen3_vllm_task_type must be Base or CustomVoice")
+        audio["tts_qwen3_vllm_task_type"] = (
+            "Base" if task_type.lower() == "base" else "CustomVoice"
+        )
+        audio["tts_qwen3_vllm_language"] = str(audio["tts_qwen3_vllm_language"]).strip() or "Chinese"
+        if not audio["tts_qwen3_vllm_model"] or not audio["tts_qwen3_vllm_voice"]:
+            raise ValueError("Qwen3-TTS model and voice must not be blank")
         audio["asr_silence_ms"] = max(250, min(3000, int(audio["asr_silence_ms"])))
         audio["asr_energy_threshold_db"] = max(
             -60.0, min(-15.0, float(audio["asr_energy_threshold_db"]))

@@ -1,7 +1,21 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { consumeResumableEventStream, request } from "./api";
-import { estimateDeliveredPrefix, segmentSpeechText, SpeechSegmenter, stripLeadingTtsFiller } from "./speech";
+import {
+  estimateDeliveredPrefix,
+  hasSpeakableContent,
+  SpeechSegmenter,
+  stripLeadingTtsFiller,
+} from "./speech";
+import {
+  CharacterLibrary,
+  CharacterPicker,
+  DrawWorkshop,
+  ModeLobby,
+} from "./CharacterExperience";
+import type { AppView } from "./CharacterExperience";
+import { ActivitiesPage, JournalPage, MomentsPage } from "./SharedChapters";
+import { ScenePickerPage, sceneAssetPath } from "./SceneExperience";
 import type {
   AvatarConfig,
   AvatarEntry,
@@ -27,6 +41,9 @@ import type {
   VoiceInteractionContext,
   VoiceInteractionMode,
   VoiceSessionState,
+  CharacterRecord,
+  CharacterSummary,
+  ConversationScene,
 } from "./types";
 
 type ModalName = "settings" | "knowledge" | "memory" | "profile" | "diagnostics" | "voice-entry" | null;
@@ -34,7 +51,9 @@ type ModalName = "settings" | "knowledge" | "memory" | "profile" | "diagnostics"
 interface SpeechQueueItem {
   id: string;
   text: string;
+  voiceCue: string;
   prepared?: Promise<PCMStreamHandle>;
+  retries?: number;
 }
 
 interface PCMStreamHandle {
@@ -48,6 +67,20 @@ interface PCMStreamHandle {
   cancel: () => void;
 }
 
+interface VoiceCaptureGraph {
+  stream: MediaStream;
+  context: AudioContext;
+  source: MediaStreamAudioSourceNode;
+  worklet: AudioWorkletNode;
+  monitor: GainNode;
+}
+
+interface WarmVoiceCapture {
+  graph: VoiceCaptureGraph;
+  expiresAt: number;
+  timer: number;
+}
+
 const DEFAULT_AVATARS: AvatarConfig = {
   user: { src: "/assets/avatar-user-default.webp", aspect: "2 / 3", scale: 1.08, x: -12, y: 0 },
   assistant: { src: "/assets/avatar-ai-default.webp", aspect: "2 / 3", scale: 1, x: 0, y: 0 },
@@ -55,6 +88,7 @@ const DEFAULT_AVATARS: AvatarConfig = {
 
 const VOICE_LABELS: Record<VoicePhase, string> = {
   idle: "准备开始",
+  preparing: "正在准备麦克风",
   connecting: "正在连接语音服务",
   listening: "我在听，请说话",
   "user-speaking": "正在聆听",
@@ -69,16 +103,129 @@ const VOICE_LABELS: Record<VoicePhase, string> = {
 };
 
 const uid = () => crypto.randomUUID();
+
+// A recovered SSE stream is historical UI state. It must never become a new
+// audio job: restoring a page must not make the companion read an old answer.
+export function shouldSynthesizeStreamEvent(isRecoveryReplay: boolean, processRecovery = false): boolean {
+  return !isRecoveryReplay && !processRecovery;
+}
+
+// Fetch stream chunk boundaries are arbitrary. PCM16 samples are two bytes, so
+// a lone trailing byte must be carried into the next network chunk instead of
+// being silently dropped (which would misalign every following sample).
+export function alignPCM16Chunk(carry: Uint8Array, incoming: Uint8Array): {
+  pcm: Uint8Array<ArrayBuffer>;
+  remainder: Uint8Array<ArrayBuffer>;
+} {
+  const merged = new Uint8Array(carry.byteLength + incoming.byteLength);
+  merged.set(carry);
+  merged.set(incoming, carry.byteLength);
+  const alignedLength = merged.byteLength - (merged.byteLength % 2);
+  const pcm = new Uint8Array(alignedLength);
+  const remainder = new Uint8Array(merged.byteLength - alignedLength);
+  pcm.set(merged.subarray(0, alignedLength));
+  remainder.set(merged.subarray(alignedLength));
+  return {
+    pcm,
+    remainder,
+  };
+}
 const ACTIVE_RUN_STORAGE_KEY = "mindspace.active_run";
-const VOICE_ENTRY_TIMEOUT_MS = 10_000;
+const ADULT_MODE_STORAGE_KEY = "mindspace.r18_enhanced";
+const NSFW_ADULT_CONFIRMED_STORAGE_KEY = "mindspace.nsfw_adult_confirmed";
+const R18_STYLE_STORAGE_KEY = "mindspace.r18_style";
+const VOICE_INPUT_DEVICE_STORAGE_KEY = "mindspace.voice_input_device";
+const VOICE_CAPTURE_RECOVERY_STORAGE_KEY = "mindspace.voice_capture_recovery";
+const REQUEST_TIMEOUT_MS = 10_000;
+const VOICE_ENTRY_PERSIST_TIMEOUT_MS = 5_000;
 const TTS_RESPONSE_TIMEOUT_MS = 15_000;
 const TTS_FIRST_PCM_TIMEOUT_MS = 8_000;
 const TTS_PLAYBACK_START_TIMEOUT_MS = 1_500;
 const TTS_STREAM_IDLE_TIMEOUT_MS = 15_000;
 const TTS_PLAYBACK_END_GRACE_MS = 8_000;
+// Keep a little headroom for providers whose PCM has already been normalized
+// close to full scale. This is a safety ceiling, not a voice-style control.
+const TTS_SAFE_OUTPUT_GAIN = 0.72;
 const TTS_READY_WAIT_LIMIT_MS = 90_000;
 const TTS_READY_POLL_MS = 2_000;
-const VOICE_RECONNECT_DELAYS_MS = [800, 1600, 3200, 5000] as const;
+const VOICE_RECONNECT_DELAYS_MS = [250, 750, 1500, 3000] as const;
+const VOICE_TRANSPORT_READY_TIMEOUT_MS = 3_000;
+const VOICE_NATIVE_CAPTURE_STATUS_TIMEOUT_MS = 2_000;
+const VOICE_DEVICE_ENUMERATION_TIMEOUT_MS = 800;
+const VOICE_DEVICE_REQUEST_TIMEOUT_MS = 4_000;
+const VOICE_CAPTURE_READY_TIMEOUT_MS = 3_000;
+const VOICE_CAPTURE_STALL_TIMEOUT_MS = 10_000;
+const VOICE_PENDING_PCM_FRAMES = 12;
+const VOICE_CAPTURE_WARM_GRACE_MS = 15_000;
+// Do not negotiate Chromium DSP here. Sensitivity and speech arbitration belong
+// to the resident ASR/VAD pipeline. A concrete physical endpoint is selected at
+// runtime so Windows does not have to resolve the mutable `default` alias while
+// the same USB headset is also being opened for playback.
+const VOICE_CAPTURE_FALLBACK_CONSTRAINTS: MediaStreamConstraints = { audio: true };
+
+interface VoiceCaptureRecovery {
+  context: VoiceInteractionContext;
+  attempts: number;
+  expires_at: number;
+}
+
+function readVoiceCaptureRecovery(): VoiceCaptureRecovery | null {
+  try {
+    const value = JSON.parse(
+      sessionStorage.getItem(VOICE_CAPTURE_RECOVERY_STORAGE_KEY) || "null",
+    ) as VoiceCaptureRecovery | null;
+    if (!value || value.expires_at <= Date.now()) {
+      sessionStorage.removeItem(VOICE_CAPTURE_RECOVERY_STORAGE_KEY);
+      return null;
+    }
+    return value;
+  } catch {
+    sessionStorage.removeItem(VOICE_CAPTURE_RECOVERY_STORAGE_KEY);
+    return null;
+  }
+}
+
+function writeVoiceCaptureRecovery(context: VoiceInteractionContext, attempts: number) {
+  sessionStorage.setItem(VOICE_CAPTURE_RECOVERY_STORAGE_KEY, JSON.stringify({
+    context,
+    attempts,
+    // Keep a failed-attempt marker long enough that duplicate React callbacks
+    // or a quick manual reopen cannot turn a bounded recovery back into a
+    // reload loop. A real live track clears it immediately.
+    expires_at: Date.now() + 5 * 60_000,
+  } satisfies VoiceCaptureRecovery));
+}
+
+function clearVoiceCaptureRecovery() {
+  sessionStorage.removeItem(VOICE_CAPTURE_RECOVERY_STORAGE_KEY);
+}
+
+async function preferredVoiceCaptureConstraints(): Promise<MediaStreamConstraints> {
+  const cached = localStorage.getItem(VOICE_INPUT_DEVICE_STORAGE_KEY) || "";
+  let devices: MediaDeviceInfo[] = [];
+  try {
+    devices = await Promise.race([
+      navigator.mediaDevices.enumerateDevices(),
+      new Promise<MediaDeviceInfo[]>((resolve) => {
+        window.setTimeout(() => resolve([]), VOICE_DEVICE_ENUMERATION_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    // Device enumeration is an optimization. The basic audio request remains
+    // available when a driver is still publishing its endpoint list.
+  }
+  const physicalInputs = devices.filter((device) => (
+    device.kind === "audioinput"
+    && device.deviceId
+    && device.deviceId !== "default"
+    && device.deviceId !== "communications"
+  ));
+  const selected = physicalInputs.find((device) => device.deviceId === cached)
+    || physicalInputs[0];
+  if (!selected) return VOICE_CAPTURE_FALLBACK_CONSTRAINTS;
+  localStorage.setItem(VOICE_INPUT_DEVICE_STORAGE_KEY, selected.deviceId);
+  return { audio: { deviceId: { exact: selected.deviceId } } };
+}
 
 interface ActiveRunRecord {
   run_id: string;
@@ -110,10 +257,22 @@ const num = (value: unknown, fallback = 0) =>
   Number.isFinite(Number(value)) ? Number(value) : fallback;
 const str = (value: unknown) => String(value ?? "");
 
+// Qwen receives one complete reply per turn. Its CustomVoice sampling context
+// is therefore never reset at sentence boundaries.
+export function shouldBufferQwenReplyForSinglePass(settings: ProductSettings | null | undefined, voiceOpen: boolean): boolean {
+  return settings?.audio.tts_provider === "qwen3-vllm"
+    && (voiceOpen || bool(settings.audio.auto_tts));
+}
+
+export function shouldFollowConversationScroll(distanceFromBottom: number, threshold = 180): boolean {
+  return Number.isFinite(distanceFromBottom)
+    && distanceFromBottom <= Math.max(0, threshold);
+}
+
 async function requestWithTimeout<T>(
   url: string,
   init: RequestInit = {},
-  timeoutMs = VOICE_ENTRY_TIMEOUT_MS,
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<T> {
   const controller = new AbortController();
   const callerSignal = init.signal;
@@ -198,6 +357,17 @@ export function voiceReconnectDelay(attempt: number) {
     Math.max(0, attempt),
     VOICE_RECONNECT_DELAYS_MS.length - 1,
   )];
+}
+
+export function shouldRetryMicrophoneStartup(error: unknown) {
+  const name = str((error as { name?: unknown } | null)?.name);
+  return !["NotAllowedError", "SecurityError", "TypeError"].includes(name);
+}
+
+export function shouldSkipSpeechSegmentFailure(text: string, error: unknown) {
+  if (!hasSpeakableContent(text)) return true;
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /没有可朗读的正文内容|请输入有效文本/.test(message);
 }
 
 function waitWithSignal(milliseconds: number, signal: AbortSignal) {
@@ -346,25 +516,65 @@ function PortraitAvatar({ role, avatars, label, onClick, className = "" }: {
   return <button type="button" className={`portrait-avatar ${className}`} style={avatarStyle(entry)} onClick={onClick} title={`查看${label}人物卡`} aria-label={`查看${label}人物卡`}><img src={entry.src} alt={`${label}头像`} /></button>;
 }
 
+function NsfwAdultConfirmation({ seconds, onCancel, onConfirm }: {
+  seconds: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return <div className="modal-backdrop nsfw-confirmation-backdrop">
+    <section className="nsfw-confirmation" role="dialog" aria-modal="true" aria-labelledby="nsfw-confirmation-title">
+      <span>NSFW</span>
+      <h2 id="nsfw-confirmation-title">请先确认你已成年</h2>
+      <p>开启后将允许成人主题内容。此确认只显示一次，确认结果仅保存在本机。</p>
+      <div>
+        <button className="secondary" onClick={onCancel}>取消</button>
+        <button className="primary" onClick={onConfirm} disabled={seconds > 0}>
+          {seconds > 0 ? `请等待 ${seconds} 秒` : "我确认已成年并开启"}
+        </button>
+      </div>
+    </section>
+  </div>;
+}
+
 function App() {
   const [settings, setSettings] = useState<ProductSettings | null>(null);
   const [avatars, setAvatars] = useState<AvatarConfig>(DEFAULT_AVATARS);
+  const [characters, setCharacters] = useState<CharacterSummary[]>([]);
+  const [activeCharacterId, setActiveCharacterId] = useState("");
+  const [activeActivitySessionId, setActiveActivitySessionId] = useState("");
+  const [conversationScene, setConversationScene] = useState<ConversationScene | null>(null);
+  const [appView, setAppView] = useState<AppView>("modes");
+  const [characterPickerOpen, setCharacterPickerOpen] = useState(false);
+  const [characterPickerScope, setCharacterPickerScope] = useState<"all" | "custom">("all");
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [sessionId, setSessionId] = useState(localStorage.getItem("mindspace.session") || uid());
   const [messages, setMessages] = useState<Message[]>([]);
   const [round, setRound] = useState(1);
   const [input, setInput] = useState("");
+  const [adultMode, setAdultMode] = useState(
+    () => localStorage.getItem(ADULT_MODE_STORAGE_KEY) === "1"
+      && localStorage.getItem(NSFW_ADULT_CONFIRMED_STORAGE_KEY) === "1",
+  );
+  const [nsfwConfirmationOpen, setNsfwConfirmationOpen] = useState(false);
+  const [nsfwConfirmationSeconds, setNsfwConfirmationSeconds] = useState(3);
+  const [r18StyleId, setR18StyleId] = useState(
+    () => localStorage.getItem(R18_STYLE_STORAGE_KEY) || "high_intensity",
+  );
   const [search, setSearch] = useState("");
   const [runId, setRunId] = useState("");
   const [initialDataLoaded, setInitialDataLoaded] = useState(false);
   const [inspectionRunId, setInspectionRunId] = useState("");
   const runIdRef = useRef("");
   const [generating, setGenerating] = useState(false);
+  const conversationRef = useRef<HTMLElement | null>(null);
+  const conversationTailRef = useRef<HTMLDivElement | null>(null);
+  const followConversationRef = useRef(true);
+  const pendingConversationJumpRef = useRef(false);
   const [modal, setModal] = useState<ModalName>(null);
   const [modalDirty, setModalDirty] = useState(false);
   const [profileCardRole, setProfileCardRole] = useState<Role | null>(null);
   const [profileEditorRole, setProfileEditorRole] = useState<Role | "state">("user");
-  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("flow");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [events, setEvents] = useState<InspectorEvent[]>([]);
@@ -387,16 +597,25 @@ function App() {
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const micWorkletRef = useRef<AudioWorkletNode | null>(null);
   const silentMonitorRef = useRef<GainNode | null>(null);
+  const warmVoiceCaptureRef = useRef<WarmVoiceCapture | null>(null);
+  const captureContextRef = useRef<AudioContext | null>(null);
+  const captureWorkletLoadedRef = useRef(false);
   const playbackContextRef = useRef<AudioContext | null>(null);
-  const workletRef = useRef<AudioWorkletNode | null>(null);
   const voiceSessionGenerationRef = useRef(0);
+  const voiceIntentRef = useRef({ id: "", generation: 0, lastEventSeq: 0 });
+  const voiceFallbackCaptureRef = useRef(false);
+  const voiceStartInFlightGenerationRef = useRef<number | null>(null);
   const voiceReconnectTimerRef = useRef<number | null>(null);
   const voiceReconnectAttemptRef = useRef(0);
   const startListeningRef = useRef<(() => void) | null>(null);
   const voiceEntryControllerRef = useRef<AbortController | null>(null);
   const voiceEntryGenerationRef = useRef(0);
   const voiceConnectWatchdogRef = useRef<number | null>(null);
+  const voiceCaptureWatchdogRef = useRef<number | null>(null);
+  const voiceNativeCaptureRef = useRef(false);
+  const microphoneRequestRef = useRef<Promise<MediaStream> | null>(null);
   const audioQueueRef = useRef<SpeechQueueItem[]>([]);
   const audioPlayingRef = useRef(false);
   const voiceInputLockedRef = useRef(false);
@@ -407,12 +626,14 @@ function App() {
   const completedSpeechRef = useRef<string[]>([]);
   const voiceDeliveryRef = useRef<VoiceDeliveryState | null>(null);
   const voiceReplyRef = useRef("");
+  const ttsVoiceCueRef = useRef("neutral");
   const currentAssistantIdRef = useRef("");
   const lastVoiceRunIdRef = useRef("");
   const ttsWorkletLoadedRef = useRef(false);
   const playbackGenerationRef = useRef(0);
   const speechSegmenterRef = useRef(new SpeechSegmenter());
   const ttsResponseStartedRef = useRef(false);
+  const qwenFullReplySubmittedRef = useRef(false);
   const partialRenderRef = useRef(0);
   const voiceLevelRenderRef = useRef(0);
   const pendingResponseDeltaRef = useRef("");
@@ -423,9 +644,6 @@ function App() {
   const voiceMergeTimerRef = useRef<number | null>(null);
   const voiceSegmentsRef = useRef<string[]>([]);
   const deferredVoiceSegmentsRef = useRef<string[]>([]);
-  const voiceEmotionTokensRef = useRef<string[]>([]);
-  const deferredEmotionTokensRef = useRef<string[]>([]);
-  const activeVoiceEmotionTokensRef = useRef<string[]>([]);
   const activeVoiceTurnTextRef = useRef("");
   const activeVoiceTurnRoundRef = useRef(0);
   const pendingASREvidenceRef = useRef<{ uncertain_segments: Array<{ text: string; reason: string }>; decision_reasons: string[] } | null>(null);
@@ -433,26 +651,112 @@ function App() {
   const bargeCommittedRef = useRef(false);
   const bargeBackoffRef = useRef({ level: 0, until: 0 });
   const recentVoiceTextsRef = useRef<Map<string, number>>(new Map());
-  const queueVoiceSegmentRef = useRef<((text: string, deferred?: boolean, emotionToken?: string) => void) | null>(null);
-  const noiseFloorRef = useRef(-60);
-  const noiseReportRef = useRef({ value: -60, at: 0 });
+  const queueVoiceSegmentRef = useRef<((text: string, deferred?: boolean) => void) | null>(null);
   const inputRef = useRef("");
   const generatingRef = useRef(false);
   const roundRef = useRef(1);
-  const sendMessageRef = useRef<((text?: string, mode?: "primary" | "regenerate", targetRound?: number, initiative?: boolean, initiativeTrigger?: InitiativeTrigger, voiceEmotionTokens?: string[], initiativeSequence?: number, initiativeSequenceLimit?: number) => Promise<void>) | null>(null);
+  const sendMessageRef = useRef<((text?: string, mode?: "primary" | "regenerate", targetRound?: number, initiative?: boolean, initiativeTrigger?: InitiativeTrigger, initiativeSequence?: number, initiativeSequenceLimit?: number) => Promise<void>) | null>(null);
   const llmMode = str(settings?.llm.mode || "openai");
   const llmBaseUrl = str(settings?.llm.base_url);
   const llmLocalEndpoint = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i.test(llmBaseUrl);
   const llmReady = llmMode === "openai" && (bool(settings?.llm.credentials_configured) || llmLocalEndpoint);
+  const activeCharacter = useMemo(
+    () => characters.find((item) => item.character_id === activeCharacterId),
+    [activeCharacterId, characters],
+  );
+  const effectiveAvatars = useMemo<AvatarConfig>(() => ({
+    ...avatars,
+    assistant: activeCharacter?.avatar?.src ? activeCharacter.avatar : avatars.assistant,
+  }), [activeCharacter, avatars]);
 
   const notify = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 3400);
   }, []);
 
+  useEffect(() => {
+    if (!nsfwConfirmationOpen || nsfwConfirmationSeconds <= 0) return;
+    const timer = window.setTimeout(
+      () => setNsfwConfirmationSeconds((current) => Math.max(0, current - 1)),
+      1000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [nsfwConfirmationOpen, nsfwConfirmationSeconds]);
+
+  const toggleAdultMode = useCallback(() => {
+    if (adultMode) {
+      setAdultMode(false);
+      localStorage.setItem(ADULT_MODE_STORAGE_KEY, "0");
+      notify("NSFW 已关闭");
+      return;
+    }
+    if (localStorage.getItem(NSFW_ADULT_CONFIRMED_STORAGE_KEY) !== "1") {
+      setNsfwConfirmationSeconds(3);
+      setNsfwConfirmationOpen(true);
+      return;
+    }
+    setAdultMode(true);
+    localStorage.setItem(ADULT_MODE_STORAGE_KEY, "1");
+    notify("NSFW 已开启");
+  }, [adultMode, notify]);
+
+  const confirmAdultMode = useCallback(() => {
+    if (nsfwConfirmationSeconds > 0) return;
+    localStorage.setItem(NSFW_ADULT_CONFIRMED_STORAGE_KEY, "1");
+    localStorage.setItem(ADULT_MODE_STORAGE_KEY, "1");
+    setAdultMode(true);
+    setNsfwConfirmationOpen(false);
+    notify("已确认成年，NSFW 已开启");
+  }, [notify, nsfwConfirmationSeconds]);
+
   useEffect(() => { inputRef.current = input; }, [input]);
   useEffect(() => { generatingRef.current = generating; }, [generating]);
   useEffect(() => { roundRef.current = round; }, [round]);
+
+  useLayoutEffect(() => {
+    if (!messages.length || !followConversationRef.current) return;
+    const viewport = conversationRef.current;
+    const tail = conversationTailRef.current;
+    if (!viewport || !tail) return;
+    // Chat CSS normally uses smooth scrolling. New turns and streamed deltas
+    // must instead land deterministically so a long history cannot leave the
+    // active response hidden behind the composer.
+    const previousBehavior = viewport.style.scrollBehavior;
+    viewport.style.scrollBehavior = "auto";
+    if (typeof tail.scrollIntoView === "function") {
+      tail.scrollIntoView({ block: "end", behavior: "auto" });
+    } else {
+      viewport.scrollTop = viewport.scrollHeight;
+    }
+    viewport.style.scrollBehavior = previousBehavior;
+    pendingConversationJumpRef.current = false;
+  }, [messages]);
+
+  const handleConversationScroll = useCallback(() => {
+    const viewport = conversationRef.current;
+    if (!viewport || pendingConversationJumpRef.current) return;
+    const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    followConversationRef.current = shouldFollowConversationScroll(distanceFromBottom);
+  }, []);
+
+  const pauseConversationFollow = useCallback(() => {
+    followConversationRef.current = false;
+  }, []);
+
+  const discardWarmVoiceCapture = useCallback((suspendContext = true) => {
+    const warm = warmVoiceCaptureRef.current;
+    warmVoiceCaptureRef.current = null;
+    if (!warm) return;
+    window.clearTimeout(warm.timer);
+    warm.graph.worklet.port.onmessage = null;
+    warm.graph.stream.getTracks().forEach((track) => track.stop());
+    warm.graph.source.disconnect();
+    warm.graph.worklet.disconnect();
+    warm.graph.monitor.disconnect();
+    if (suspendContext && warm.graph.context.state === "running") {
+      void warm.graph.context.suspend().catch(() => undefined);
+    }
+  }, []);
 
   const cancelIdleContinuation = useCallback(() => {
     if (idleTimerRef.current != null) window.clearTimeout(idleTimerRef.current);
@@ -486,7 +790,6 @@ function App() {
         roundRef.current,
         true,
         continuous ? "continuous_companionship" : "idle_continuation",
-        [],
         nextSequence,
         companionPlan?.limit || 0,
       );
@@ -498,7 +801,7 @@ function App() {
     const context = playbackContextRef.current;
     if (!gain || !context) return;
     gain.gain.cancelScheduledValues(context.currentTime);
-    gain.gain.setTargetAtTime(ducked ? 0.25 : 1, context.currentTime, 0.035);
+    gain.gain.setTargetAtTime(ducked ? TTS_SAFE_OUTPUT_GAIN * 0.25 : TTS_SAFE_OUTPUT_GAIN, context.currentTime, 0.035);
   }, []);
 
   const publishPlaybackState = useCallback((playing: boolean) => {
@@ -509,7 +812,6 @@ function App() {
       socket.send(JSON.stringify({
         action: "playback_state",
         playing,
-        noise_floor_db: noiseFloorRef.current,
         playback_text: playing ? currentSpeechRef.current?.item.text || voiceReplyRef.current : "",
         barge_backoff_level: playing ? bargeBackoffRef.current.level : 0,
       }));
@@ -525,7 +827,7 @@ function App() {
     if (locked) setVoice((current) => ({ ...current, level: 0 }));
   }, []);
 
-  const scheduleVoiceReconnect = useCallback((reason: string) => {
+  const scheduleVoiceReconnect = useCallback((reason: string, phase: VoicePhase = "connecting") => {
     if (!voiceOpenRef.current || closingVoiceRef.current || voiceReconnectTimerRef.current != null) return;
     setVoiceInputLocked(false, "voice_transport_lost");
     const attempt = voiceReconnectAttemptRef.current;
@@ -534,7 +836,7 @@ function App() {
     const initialRecovery = attempt < VOICE_RECONNECT_DELAYS_MS.length;
     setVoice((current) => ({
       ...current,
-      phase: "connecting",
+      phase,
       error: initialRecovery
         ? `${reason}，正在自动恢复（${attempt + 1}/${VOICE_RECONNECT_DELAYS_MS.length}）`
         : `${reason}，服务仍在启动，后台持续恢复（第 ${attempt + 1} 次）`,
@@ -582,6 +884,45 @@ function App() {
     setSessions(result.sessions);
   }, []);
 
+  const loadCharacters = useCallback(async () => {
+    const result = await request<{ items: CharacterSummary[] }>("/api/v1/characters");
+    setCharacters(result.items);
+    return result.items;
+  }, []);
+
+  const navigate = useCallback((view: AppView) => {
+    setAppView(view);
+    const path = view === "modes"
+      ? "/modes"
+      : view === "draw"
+        ? "/draw"
+        : view === "characters"
+          ? "/characters"
+          : view === "journal"
+            ? `/characters/${activeCharacterId}/journal`
+            : view === "moments"
+              ? `/characters/${activeCharacterId}/moments`
+              : view === "scenes"
+                ? `/chat/${sessionId}/scenes`
+              : view === "activities"
+                ? "/activities"
+                : `/chat/${sessionId}`;
+    window.history.replaceState(null, "", `#${path}`);
+  }, [activeCharacterId, sessionId]);
+
+  const loadConversationScene = useCallback(async (id: string) => {
+    try {
+      const scene = await request<ConversationScene>(
+        `/api/v1/sessions/${encodeURIComponent(id)}/scene`,
+      );
+      setConversationScene(scene);
+      return scene;
+    } catch {
+      setConversationScene(null);
+      return null;
+    }
+  }, []);
+
   const openSession = useCallback(async (id: string) => {
     cancelIdleContinuation();
     idleContinuationSentRef.current = false;
@@ -592,27 +933,75 @@ function App() {
     const value = await request<SessionDocument>(`/api/v1/sessions/${encodeURIComponent(id)}`);
     setSessionId(id);
     localStorage.setItem("mindspace.session", id);
+    setActiveCharacterId(value.character_id || value.character?.character_id || "");
+    setActiveActivitySessionId("");
+    void loadConversationScene(id);
     const loadedMessages = value.messages || [];
-    setMessages(loadedMessages);
+    const sameSession = id === sessionId;
+    const recovering = readActiveRun()?.session_id === id;
+    setMessages((current) =>
+      (sameSession || recovering) && current.length ? current : loadedMessages
+    );
     idleContinuationSentRef.current = loadedMessages.at(-1)?.initiative_trigger === "idle_continuation";
     setRound(Math.max(0, ...loadedMessages.map((item) => item.round || 0)) + 1);
     setSidebarOpen(false);
-  }, [cancelIdleContinuation]);
+    setAppView("chat");
+    window.history.replaceState(null, "", `#/chat/${id}`);
+  }, [cancelIdleContinuation, loadConversationScene, sessionId]);
 
   useEffect(() => {
     Promise.all([
       request<ProductSettings>("/api/v1/settings"),
       request<{ sessions: SessionSummary[] }>("/api/v1/sessions"),
       request<AvatarConfig>("/api/v1/avatar/config"),
-    ]).then(async ([config, sessionResult, avatarResult]) => {
+      request<{ items: CharacterSummary[] }>("/api/v1/characters"),
+    ]).then(([config, sessionResult, avatarResult, characterResult]) => {
       setSettings(config);
       setSessions(sessionResult.sessions);
       setAvatars(normalizeAvatarConfig(avatarResult));
-      const existing = sessionResult.sessions.find((item) => item.session_id === sessionId);
-      if (existing) await openSession(existing.session_id);
+      setCharacters(characterResult.items);
+      setAppView("modes");
+      window.history.replaceState(null, "", "#/modes");
       setInitialDataLoaded(true);
     }).catch((error: Error) => notify(error.message));
-  }, [notify, openSession, sessionId]);
+  }, [notify]);
+
+  useEffect(() => {
+    if (!initialDataLoaded) return;
+    let disposed = false;
+    const synchronizeAudioSelection = async () => {
+      if (modal === "settings" && modalDirty) return;
+      try {
+        const latest = await request<ProductSettings>("/api/v1/settings");
+        if (disposed) return;
+        setSettings((current) => {
+          if (!current) return latest;
+          const currentSelection = JSON.stringify({
+            provider: current.audio.tts_provider,
+            gpt: current.audio.tts_gpt_sovits_voice,
+            qwen: current.audio.tts_qwen3_vllm_voice,
+            auto: current.audio.auto_tts,
+          });
+          const latestSelection = JSON.stringify({
+            provider: latest.audio.tts_provider,
+            gpt: latest.audio.tts_gpt_sovits_voice,
+            qwen: latest.audio.tts_qwen3_vllm_voice,
+            auto: latest.audio.auto_tts,
+          });
+          return currentSelection === latestSelection
+            ? current
+            : { ...current, audio: { ...current.audio, ...latest.audio } };
+        });
+      } catch {
+        // Core health and the existing error surfaces remain authoritative.
+      }
+    };
+    const timer = window.setInterval(() => { void synchronizeAudioSelection(); }, 2500);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [initialDataLoaded, modal, modalDirty]);
 
   useEffect(() => {
     const requested = str(settings?.appearance.theme || "mindscape");
@@ -638,6 +1027,7 @@ function App() {
     audioQueueRef.current = [];
     speechSegmenterRef.current.reset();
     ttsResponseStartedRef.current = false;
+    qwenFullReplySubmittedRef.current = false;
     ttsControllersRef.current.forEach((controller) => controller.abort());
     ttsControllersRef.current.clear();
     currentPlaybackNodeRef.current?.port.postMessage({ type: "stop" });
@@ -663,7 +1053,30 @@ function App() {
     }
   }, []);
 
-  const playbackContext = useCallback(async () => {
+  const closeCaptureContext = useCallback(() => {
+    discardWarmVoiceCapture(false);
+    const context = captureContextRef.current;
+    captureContextRef.current = null;
+    captureWorkletLoadedRef.current = false;
+    if (context && context.state !== "closed") {
+      void context.close().catch(() => undefined);
+    }
+  }, [discardWarmVoiceCapture]);
+
+  const resetStalledCaptureContext = useCallback(() => {
+    // A Chromium AudioContext can remain pending while resume() or
+    // audioWorklet.addModule() is awaiting the audio service. Detach it before
+    // retrying so the next attempt cannot inherit the same stalled context.
+    const context = captureContextRef.current;
+    captureContextRef.current = null;
+    captureWorkletLoadedRef.current = false;
+    if (context && context.state !== "closed") {
+      context.onstatechange = null;
+      void context.close().catch(() => undefined);
+    }
+  }, []);
+
+  const playbackAudioContext = useCallback(async () => {
     let context = playbackContextRef.current;
     if (!context || context.state === "closed") {
       context = new AudioContext({ latencyHint: "interactive" });
@@ -674,7 +1087,10 @@ function App() {
           currentPlaybackDoneRef.current?.();
           setVoice((current) => ({
             ...current,
-            phase: "error",
+            // Playback failure must not make a healthy ASR session look dead.
+            // The microphone remains usable while the user decides whether to
+            // retry speech playback.
+            phase: "listening",
             error: "系统暂停了声音播放，请点击“恢复语音”",
             level: 0,
           }));
@@ -683,12 +1099,149 @@ function App() {
     }
     if (context.state !== "running") await context.resume();
     if (context.state !== "running") throw new Error("声音播放尚未解锁，请重新点击开始通话");
+    return context;
+  }, []);
+
+  const playbackContext = useCallback(async () => {
+    const context = await playbackAudioContext();
     if (!ttsWorkletLoadedRef.current) {
       await context.audioWorklet.addModule("/assets/tts-playback-worklet.js");
       ttsWorkletLoadedRef.current = true;
     }
     return context;
+  }, [playbackAudioContext]);
+
+  const captureAudioContext = useCallback(async () => {
+    let context = captureContextRef.current;
+    if (!context || context.state === "closed") {
+      context = new AudioContext({ latencyHint: "interactive" });
+      captureContextRef.current = context;
+      captureWorkletLoadedRef.current = false;
+    }
+    if (context.state !== "running") await context.resume();
+    if (context.state !== "running") throw new Error("麦克风音频上下文未能启动");
+    if (!captureWorkletLoadedRef.current) {
+      await context.audioWorklet.addModule("/assets/pcm-worklet.js");
+      captureWorkletLoadedRef.current = true;
+    }
+    return context;
   }, []);
+
+  const acquireMicrophoneStream = useCallback(() => {
+    if (microphoneRequestRef.current) return microphoneRequestRef.current;
+    const request = (async () => {
+      const constraints = await preferredVoiceCaptureConstraints();
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        // Some WebView/test shims expose only getTracks(); real MediaStreams
+        // expose both. Device caching must never invalidate an otherwise-live
+        // stream when the specialized accessor is absent.
+        const track = (
+          typeof stream.getAudioTracks === "function"
+            ? stream.getAudioTracks()
+            : stream.getTracks()
+        )[0];
+        const deviceId = typeof track?.getSettings === "function"
+          ? track.getSettings().deviceId
+          : "";
+        if (deviceId && deviceId !== "default" && deviceId !== "communications") {
+          localStorage.setItem(VOICE_INPUT_DEVICE_STORAGE_KEY, deviceId);
+        }
+        return stream;
+      } catch (error) {
+        if (
+          constraints !== VOICE_CAPTURE_FALLBACK_CONSTRAINTS
+          && (error as DOMException)?.name === "OverconstrainedError"
+        ) {
+          localStorage.removeItem(VOICE_INPUT_DEVICE_STORAGE_KEY);
+          return navigator.mediaDevices.getUserMedia(VOICE_CAPTURE_FALLBACK_CONSTRAINTS);
+        }
+        throw error;
+      }
+    })();
+    microphoneRequestRef.current = request;
+    void request.finally(() => {
+      if (microphoneRequestRef.current === request) microphoneRequestRef.current = null;
+    }).catch(() => undefined);
+    return request;
+  }, []);
+
+  const createVoiceCaptureGraph = useCallback(async (): Promise<VoiceCaptureGraph> => {
+    const warm = warmVoiceCaptureRef.current;
+    warmVoiceCaptureRef.current = null;
+    if (warm) {
+      window.clearTimeout(warm.timer);
+      const tracks = warm.graph.stream.getAudioTracks();
+      if (tracks.length && tracks.every((track) => track.readyState === "live")) {
+        try {
+          if (warm.graph.context.state !== "running") await warm.graph.context.resume();
+          if (warm.graph.context.state !== "running") throw new Error("缓存的麦克风音频上下文未能恢复");
+          tracks.forEach((track) => { track.enabled = true; });
+          warm.graph.source.connect(warm.graph.worklet);
+          return warm.graph;
+        } catch {
+          // A parked graph is only an optimization. If Chromium cannot resume
+          // it, dispose it and fall through to a fresh capture instead of
+          // leaving the voice entry permanently pending.
+          warm.graph.stream.getTracks().forEach((track) => track.stop());
+          warm.graph.source.disconnect();
+          warm.graph.worklet.disconnect();
+          warm.graph.monitor.disconnect();
+          if (captureContextRef.current === warm.graph.context) {
+            captureContextRef.current = null;
+            captureWorkletLoadedRef.current = false;
+          }
+          if (warm.graph.context.state !== "closed") {
+            void warm.graph.context.close().catch(() => undefined);
+          }
+        }
+      } else {
+        warm.graph.stream.getTracks().forEach((track) => track.stop());
+        warm.graph.source.disconnect();
+        warm.graph.worklet.disconnect();
+        warm.graph.monitor.disconnect();
+      }
+    }
+    let stream: MediaStream | null = null;
+    try {
+      // Capture owns a dedicated, reusable AudioContext. TTS playback cannot
+      // suspend or close the microphone graph, and the PCM worklet is loaded
+      // only once for the lifetime of the product window.
+      // Acquire the input endpoint before opening the WebAudio render graph.
+      // Initializing both sides of the same USB headset in Promise.all can
+      // deadlock Chromium's Windows audio service on the first voice entry.
+      let requestTimeout = 0;
+      const activeStream = await Promise.race([
+        acquireMicrophoneStream(),
+        new Promise<MediaStream>((_resolve, reject) => {
+          requestTimeout = window.setTimeout(() => {
+            const error = new Error("麦克风设备在 4 秒内没有响应");
+            error.name = "VoiceCaptureTimeoutError";
+            reject(error);
+          }, VOICE_DEVICE_REQUEST_TIMEOUT_MS);
+        }),
+      ]).finally(() => window.clearTimeout(requestTimeout));
+      stream = activeStream;
+      const context = await captureAudioContext();
+      const source = context.createMediaStreamSource(activeStream);
+      const worklet = new AudioWorkletNode(context, "mindspace-pcm", {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        channelCount: 1,
+        channelCountMode: "explicit",
+      });
+      const monitor = context.createGain();
+      monitor.gain.value = 0.0000001;
+      source.connect(worklet);
+      worklet.connect(monitor);
+      monitor.connect(context.destination);
+      return { stream: activeStream, context, source, worklet, monitor };
+    } catch (error) {
+      stream?.getTracks().forEach((track) => track.stop());
+      throw error;
+    }
+  }, [acquireMicrophoneStream, captureAudioContext]);
 
   const prepareSpeech = useCallback((item: SpeechQueueItem) => {
     if (item.prepared) return item.prepared;
@@ -709,9 +1262,9 @@ function App() {
         if (voiceOpenRef.current) {
           setVoice((current) => ({
             ...current,
-            phase: "connecting",
-            error: str(status.tts_error || "语音合成模型正在启动，请稍候"),
-            level: 0,
+            // TTS is a downstream consumer. Waiting for it must never replace
+            // the independent ASR transport state with "connecting".
+            error: str(status.tts_error || "回复已生成，语音播放正在准备"),
           }));
         }
         await waitWithSignal(TTS_READY_POLL_MS, controller.signal);
@@ -729,6 +1282,11 @@ function App() {
             // spoken answer without later segments overwriting earlier ones.
             request_id: runIdRef.current || item.id,
             speed,
+            // Acoustic instructions belong exclusively to Qwen3 CustomVoice.
+            // GPT-SoVITS and CosyVoice consume only the streamed spoken text.
+            ...(settings?.audio.tts_provider === "qwen3-vllm"
+              ? { voice_cue: item.voiceCue }
+              : {}),
           }),
           signal: controller.signal,
         });
@@ -759,6 +1317,7 @@ function App() {
       };
       const reader = response.body.getReader();
       handle.pump = (async () => {
+        let pcmRemainder = new Uint8Array(0);
         try {
           while (true) {
             let idleTimer: number | null = null;
@@ -777,11 +1336,13 @@ function App() {
             const { value, done } = packet;
             if (done) break;
             if (value?.byteLength) {
-              handle.totalInputSamples += Math.floor(value.byteLength / 2);
-              const pcm = new Uint8Array(value.byteLength);
-              pcm.set(value);
-              handle.chunks.push(pcm.buffer);
-              wake();
+              const aligned = alignPCM16Chunk(pcmRemainder, value);
+              pcmRemainder = aligned.remainder;
+              if (aligned.pcm.byteLength) {
+                handle.totalInputSamples += aligned.pcm.byteLength / 2;
+                handle.chunks.push(aligned.pcm.buffer);
+                wake();
+              }
             }
           }
         } catch (error) {
@@ -799,11 +1360,6 @@ function App() {
     });
     return item.prepared;
   }, [settings]);
-
-  const prepareNextSpeech = useCallback(() => {
-    const next = audioQueueRef.current.find((item) => !item.prepared);
-    if (next) void prepareSpeech(next).catch(() => undefined);
-  }, [prepareSpeech]);
 
   const playPCMStream = useCallback(async (item: SpeechQueueItem, handle: PCMStreamHandle, generation: number) => {
     if (!handle.chunks.length && !handle.done) {
@@ -832,6 +1388,7 @@ function App() {
     currentPlaybackNodeRef.current = node;
     const gain = context.createGain();
     currentPlaybackGainRef.current = gain;
+    gain.gain.value = TTS_SAFE_OUTPUT_GAIN;
     node.connect(gain);
     gain.connect(context.destination);
     node.port.postMessage({ type: "configure", sampleRate: handle.sampleRate, prebufferMs: 120 });
@@ -848,7 +1405,6 @@ function App() {
         if (playbackStartTimer != null) window.clearTimeout(playbackStartTimer);
         if (voiceOpenRef.current) {
           publishPlaybackState(true);
-          setVoiceInputLocked(false, "tts_started");
           setVoice((current) => ({ ...current, phase: "assistant-speaking", error: "" }));
         }
       } else if (event.data.type === "level") {
@@ -913,7 +1469,7 @@ function App() {
       if (currentPlaybackGainRef.current === gain) currentPlaybackGainRef.current = null;
       if (currentPlaybackDoneRef.current === resolveEnded) currentPlaybackDoneRef.current = null;
     }
-  }, [playbackContext, publishPlaybackState, setVoiceInputLocked]);
+  }, [playbackContext, publishPlaybackState]);
 
   const playQueue = useCallback(async () => {
     if (audioPlayingRef.current || !audioQueueRef.current.length) return;
@@ -922,22 +1478,43 @@ function App() {
     let playbackFailed = false;
     while (audioQueueRef.current.length) {
       const item = audioQueueRef.current[0];
+      if (!hasSpeakableContent(item.text)) {
+        audioQueueRef.current.shift();
+        continue;
+      }
       try {
         const stream = await prepareSpeech(item);
         if (generation !== playbackGenerationRef.current) return;
         audioQueueRef.current.shift();
-        void stream.pump.then(prepareNextSpeech);
         await playPCMStream(item, stream, generation);
         if (generation === playbackGenerationRef.current) completedSpeechRef.current.push(item.text);
       } catch (error) {
+        if (shouldSkipSpeechSegmentFailure(item.text, error)) {
+          if (audioQueueRef.current[0] === item) audioQueueRef.current.shift();
+          continue;
+        }
+        // A broken segment must not poison the whole reply.  Reissue only the
+        // current segment once; the scheduler never overlaps local inference.
+        if (generation === playbackGenerationRef.current && (item.retries || 0) < 1) {
+          item.retries = (item.retries || 0) + 1;
+          item.prepared = undefined;
+          continue;
+        }
         playbackFailed = true;
-        audioQueueRef.current = [];
-        ttsControllersRef.current.forEach((controller) => controller.abort("tts_queue_failed"));
-        ttsControllersRef.current.clear();
+        if (audioQueueRef.current[0] === item) audioQueueRef.current.shift();
         if ((error as Error).name !== "AbortError") {
           const message = (error as Error).message;
           setVoiceInputLocked(false, "tts_failed");
-          if (voiceOpenRef.current) setVoice((current) => ({ ...current, phase: "error", error: message, level: 0 }));
+          if (voiceOpenRef.current) {
+            setVoice((current) => ({
+              ...current,
+              // Only playback failed. ASR stays online and can accept the next
+              // utterance without forcing the user to reopen voice mode.
+              phase: generatingRef.current ? "thinking" : "listening",
+              error: `语音播放失败：${message}（仍在监听）`,
+              level: 0,
+            }));
+          }
           notify(message);
         }
         break;
@@ -950,31 +1527,33 @@ function App() {
       voiceDeliveryRef.current = null;
       setVoice((current) => current.phase === "error" ? current : ({ ...current, phase: "listening", level: 0 }));
       const deferred = deferredVoiceSegmentsRef.current.splice(0);
-      const deferredTokens = deferredEmotionTokensRef.current.splice(0);
       if (deferred.length) {
-        deferred.forEach((text, index) => queueVoiceSegmentRef.current?.(text, false, deferredTokens[index]));
+        deferred.forEach((text) => queueVoiceSegmentRef.current?.(text, false));
       } else if (!playbackFailed) {
         companionArmedRef.current = true;
         scheduleIdleContinuation("voice", true);
       }
     }
-  }, [notify, playPCMStream, prepareNextSpeech, prepareSpeech, publishPlaybackState, scheduleIdleContinuation, setVoiceInputLocked]);
+  }, [notify, playPCMStream, prepareSpeech, publishPlaybackState, scheduleIdleContinuation, setVoiceInputLocked]);
 
-  const enqueueSpeech = useCallback((text: string, force = false) => {
+  const enqueueSpeech = useCallback((text: string, force = false, voiceCue = ttsVoiceCueRef.current) => {
     if ((!force && !voiceOpenRef.current && !bool(settings?.audio.auto_tts)) || !text.trim()) return;
     const speech = ttsResponseStartedRef.current ? text.trim() : stripLeadingTtsFiller(text);
-    if (!speech) return;
+    if (!hasSpeakableContent(speech)) return;
     ttsResponseStartedRef.current = true;
-    audioQueueRef.current.push({ id: uid(), text: speech });
-    // Do not open another worker request for every streamed sentence.  The
-    // current PCM pump schedules exactly one look-ahead after synthesis has
-    // completed; extra eager fetches used to accumulate behind GPT-SoVITS'
-    // single inference lock and survived browser cancellation.
+    audioQueueRef.current.push({ id: uid(), text: speech, voiceCue });
+    // One VoiceIntent has one local synthesis request at a time.  Keeping only
+    // text in this queue avoids a hidden stack of HTTP streams behind the
+    // GPT-SoVITS lock when a streamed answer arrives quickly.
     if (!audioPlayingRef.current) void playQueue();
   }, [playQueue, settings]);
 
   const acceptSpeechDelta = useCallback((delta: string, flush = false) => {
-    const sentences = speechSegmenterRef.current.feed(delta, flush, voiceOpenRef.current);
+    const sentences = speechSegmenterRef.current.feed(
+      delta,
+      flush,
+      voiceOpenRef.current,
+    );
     sentences.forEach((sentence) => enqueueSpeech(sentence));
   }, [enqueueSpeech]);
 
@@ -1020,19 +1599,24 @@ function App() {
     setRunId("");
     clearActiveRun(active);
     setVoiceInputLocked(false, "run_cancelled");
-    if (voiceOpenRef.current) setVoice((current) => ({ ...current, phase: "interrupted", reply: "", level: 0 }));
+    // Cancellation only owns the active LLM/TTS intent.  The resident ASR
+    // transport remains subscribed, so return directly to listening instead
+    // of leaving the call UI in an inert "interrupted" state.
+    if (voiceOpenRef.current) setVoice((current) => ({ ...current, phase: "listening", reply: "", level: 0, error: "" }));
   }, [flushResponseDelta, setVoiceInputLocked, stopAudio]);
 
   const addEvent = useCallback((event: InspectorEvent) => setEvents((items) => [...items.slice(-79), event]), []);
 
-  const handleStreamEvent = useCallback((event: StreamEnvelope) => {
+  const handleStreamEvent = useCallback((event: StreamEnvelope, isRecoveryReplay = false) => {
     const data = asRecord(event.data);
     if (event.event === "run.accepted") {
       runIdRef.current = event.run_id;
       setInspectionRunId(event.run_id);
       if (voiceOpenRef.current) lastVoiceRunIdRef.current = event.run_id;
       setRunId(event.run_id);
-      voiceSocketRef.current?.send(JSON.stringify({ action: "start", run_id: event.run_id }));
+      // ASR activation belongs to the voice intent created when the call is
+      // opened.  Re-sending `start` here used to reset an active recognizer
+      // halfway through a streamed response.
       if (voiceOpenRef.current) setVoice((current) => ({ ...current, phase: "thinking", reply: "", error: "" }));
     } else if (event.event === "node.started") {
       addEvent({ event: str(data.node), label: str(data.label || data.node), timestamp: event.timestamp, state: "active" });
@@ -1041,8 +1625,33 @@ function App() {
     } else if (event.event === "response.delta") {
       const delta = str(data.delta);
       if (voiceOpenRef.current) voiceReplyRef.current += delta;
-      acceptSpeechDelta(delta);
+      if (
+        shouldSynthesizeStreamEvent(isRecoveryReplay)
+        && !shouldBufferQwenReplyForSinglePass(settings, voiceOpenRef.current)
+      ) {
+        acceptSpeechDelta(delta);
+      }
       scheduleResponseDelta(delta);
+    } else if (event.event === "response.ready") {
+      const content = str(data.content);
+      const cue = str(data.voice_cue || ttsVoiceCueRef.current).toLowerCase();
+      if (
+        content
+        && shouldSynthesizeStreamEvent(isRecoveryReplay)
+        && shouldBufferQwenReplyForSinglePass(settings, voiceOpenRef.current)
+        && !qwenFullReplySubmittedRef.current
+      ) {
+        ttsVoiceCueRef.current = ["neutral", "thoughtful", "warm", "firm", "playful", "intimate", "reflective", "tender", "teasing", "lively", "dramatic", "breathy", "laughing", "sighing", "seductive", "alluring", "moaning", "satisfied"].includes(cue) ? cue : "neutral";
+        speechSegmenterRef.current.reset();
+        qwenFullReplySubmittedRef.current = true;
+        enqueueSpeech(content);
+      }
+    } else if (event.event === "response.voice_cue") {
+      const cue = str(data.cue).toLowerCase();
+      ttsVoiceCueRef.current = ["neutral", "thoughtful", "warm", "firm", "playful", "intimate", "reflective", "tender", "teasing", "lively", "dramatic", "breathy", "laughing", "sighing", "seductive", "alluring", "moaning", "satisfied"].includes(cue) ? cue : "neutral";
+      setMessages((items) => items.map((item) => item.status === "streaming"
+        ? { ...item, voice_cue: ttsVoiceCueRef.current }
+        : item));
     } else if (event.event === "capability.notice") {
       // Capability progress is transient UI state.  It must not become assistant
       // prose, persisted memory, or TTS audio; the final answer remains one reply.
@@ -1103,14 +1712,18 @@ function App() {
     } else if (event.event === "response.replace") {
       clearPendingResponseDelta();
       const processRecovery = str(data.reason) === "process_recovery";
-      if (!processRecovery) {
-        stopAudio();
-        if (voiceOpenRef.current) setVoiceInputLocked(true, "response_replaced");
-      }
+      // A replacement invalidates any locally queued audio, including when the
+      // server restored a process. Never leave old PCM eligible for playback.
+      stopAudio();
       const content = str(data.content);
       if (voiceOpenRef.current) voiceReplyRef.current = content;
       speechSegmenterRef.current.reset();
-      if (!processRecovery) acceptSpeechDelta(content, true);
+      if (
+        shouldSynthesizeStreamEvent(isRecoveryReplay, processRecovery)
+        && !shouldBufferQwenReplyForSinglePass(settings, voiceOpenRef.current)
+      ) {
+        acceptSpeechDelta(content, true);
+      }
       setMessages((items) => items.map((item) => item.status === "streaming" ? { ...item, content } : item));
       if (voiceOpenRef.current) setVoice((current) => ({ ...current, reply: content }));
     } else if (event.event === "retrieval.completed") {
@@ -1129,12 +1742,20 @@ function App() {
       }
       activeInitiativeRef.current = { trigger: "none", sequence: 0 };
       currentAssistantIdRef.current = str(response.assistant_message_id);
-      acceptSpeechDelta("", true);
+      if (shouldSynthesizeStreamEvent(isRecoveryReplay)) {
+        if (shouldBufferQwenReplyForSinglePass(settings, voiceOpenRef.current)) {
+          if (!qwenFullReplySubmittedRef.current) {
+            qwenFullReplySubmittedRef.current = true;
+            enqueueSpeech(str(response.reply));
+          }
+        } else {
+          acceptSpeechDelta("", true);
+        }
+      }
       setMessages((items) => items.map((item) => item.status === "streaming" ? { ...item, message_id: str(response.assistant_message_id) || item.message_id, content: str(response.reply || item.content), status: "complete" as const } : item));
       if (voiceOpenRef.current) setVoice((current) => ({ ...current, reply: str(response.reply || current.reply), phase: audioPlayingRef.current || audioQueueRef.current.length ? "assistant-speaking" : "listening" }));
       activeVoiceTurnTextRef.current = "";
       activeVoiceTurnRoundRef.current = 0;
-      activeVoiceEmotionTokensRef.current = [];
       setRound((value) => value + 1);
       setGenerating(false);
       runIdRef.current = "";
@@ -1147,6 +1768,7 @@ function App() {
       if (!voiceOpenRef.current) scheduleIdleContinuation("text");
     } else if (event.event === "run.cancelled") {
       flushResponseDelta();
+      stopAudio();
       activeInitiativeRef.current = { trigger: "none", sequence: 0 };
       setMessages((items) => items.map((item) => item.status === "streaming" ? { ...item, status: "cancelled" as const } : item));
       setGenerating(false);
@@ -1154,8 +1776,13 @@ function App() {
       setRunId("");
       clearActiveRun(event.run_id);
       setVoiceInputLocked(false, "run_cancelled_event");
+      if (voiceOpenRef.current) setVoice((current) => ({ ...current, phase: "listening", level: 0, error: "" }));
     } else if (event.event === "run.interrupted") {
       flushResponseDelta();
+      // The Core has already marked the run interrupted.  Drop any queued
+      // audio for that intent; a later reconnect must not finish speaking a
+      // stale partial answer while the UI is ready for the next user turn.
+      stopAudio();
       activeInitiativeRef.current = { trigger: "none", sequence: 0 };
       const partialText = str(data.partial_text);
       setMessages((items) => items.map((item) => item.status === "streaming"
@@ -1170,7 +1797,7 @@ function App() {
         setVoice((current) => ({
           ...current,
           reply: partialText || current.reply,
-          phase: "interrupted",
+          phase: "listening",
           error: "Core 重启，已保留中断前生成的内容",
         }));
       }
@@ -1185,12 +1812,19 @@ function App() {
       setRunId("");
       clearActiveRun(event.run_id);
       setVoiceInputLocked(false, "run_failed");
-      if (voiceOpenRef.current) setVoice((current) => ({ ...current, phase: "error", error: errors || "生成失败" }));
+      if (voiceOpenRef.current) {
+        notify(errors || "生成失败，语音识别仍在监听");
+        setVoice((current) => ({
+          ...current,
+          phase: audioPlayingRef.current ? "assistant-speaking" : "listening",
+          error: errors || "生成失败",
+          level: 0,
+        }));
+      }
       activeVoiceTurnTextRef.current = "";
       activeVoiceTurnRoundRef.current = 0;
-      activeVoiceEmotionTokensRef.current = [];
     }
-  }, [acceptSpeechDelta, addEvent, clearPendingResponseDelta, flushResponseDelta, loadSessions, scheduleIdleContinuation, scheduleResponseDelta, setVoiceInputLocked, stopAudio]);
+  }, [acceptSpeechDelta, addEvent, clearPendingResponseDelta, enqueueSpeech, flushResponseDelta, loadSessions, notify, scheduleIdleContinuation, scheduleResponseDelta, setVoiceInputLocked, settings, stopAudio]);
 
   const sendMessage = useCallback(async (
     text = input,
@@ -1198,7 +1832,6 @@ function App() {
     targetRound = round,
     initiative = false,
     initiativeTrigger: InitiativeTrigger = initiative ? "manual" : "none",
-    voiceEmotionTokens: string[] = [],
     initiativeSequence = 0,
     initiativeSequenceLimit = 0,
   ) => {
@@ -1208,6 +1841,12 @@ function App() {
       : null;
     pendingASREvidenceRef.current = null;
     if (!content) { notify("请输入消息内容"); return; }
+    if (!activeCharacterId) {
+      notify("请先为当前会话选择角色");
+      setCharacterPickerScope("all");
+      setCharacterPickerOpen(true);
+      return;
+    }
     if (!llmReady) {
       notify("请先在设置中填写并保存 LLM API 配置");
       setModalDirty(false);
@@ -1221,11 +1860,14 @@ function App() {
       captureVoiceInterruption("explicit_user_message");
     }
     stopAudio();
-    if (voiceOpenRef.current) setVoiceInputLocked(true, "turn_committed");
+    // Do not lock ASR while the LLM is thinking. A committed utterance is
+    // already protected by text deduplication, and any genuinely new utterance
+    // must remain able to cancel/replace a slow or failed generation.
     speechSegmenterRef.current.reset();
     clearPendingResponseDelta();
     voiceReplyRef.current = "";
     currentAssistantIdRef.current = "";
+    ttsVoiceCueRef.current = "neutral";
     completedSpeechRef.current = [];
     setInput("");
     setEvents([]);
@@ -1234,7 +1876,6 @@ function App() {
     if (voiceOpenRef.current && !initiative) {
       activeVoiceTurnTextRef.current = content;
       activeVoiceTurnRoundRef.current = targetRound;
-      activeVoiceEmotionTokensRef.current = [...voiceEmotionTokens];
     }
     const requestId = uid();
     activeInitiativeRef.current = { trigger: initiativeTrigger, sequence: initiativeSequence };
@@ -1252,6 +1893,8 @@ function App() {
     const user: Message = { role: "user", content, round: targetRound, status: "complete", timestamp: clientSentAt };
     const assistant: Message = { role: "assistant", content: "", round: targetRound, status: "streaming", kind: initiative ? "initiative_response" : "message", initiative_trigger: initiativeTrigger };
     const outgoing = initiative ? [assistant] : [user, assistant];
+    followConversationRef.current = true;
+    pendingConversationJumpRef.current = true;
     setMessages((items) => [...(mode === "regenerate" ? items.filter((item) => item.round !== targetRound) : items), ...outgoing]);
     const persona = settings?.persona || {};
     const retrievalSettings = settings?.retrieval || {};
@@ -1259,14 +1902,16 @@ function App() {
     // 这里只提交公开的人格、检索和采样参数。API key、base URL 和模型名由服务端覆盖，
     // 防止前端状态或请求重放改变真正使用的 provider 凭据。
     const payload = {
-      message: content, session_id: sessionId, round: targetRound, mode, interaction_mode: voiceOpenRef.current ? "voice" : "text", initiative, initiative_trigger: initiativeTrigger,
+      message: content, session_id: sessionId, character_id: activeCharacterId,
+      activity_session_id: activeActivitySessionId,
+      session_mode: activeCharacter?.source === "draw" ? "draw" : "custom",
+      round: targetRound, mode, interaction_mode: voiceOpenRef.current ? "voice" : "text", adult_mode: adultMode, r18_style_id: r18StyleId, initiative, initiative_trigger: initiativeTrigger,
       initiative_sequence: initiativeSequence, initiative_sequence_limit: initiativeSequenceLimit,
       client_sent_at: clientSentAt,
       client_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
       client_utc_offset_minutes: -new Date().getTimezoneOffset(),
       voice_delivery: voiceOpenRef.current ? voiceDeliveryRef.current : null,
       voice_context: voiceOpenRef.current ? voiceInteractionRef.current : null,
-      voice_emotion_tokens: voiceOpenRef.current ? voiceEmotionTokens.slice(0, 8) : [],
       input_evidence: asrEvidence ? {
         asr: {
           quality: "uncertain",
@@ -1303,7 +1948,14 @@ function App() {
       if ((error as Error).name !== "AbortError") {
         notify((error as Error).message);
         setMessages((items) => items.map((item) => item.status === "streaming" ? { ...item, content: (error as Error).message, status: "error" as const } : item));
-        if (voiceOpenRef.current) setVoice((current) => ({ ...current, phase: "error", error: (error as Error).message }));
+        if (voiceOpenRef.current) {
+          setVoice((current) => ({
+            ...current,
+            phase: audioPlayingRef.current ? "assistant-speaking" : "listening",
+            error: (error as Error).message,
+            level: 0,
+          }));
+        }
       }
       setGenerating(false);
       activeInitiativeRef.current = { trigger: "none", sequence: 0 };
@@ -1311,7 +1963,7 @@ function App() {
     } finally {
       abortRef.current = null;
     }
-  }, [cancelIdleContinuation, cancelRun, captureVoiceInterruption, clearPendingResponseDelta, generating, handleStreamEvent, input, llmReady, notify, round, sessionId, setVoiceInputLocked, settings, stopAudio]);
+  }, [activeActivitySessionId, activeCharacter, activeCharacterId, adultMode, cancelIdleContinuation, cancelRun, captureVoiceInterruption, clearPendingResponseDelta, generating, handleStreamEvent, input, llmReady, notify, r18StyleId, round, sessionId, setVoiceInputLocked, settings, stopAudio]);
 
   useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
 
@@ -1319,6 +1971,9 @@ function App() {
     if (!initialDataLoaded || generatingRef.current) return;
     const active = readActiveRun();
     if (!active || active.session_id !== sessionId) return;
+    // This tab has no ownership of audio generated before it mounted. Clear
+    // every local playback reference before rebuilding the visual transcript.
+    stopAudio();
     const controller = new AbortController();
     abortRef.current = controller;
     runIdRef.current = active.run_id;
@@ -1353,7 +2008,7 @@ function App() {
     }).then((response) => consumeResumableEventStream(
       response,
       active.run_id,
-      handleStreamEvent,
+      (event) => handleStreamEvent(event, true),
       controller.signal,
     )).catch((error: Error) => {
       if (error.name === "AbortError") return;
@@ -1369,12 +2024,11 @@ function App() {
       if (abortRef.current === controller) abortRef.current = null;
     });
     return () => controller.abort();
-  }, [handleStreamEvent, initialDataLoaded, notify, sessionId]);
+  }, [handleStreamEvent, initialDataLoaded, notify, sessionId, stopAudio]);
 
   const flushVoiceSegments = useCallback(async () => {
     voiceMergeTimerRef.current = null;
     const pending = voiceSegmentsRef.current.splice(0);
-    const pendingEmotionTokens = voiceEmotionTokensRef.current.splice(0);
     if (!pending.length) return;
     const supplement = mergeVoiceText(pending);
     const hasActiveTurn = Boolean(activeVoiceTurnTextRef.current);
@@ -1382,9 +2036,6 @@ function App() {
     const content = hasActiveTurn
       ? mergeVoiceText([activeVoiceTurnTextRef.current, supplement])
       : supplement;
-    const emotionTokens = [...activeVoiceEmotionTokensRef.current, ...pendingEmotionTokens]
-      .filter((token, index, values) => token && values.indexOf(token) === index)
-      .slice(0, 8);
     if (!content) return;
     bargeCommittedRef.current = false;
     if (generatingRef.current) {
@@ -1393,23 +2044,19 @@ function App() {
     }
     setInput("");
     setVoice((current) => ({ ...current, transcript: content, phase: "thinking", error: "" }));
-    await sendMessageRef.current?.(content, "primary", targetRound, false, "none", emotionTokens);
+    await sendMessageRef.current?.(content, "primary", targetRound, false, "none");
   }, [cancelRun]);
 
-  const queueVoiceSegment = useCallback((text: string, deferred = false, emotionToken = "") => {
+  const queueVoiceSegment = useCallback((text: string, deferred = false) => {
     const cleaned = text.trim();
     if (!cleaned) return;
     if (deferred && audioPlayingRef.current) {
       deferredVoiceSegmentsRef.current.push(cleaned);
-      deferredEmotionTokensRef.current.push(emotionToken);
       setVoice((current) => ({ ...current, transcript: mergeVoiceText(deferredVoiceSegmentsRef.current), phase: "deferred", error: "" }));
       return;
     }
     const last = voiceSegmentsRef.current.at(-1);
     if (last !== cleaned) voiceSegmentsRef.current.push(cleaned);
-    if (emotionToken && !voiceEmotionTokensRef.current.includes(emotionToken)) {
-      voiceEmotionTokensRef.current.push(emotionToken);
-    }
     if (voiceMergeTimerRef.current != null) window.clearTimeout(voiceMergeTimerRef.current);
     const preview = mergeVoiceText([
       activeVoiceTurnTextRef.current,
@@ -1440,24 +2087,31 @@ function App() {
 
   useEffect(() => () => cancelIdleContinuation(), [cancelIdleContinuation]);
 
-  const stopListening = useCallback((finalize = false) => {
-    voiceSessionGenerationRef.current += 1;
+  const stopListening = useCallback((finalize = false, keepCaptureWarm = false, keepNativeTransport = false) => {
     if (voiceReconnectTimerRef.current != null) window.clearTimeout(voiceReconnectTimerRef.current);
     voiceReconnectTimerRef.current = null;
     if (voiceConnectWatchdogRef.current != null) window.clearTimeout(voiceConnectWatchdogRef.current);
     voiceConnectWatchdogRef.current = null;
+    if (voiceCaptureWatchdogRef.current != null) window.clearInterval(voiceCaptureWatchdogRef.current);
+    voiceCaptureWatchdogRef.current = null;
     const socket = voiceSocketRef.current;
-    const worklet = workletRef.current;
-    const source = audioSourceRef.current;
-    const monitor = silentMonitorRef.current;
+    if (keepNativeTransport && voiceNativeCaptureRef.current && socket?.readyState === WebSocket.OPEN) {
+      try { socket.send(JSON.stringify({ action: finalize ? "stop" : "deactivate" })); } catch { /* transport is already closing */ }
+      return;
+    }
+    voiceSessionGenerationRef.current += 1;
     const stream = mediaStreamRef.current;
     const context = audioContextRef.current;
+    const source = audioSourceRef.current;
+    const worklet = micWorkletRef.current;
+    const monitor = silentMonitorRef.current;
+    voiceNativeCaptureRef.current = false;
     voiceSocketRef.current = null;
-    workletRef.current = null;
-    audioSourceRef.current = null;
-    silentMonitorRef.current = null;
     mediaStreamRef.current = null;
     audioContextRef.current = null;
+    audioSourceRef.current = null;
+    micWorkletRef.current = null;
+    silentMonitorRef.current = null;
     if (worklet) worklet.port.onmessage = null;
     if (socket) {
       socket.onopen = null;
@@ -1466,23 +2120,99 @@ function App() {
       socket.onclose = null;
       try {
         if (socket.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ action: finalize ? "stop" : "cancel" }));
+          socket.send(JSON.stringify({ action: finalize ? "stop" : "deactivate" }));
         }
         socket.close(1000, "voice mode closed");
       } catch { /* the connection is already closing */ }
     }
-    try { source?.disconnect(); } catch { /* already disconnected */ }
-    try { worklet?.disconnect(); } catch { /* already disconnected */ }
-    try { monitor?.disconnect(); } catch { /* already disconnected */ }
-    stream?.getTracks().forEach((track) => track.stop());
-    if (context && context.state !== "closed") void context.close().catch(() => undefined);
-  }, []);
+    const graphReady = Boolean(stream && context && source && worklet && monitor);
+    if (graphReady && keepCaptureWarm) {
+      const graph = {
+        stream: stream as MediaStream,
+        context: context as AudioContext,
+        source: source as MediaStreamAudioSourceNode,
+        worklet: worklet as AudioWorkletNode,
+        monitor: monitor as GainNode,
+      };
+      graph.stream.getTracks().forEach((track) => {
+        track.onended = null;
+        track.onmute = null;
+        track.onunmute = null;
+        track.enabled = false;
+      });
+      graph.source.disconnect();
+      discardWarmVoiceCapture(false);
+      const expiresAt = performance.now() + VOICE_CAPTURE_WARM_GRACE_MS;
+      const timer = window.setTimeout(() => {
+        const warm = warmVoiceCaptureRef.current;
+        if (!warm || warm.graph !== graph) return;
+        warmVoiceCaptureRef.current = null;
+        graph.stream.getTracks().forEach((track) => track.stop());
+        graph.source.disconnect();
+        graph.worklet.disconnect();
+        graph.monitor.disconnect();
+        if (!voiceOpenRef.current && graph.context.state === "running") {
+          void graph.context.suspend().catch(() => undefined);
+        }
+      }, VOICE_CAPTURE_WARM_GRACE_MS);
+      warmVoiceCaptureRef.current = { graph, expiresAt, timer };
+      return;
+    }
+    stream?.getTracks().forEach((track) => {
+      track.onended = null;
+      track.onmute = null;
+      track.onunmute = null;
+      track.stop();
+    });
+    source?.disconnect();
+    worklet?.disconnect();
+    monitor?.disconnect();
+    if (context && context !== captureContextRef.current && context.state !== "closed") {
+      void context.close().catch(() => undefined);
+    }
+  }, [discardWarmVoiceCapture]);
 
   const startListening = useCallback(async () => {
+    if (!voiceOpenRef.current) return;
+    closingVoiceRef.current = false;
+    const currentGeneration = voiceSessionGenerationRef.current;
+    if (voiceStartInFlightGenerationRef.current === currentGeneration) return;
+    const existingSocket = voiceSocketRef.current;
+    const existingTrack = mediaStreamRef.current?.getAudioTracks()[0];
+    if (
+      existingSocket
+      && (existingSocket.readyState === WebSocket.CONNECTING || existingSocket.readyState === WebSocket.OPEN)
+      && (
+        voiceNativeCaptureRef.current
+        || (
+          existingTrack?.readyState === "live"
+          && audioContextRef.current?.state !== "closed"
+        )
+      )
+    ) {
+      if (voiceNativeCaptureRef.current && existingSocket.readyState === WebSocket.OPEN) {
+        const intent = { id: uid(), generation: currentGeneration, lastEventSeq: 0 };
+        voiceIntentRef.current = intent;
+        existingSocket.send(JSON.stringify({
+          action: "start",
+          run_id: runIdRef.current,
+          intent_id: intent.id,
+          generation: intent.generation,
+        }));
+        existingSocket.send(JSON.stringify({ action: "playback_state", playing: audioPlayingRef.current }));
+        setVoice((current) => ({
+          ...current,
+          phase: audioPlayingRef.current ? "assistant-speaking" : "listening",
+          error: "",
+          level: 0,
+        }));
+      }
+      return;
+    }
     stopListening(false);
     if (!voiceOpenRef.current) return;
     const generation = voiceSessionGenerationRef.current;
-    closingVoiceRef.current = false;
+    voiceStartInFlightGenerationRef.current = generation;
     setVoice((current) => ({ ...current, phase: "connecting", error: "", level: 0 }));
     let stream: MediaStream | null = null;
     let context: AudioContext | null = null;
@@ -1490,29 +2220,39 @@ function App() {
     let worklet: AudioWorkletNode | null = null;
     let silentMonitor: GainNode | null = null;
     let socket: WebSocket | null = null;
+    let captureWatchdog: number | null = null;
+    let activeTrack: MediaStreamTrack | null = null;
+    let nativeCaptureMode = false;
+    let asrReady = false;
+    let captureGraphReady = false;
+    let captureHealthy = false;
+    let hasCaptureFrame = false;
+    let captureStartedAt = performance.now();
+    let lastCaptureFrameAt = captureStartedAt;
+    let recoveryStarted = false;
+    const pendingSocketEvents: MessageEvent[] = [];
+    const pendingPCM: ArrayBuffer[] = [];
+    let handleSocketEvent: ((event: MessageEvent) => void) | null = null;
     const isCurrent = () => (
       voiceOpenRef.current
       && !closingVoiceRef.current
       && voiceSessionGenerationRef.current === generation
     );
-    try {
-      const status = await requestWithTimeout<{
-        asr_ready?: boolean;
-        asr_error?: string;
-      }>("/api/v1/audio/status", {}, 3_000);
-      if (!isCurrent()) return;
-      if (!status.asr_ready) {
-        scheduleVoiceReconnect(str(status.asr_error || "语音识别模型仍在启动"));
-        return;
+    const invalidateCurrentStart = () => {
+      // The start promise may still be waiting for getUserMedia/AudioWorklet.
+      // Clear both guards before scheduling recovery; otherwise the reconnect
+      // timer sees the old generation as "already starting" and does nothing.
+      if (voiceSessionGenerationRef.current === generation) {
+        voiceSessionGenerationRef.current += 1;
       }
-    } catch (error) {
-      if (isCurrent()) {
-        scheduleVoiceReconnect(`语音识别服务尚未就绪：${(error as Error).message}`);
+      if (voiceStartInFlightGenerationRef.current === generation) {
+        voiceStartInFlightGenerationRef.current = null;
       }
-      return;
-    }
+    };
     const releaseLocal = () => {
-      if (worklet) worklet.port.onmessage = null;
+      if (captureWatchdog != null) window.clearInterval(captureWatchdog);
+      if (voiceCaptureWatchdogRef.current === captureWatchdog) voiceCaptureWatchdogRef.current = null;
+      captureWatchdog = null;
       if (socket) {
         socket.onopen = null;
         socket.onmessage = null;
@@ -1520,85 +2260,277 @@ function App() {
         socket.onclose = null;
         try { socket.close(1000, "stale voice session"); } catch { /* already closed */ }
       }
-      try { source?.disconnect(); } catch { /* already disconnected */ }
-      try { worklet?.disconnect(); } catch { /* already disconnected */ }
-      try { silentMonitor?.disconnect(); } catch { /* already disconnected */ }
-      stream?.getTracks().forEach((track) => track.stop());
-      if (context && context.state !== "closed") void context.close().catch(() => undefined);
+      stream?.getTracks().forEach((track) => {
+        track.onended = null;
+        track.onmute = null;
+        track.onunmute = null;
+        track.stop();
+      });
+      if (worklet) worklet.port.onmessage = null;
+      source?.disconnect();
+      worklet?.disconnect();
+      silentMonitor?.disconnect();
+      if (
+        context
+        // Capture owns one process-lifetime AudioContext. A stale async start
+        // may dispose only its nodes/track; closing this shared context also
+        // kills a newer session that has already adopted it.
+        && context !== captureContextRef.current
+        && context.state !== "closed"
+      ) void context.close().catch(() => undefined);
       if (voiceSocketRef.current === socket) voiceSocketRef.current = null;
+      if (voiceSocketRef.current == null) voiceNativeCaptureRef.current = false;
       if (mediaStreamRef.current === stream) mediaStreamRef.current = null;
       if (audioContextRef.current === context) audioContextRef.current = null;
       if (audioSourceRef.current === source) audioSourceRef.current = null;
-      if (workletRef.current === worklet) workletRef.current = null;
+      if (micWorkletRef.current === worklet) micWorkletRef.current = null;
       if (silentMonitorRef.current === silentMonitor) silentMonitorRef.current = null;
     };
-    voiceConnectWatchdogRef.current = window.setTimeout(() => {
-      if (!isCurrent()) return;
-      voiceConnectWatchdogRef.current = null;
+    const recoverCapture = (reason: string) => {
+      if (!isCurrent() || recoveryStarted) return;
+      recoveryStarted = true;
+      invalidateCurrentStart();
       releaseLocal();
-      scheduleVoiceReconnect("语音连接等待超时");
-    }, 12_000);
+      resetStalledCaptureContext();
+      scheduleVoiceReconnect(reason);
+    };
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
-      if (!isCurrent()) { releaseLocal(); return; }
-      context = new AudioContext({ latencyHint: "interactive" });
-      if (context.state === "suspended") await context.resume();
-      if (context.state !== "running") throw new Error("麦克风音频上下文未能启动");
-      await context.audioWorklet.addModule("/assets/pcm-worklet.js");
-      if (!isCurrent()) { releaseLocal(); return; }
-      source = context.createMediaStreamSource(stream);
-      worklet = new AudioWorkletNode(context, "mindspace-pcm");
-      worklet.port.postMessage({
-        type: "configure",
-        noiseGateDb: num(settings?.audio.asr_noise_gate_db, -42),
-        adaptive: bool(settings?.audio.asr_adaptive_noise_enabled ?? true),
-        calibrationMs: num(settings?.audio.asr_noise_calibration_ms, 1500),
-        noiseMarginDb: 8,
-      });
-      silentMonitor = context.createGain();
-      silentMonitor.gain.value = 0;
+      // Prefer the resident native stream owned by the ASR worker. HyperX
+      // takes several seconds every time Windows opens the endpoint, so the
+      // worker pays that cost once during preload and the page only subscribes.
+      try {
+        const status = await requestWithTimeout<Record<string, unknown>>(
+          "/api/v1/audio/status",
+          {},
+          VOICE_NATIVE_CAPTURE_STATUS_TIMEOUT_MS,
+        );
+        const native = asRecord(asRecord(status.asr_detail).native_capture);
+        if (
+          str(native.state) === "error"
+          && str(native.error_code) === "no_input_device"
+        ) {
+          const error = new Error(
+            str(native.error || "Windows 没有发现可用麦克风输入设备"),
+          );
+          error.name = "NativeMicrophoneUnavailableError";
+          throw error;
+        }
+        nativeCaptureMode = bool(native.available)
+          && ["opening", "ready"].includes(str(native.state));
+        captureGraphReady = nativeCaptureMode && bool(native.ready);
+        captureHealthy = captureGraphReady;
+        hasCaptureFrame = captureGraphReady;
+      } catch (error) {
+        if ((error as Error).name === "NativeMicrophoneUnavailableError") {
+          setVoice((current) => ({
+            ...current,
+            phase: "error",
+            error: `无法开始监听：${(error as Error).message}`,
+            level: 0,
+          }));
+          return;
+        }
+        if (!voiceFallbackCaptureRef.current) {
+          setVoice((current) => ({
+            ...current,
+            phase: "preparing",
+            error: "本机麦克风仍在预热；不会自动抢占浏览器麦克风",
+            level: 0,
+          }));
+          scheduleVoiceReconnect("等待本机麦克风就绪", "preparing");
+          return;
+        }
+      }
+
+      if (!nativeCaptureMode && !voiceFallbackCaptureRef.current) {
+        setVoice((current) => ({
+          ...current,
+          phase: "preparing",
+          error: "本机语音服务正在准备麦克风；可稍候或手动切换备用采集",
+          level: 0,
+        }));
+        scheduleVoiceReconnect("等待本机麦克风首帧", "preparing");
+        return;
+      }
+
+      if (!nativeCaptureMode) {
+        // Browser fallback is explicit user intent only.  It must be live
+        // before opening ASR so it can never race a native device request.
+        ({ stream, context, source, worklet, monitor: silentMonitor } = await createVoiceCaptureGraph());
+        if (!isCurrent() || recoveryStarted) { releaseLocal(); return; }
+        activeTrack = stream.getAudioTracks()[0] || null;
+        if (!activeTrack) throw new Error("系统没有返回可用的麦克风音轨");
+        if (!context || context.state !== "running") throw new Error("麦克风音频上下文未能启动");
+        if (!source || !worklet || !silentMonitor) throw new Error("麦克风采集图未能建立");
+        const activeStream = stream as MediaStream;
+        const activeContext = context as AudioContext;
+        const activeSource = source as MediaStreamAudioSourceNode;
+        const activeWorklet = worklet as AudioWorkletNode;
+        const activeMonitor = silentMonitor as GainNode;
+        mediaStreamRef.current = activeStream;
+        audioContextRef.current = activeContext;
+        audioSourceRef.current = activeSource;
+        micWorkletRef.current = activeWorklet;
+        silentMonitorRef.current = activeMonitor;
+        captureGraphReady = true;
+        clearVoiceCaptureRecovery();
+      }
+      voiceNativeCaptureRef.current = nativeCaptureMode;
+
+      // ASR is resident and normally answers in milliseconds. Only transport
+      // recovery is retried automatically; it reuses the already-live graph.
       const protocol = location.protocol === "https:" ? "wss" : "ws";
       socket = new WebSocket(`${protocol}://${location.host}/api/v1/audio/asr/stream`);
       socket.binaryType = "arraybuffer";
-      if (!isCurrent()) { releaseLocal(); return; }
       const activeSocket = socket as WebSocket;
-      const activeStream = stream as MediaStream;
-      const activeContext = context as AudioContext;
-      const activeSource = source as MediaStreamAudioSourceNode;
-      const activeWorklet = worklet as AudioWorkletNode;
-      const activeMonitor = silentMonitor as GainNode;
       voiceSocketRef.current = activeSocket;
-      mediaStreamRef.current = activeStream;
-      audioContextRef.current = activeContext;
-      audioSourceRef.current = activeSource;
-      workletRef.current = activeWorklet;
-      silentMonitorRef.current = activeMonitor;
-      activeWorklet.port.onmessage = (event: MessageEvent<{ pcm: ArrayBuffer; level: number; noiseFloorDb?: number; calibrated?: boolean }>) => {
+      voiceConnectWatchdogRef.current = window.setTimeout(() => {
         if (!isCurrent()) return;
-        if (activeSocket.readyState !== WebSocket.OPEN || activeSocket.bufferedAmount > 256 * 1024) return;
-        const floor = num(event.data.noiseFloorDb, noiseFloorRef.current);
-        noiseFloorRef.current = floor;
-        if (voiceInputLockedRef.current) return;
-        activeSocket.send(event.data.pcm);
-        const now = performance.now();
-        if (event.data.calibrated && now - noiseReportRef.current.at >= 750 && Math.abs(floor - noiseReportRef.current.value) >= 1) {
-          noiseReportRef.current = { value: floor, at: now };
-          activeSocket.send(JSON.stringify({ action: "playback_state", playing: audioPlayingRef.current, noise_floor_db: floor }));
-        }
-        if (!audioPlayingRef.current && now - voiceLevelRenderRef.current >= 50) {
-          voiceLevelRenderRef.current = now;
-          setVoice((current) => ({ ...current, level: event.data.level }));
-        }
-      };
+        voiceConnectWatchdogRef.current = null;
+        recoveryStarted = true;
+        invalidateCurrentStart();
+        stopListening(false, true);
+        scheduleVoiceReconnect("语音识别连接等待超时");
+      }, VOICE_TRANSPORT_READY_TIMEOUT_MS);
+      const intent = { id: uid(), generation, lastEventSeq: 0 };
+      voiceIntentRef.current = intent;
       activeSocket.onopen = () => {
         if (!isCurrent()) { releaseLocal(); return; }
-        activeSocket.send(JSON.stringify({ action: "start", run_id: runIdRef.current }));
+        activeSocket.send(JSON.stringify({
+          action: "start",
+          run_id: runIdRef.current,
+          intent_id: intent.id,
+          generation: intent.generation,
+        }));
         activeSocket.send(JSON.stringify({ action: "playback_state", playing: audioPlayingRef.current }));
-        activeSource.connect(activeWorklet);
-        activeWorklet.connect(activeMonitor);
-        activeMonitor.connect(activeContext.destination);
       };
       activeSocket.onmessage = (event) => {
+        if (handleSocketEvent) handleSocketEvent(event);
+        else if (pendingSocketEvents.length < 8) pendingSocketEvents.push(event);
+      };
+      activeSocket.onerror = () => {
+        if (voiceConnectWatchdogRef.current != null) window.clearTimeout(voiceConnectWatchdogRef.current);
+        voiceConnectWatchdogRef.current = null;
+        if (isCurrent()) setVoice((current) => ({ ...current, phase: "connecting", error: "实时语音连接失败，等待恢复", level: 0 }));
+      };
+      activeSocket.onclose = () => {
+        if (voiceConnectWatchdogRef.current != null) window.clearTimeout(voiceConnectWatchdogRef.current);
+        voiceConnectWatchdogRef.current = null;
+        const current = isCurrent();
+        recoveryStarted = true;
+        if (current && captureGraphReady) {
+          // A socket reconnect does not require asking Windows for the
+          // microphone again. Park the still-live capture graph and let the
+          // bounded reconnect reuse it.
+          stopListening(false, true);
+        } else {
+          if (current) {
+            invalidateCurrentStart();
+            resetStalledCaptureContext();
+          }
+          releaseLocal();
+        }
+        if (current) scheduleVoiceReconnect("语音识别连接已断开");
+      };
+
+      const markTransportReady = () => {
+        if (!isCurrent() || !asrReady || !captureGraphReady) return;
+        if (voiceConnectWatchdogRef.current != null) window.clearTimeout(voiceConnectWatchdogRef.current);
+        voiceConnectWatchdogRef.current = null;
+        voiceReconnectAttemptRef.current = 0;
+        setVoice((current) => ({
+          ...current,
+          phase: audioPlayingRef.current ? "assistant-speaking" : "listening",
+          error: "",
+        }));
+        if (!audioPlayingRef.current) scheduleIdleContinuation("voice");
+      };
+      const markCaptureHealthy = () => {
+        if (!isCurrent() || captureHealthy || !asrReady || !hasCaptureFrame) return;
+        captureHealthy = true;
+      };
+      const flushPendingPCM = () => {
+        if (
+          !asrReady
+          || activeSocket.readyState !== WebSocket.OPEN
+          || activeSocket.bufferedAmount > 256 * 1024
+          || voiceInputLockedRef.current
+        ) return;
+        while (pendingPCM.length) activeSocket.send(pendingPCM.shift()!);
+      };
+      const handleCaptureFrame = (data: { pcm: ArrayBuffer; level: number }) => {
+        if (!isCurrent()) return;
+        lastCaptureFrameAt = performance.now();
+        hasCaptureFrame = true;
+        markCaptureHealthy();
+        if (voiceInputLockedRef.current) return;
+        if (
+          !asrReady
+          || activeSocket.readyState !== WebSocket.OPEN
+          || activeSocket.bufferedAmount > 256 * 1024
+        ) {
+          pendingPCM.push(data.pcm);
+          if (pendingPCM.length > VOICE_PENDING_PCM_FRAMES) pendingPCM.shift();
+        } else {
+          flushPendingPCM();
+          activeSocket.send(data.pcm);
+        }
+        const now = performance.now();
+        if (!audioPlayingRef.current && now - voiceLevelRenderRef.current >= 50) {
+          voiceLevelRenderRef.current = now;
+          setVoice((current) => ({ ...current, level: data.level }));
+        }
+      };
+      captureStartedAt = performance.now();
+      lastCaptureFrameAt = captureStartedAt;
+      markTransportReady();
+      if (nativeCaptureMode) {
+        captureWatchdog = window.setInterval(() => {
+          if (!isCurrent() || recoveryStarted) return;
+          const now = performance.now();
+          if (!captureGraphReady && now - captureStartedAt >= 30_000) {
+            recoverCapture("后台麦克风启动超时");
+            return;
+          }
+          if (
+            captureGraphReady
+            && hasCaptureFrame
+            && now - lastCaptureFrameAt >= VOICE_CAPTURE_STALL_TIMEOUT_MS
+          ) {
+            recoverCapture("后台麦克风采集已中断");
+          }
+        }, 1_000);
+        voiceCaptureWatchdogRef.current = captureWatchdog;
+      } else if (activeTrack && worklet) {
+        activeTrack.onended = () => recoverCapture("麦克风设备已断开");
+        // A transient track mute is common while Windows changes audio focus.
+        // Let the existing track recover in place; only `ended` or a sustained
+        // capture stall should rebuild the whole microphone/WebSocket path.
+        activeTrack.onmute = null;
+        activeTrack.onunmute = () => { lastCaptureFrameAt = performance.now(); };
+        worklet.port.onmessage = (event: MessageEvent<{ pcm?: ArrayBuffer; level?: number }>) => {
+          const pcm = event.data?.pcm;
+          if (!(pcm instanceof ArrayBuffer)) return;
+          handleCaptureFrame({ pcm, level: num(event.data.level) });
+        };
+        captureWatchdog = window.setInterval(() => {
+          if (!isCurrent() || recoveryStarted) return;
+          const now = performance.now();
+          if (activeTrack?.readyState !== "live") {
+            recoverCapture("麦克风设备已断开");
+            return;
+          }
+          if (asrReady && !hasCaptureFrame && now - captureStartedAt >= VOICE_CAPTURE_READY_TIMEOUT_MS) {
+            recoverCapture("麦克风没有返回音频");
+            return;
+          }
+          if (hasCaptureFrame && now - lastCaptureFrameAt >= VOICE_CAPTURE_STALL_TIMEOUT_MS) {
+            recoverCapture("麦克风采集已中断");
+          }
+        }, 1_000);
+        voiceCaptureWatchdogRef.current = captureWatchdog;
+      }
+      handleSocketEvent = (event) => {
         if (!isCurrent()) return;
         let payload: { event: string; data: Record<string, unknown> };
         try {
@@ -1607,13 +2539,63 @@ function App() {
           setVoice((current) => ({ ...current, phase: "error", error: "实时语音返回了无效数据", level: 0 }));
           return;
         }
+        const eventIntentId = str(payload.data.intent_id);
+        const eventGeneration = num(payload.data.generation);
+        const eventSeq = num(payload.data.event_seq);
+        if (eventIntentId && (
+          eventIntentId !== voiceIntentRef.current.id
+          || eventGeneration !== voiceIntentRef.current.generation
+          || (eventSeq > 0 && eventSeq <= voiceIntentRef.current.lastEventSeq)
+        )) return;
+        if (eventIntentId && eventSeq > 0) voiceIntentRef.current.lastEventSeq = eventSeq;
         if (shouldIgnoreASREvent(voiceInputLockedRef.current, payload.event)) return;
         if (payload.event === "asr.ready") {
-          if (voiceConnectWatchdogRef.current != null) window.clearTimeout(voiceConnectWatchdogRef.current);
-          voiceConnectWatchdogRef.current = null;
-          voiceReconnectAttemptRef.current = 0;
-          setVoice((current) => ({ ...current, phase: "listening", error: "" }));
-          scheduleIdleContinuation("voice");
+          asrReady = true;
+          // The WebSocket/model is healthy even when the process-lifetime
+          // microphone is still completing its one-time device open.
+          if (voiceConnectWatchdogRef.current != null) {
+            window.clearTimeout(voiceConnectWatchdogRef.current);
+            voiceConnectWatchdogRef.current = null;
+          }
+          const captureMode = str(payload.data.capture_mode);
+          if (nativeCaptureMode && captureMode !== "native") {
+            recoverCapture("后台麦克风不可用，正在切换备用采集");
+            return;
+          }
+          if (captureMode === "native") {
+            nativeCaptureMode = true;
+            voiceNativeCaptureRef.current = true;
+            captureGraphReady = bool(payload.data.capture_ready);
+            captureHealthy = captureGraphReady;
+            hasCaptureFrame = captureGraphReady;
+            if (captureGraphReady) clearVoiceCaptureRecovery();
+          } else {
+            flushPendingPCM();
+          }
+          markTransportReady();
+          markCaptureHealthy();
+          // Transport readiness is enough to enter listening. The first PCM
+          // frame is monitored separately and must never hold the UI in the
+          // misleading "connecting" state.
+        }
+        if (payload.event === "asr.capture_ready") {
+          nativeCaptureMode = true;
+          voiceNativeCaptureRef.current = true;
+          captureGraphReady = true;
+          captureHealthy = true;
+          hasCaptureFrame = true;
+          clearVoiceCaptureRecovery();
+          markTransportReady();
+        }
+        if (payload.event === "asr.level") {
+          const now = performance.now();
+          lastCaptureFrameAt = now;
+          hasCaptureFrame = true;
+          markCaptureHealthy();
+          if (!audioPlayingRef.current && now - voiceLevelRenderRef.current >= 50) {
+            voiceLevelRenderRef.current = now;
+            setVoice((current) => ({ ...current, level: num(payload.data.level) }));
+          }
         }
         if (payload.event === "asr.loading") setVoice((current) => ({ ...current, phase: "connecting" }));
         if (payload.event === "asr.speech_candidate") {
@@ -1622,9 +2604,10 @@ function App() {
           if (audioPlayingRef.current) {
             setPlaybackDucked(true);
             setVoice((current) => ({ ...current, phase: "candidate-interruption", error: "" }));
-          } else {
-            setVoice((current) => ({ ...current, phase: "user-speaking", error: "" }));
           }
+          // A raw energy candidate is not yet confirmed speech. In quiet
+          // listening mode keep the UI stable until FSMN-VAD or a decoded
+          // partial confirms that the user is actually speaking.
         }
         if (payload.event === "asr.speech_candidate_cleared") {
           setPlaybackDucked(false);
@@ -1680,7 +2663,6 @@ function App() {
           } = disposition;
           const uncertainLabel = uncertainSegments.map((item) => item.text).join("、");
           const displayText = confirmedText && uncertainLabel ? `${confirmedText}（可能是：${uncertainLabel}）` : confirmedText || (rawText ? `（可能是：${rawText}）` : "");
-          const emotionToken = str(payload.data.emotion_token);
           setVoice((current) => ({ ...current, transcript: displayText, phase: "transcribing", level: 0 }));
           if (disposition.commitBargeIn && audioPlayingRef.current && !bargeCommittedRef.current) {
             const now = performance.now();
@@ -1718,7 +2700,7 @@ function App() {
                   ].filter((reason, index, values) => values.indexOf(reason) === index),
                 };
               }
-              queueVoiceSegment(confirmedText, false, emotionToken);
+              queueVoiceSegment(confirmedText, false);
               if (uncertainLabel) setVoice((current) => ({ ...current, transcript: displayText }));
             }
           } else if (displayText) {
@@ -1740,7 +2722,7 @@ function App() {
         if (payload.event === "asr.deferred") {
           const quality = str(payload.data.quality || "uncertain");
           const confirmed = str(payload.data.confirmed_text).trim();
-          if (confirmed && quality !== "rejected") queueVoiceSegment(confirmed, true, str(payload.data.emotion_token));
+          if (confirmed && quality !== "rejected") queueVoiceSegment(confirmed, true);
           else setPlaybackDucked(false);
         }
         if (payload.event === "asr.interrupted") setVoice((current) => ({ ...current, phase: "interrupted", reply: "", level: 0 }));
@@ -1749,29 +2731,33 @@ function App() {
           try { activeSocket.close(1012, "asr service unavailable"); } catch { /* close handler will recover */ }
         }
       };
-      activeSocket.onerror = () => {
-        if (voiceConnectWatchdogRef.current != null) window.clearTimeout(voiceConnectWatchdogRef.current);
-        voiceConnectWatchdogRef.current = null;
-        if (isCurrent()) setVoice((current) => ({ ...current, phase: "connecting", error: "实时语音连接失败，等待恢复", level: 0 }));
-      };
-      activeSocket.onclose = () => {
-        if (voiceConnectWatchdogRef.current != null) window.clearTimeout(voiceConnectWatchdogRef.current);
-        voiceConnectWatchdogRef.current = null;
-        const current = isCurrent();
-        releaseLocal();
-        if (current) scheduleVoiceReconnect("语音识别连接已断开");
-      };
+      pendingSocketEvents.splice(0).forEach((event) => handleSocketEvent?.(event));
     } catch (error) {
       const current = isCurrent();
+      const retryable = shouldRetryMicrophoneStartup(error);
+      recoveryStarted = true;
+      // Invalidate this generation before closing the speculative ASR socket.
+      // Otherwise its queued `close` event can overwrite a concrete microphone
+      // permission error with a generic reconnecting state.
+      if (current) invalidateCurrentStart();
       releaseLocal();
+      if (current && retryable) resetStalledCaptureContext();
       if (current) {
         if (voiceConnectWatchdogRef.current != null) window.clearTimeout(voiceConnectWatchdogRef.current);
         voiceConnectWatchdogRef.current = null;
-        voiceSessionGenerationRef.current += 1;
-        setVoice((state) => ({ ...state, phase: "error", error: `无法使用麦克风：${(error as Error).message}`, level: 0 }));
+        const message = `无法使用麦克风：${(error as Error).message}`;
+        if (retryable) {
+          scheduleVoiceReconnect(message);
+        } else {
+          setVoice((state) => ({ ...state, phase: "error", error: message, level: 0 }));
+        }
+      }
+    } finally {
+      if (voiceStartInFlightGenerationRef.current === generation) {
+        voiceStartInFlightGenerationRef.current = null;
       }
     }
-  }, [cancelIdleContinuation, cancelRun, captureVoiceInterruption, queueVoiceSegment, scheduleIdleContinuation, scheduleVoiceReconnect, setPlaybackDucked, settings?.audio.asr_adaptive_noise_enabled, settings?.audio.asr_noise_calibration_ms, settings?.audio.asr_noise_gate_db, stopAudio, stopListening]);
+  }, [cancelIdleContinuation, cancelRun, captureVoiceInterruption, createVoiceCaptureGraph, queueVoiceSegment, resetStalledCaptureContext, scheduleIdleContinuation, scheduleVoiceReconnect, setPlaybackDucked, stopAudio, stopListening]);
 
   useEffect(() => {
     startListeningRef.current = () => { void startListening(); };
@@ -1779,6 +2765,7 @@ function App() {
   }, [startListening]);
 
   const enterVoice = useCallback((context: VoiceInteractionContext) => {
+    if (voiceOpenRef.current) return;
     cancelIdleContinuation();
     idleContinuationSentRef.current = false;
     companionRoundRef.current = 0;
@@ -1790,15 +2777,21 @@ function App() {
     voiceInteractionRef.current = context;
     voiceSegmentsRef.current = [];
     deferredVoiceSegmentsRef.current = [];
-    voiceEmotionTokensRef.current = [];
-    deferredEmotionTokensRef.current = [];
-    activeVoiceEmotionTokensRef.current = [];
     activeVoiceTurnTextRef.current = "";
     activeVoiceTurnRoundRef.current = 0;
     pendingASREvidenceRef.current = null;
     setVoice({ open: true, phase: "connecting", transcript: "", reply: "", level: 0, error: "" });
     void startListening();
   }, [cancelIdleContinuation, startListening]);
+
+  useEffect(() => {
+    const recovery = readVoiceCaptureRecovery();
+    if (!recovery) return;
+    // Keep the attempt marker until a real microphone track is acquired. This
+    // guarantees at most one automatic renderer rebuild for one voice entry.
+    const timer = window.setTimeout(() => enterVoice(recovery.context), 0);
+    return () => window.clearTimeout(timer);
+  }, [enterVoice]);
 
   const openVoiceEntry = useCallback(() => {
     const saved = savedVoiceInteraction(settings);
@@ -1818,10 +2811,9 @@ function App() {
     setVoiceEntryError("");
     setModalDirty(false);
     setModal(null);
-    if (!voiceOpenRef.current && !audioPlayingRef.current) closePlaybackContext();
-  }, [closePlaybackContext]);
+  }, []);
 
-  const startVoiceFromEntry = useCallback(async () => {
+  const startVoiceFromEntry = useCallback(() => {
     if (voiceEntryBusy || voiceEntryControllerRef.current) return;
     const context: VoiceInteractionContext = {
       mode: voiceEntryMode,
@@ -1833,53 +2825,38 @@ function App() {
     voiceEntryControllerRef.current = controller;
     setVoiceEntryBusy(true);
     setVoiceEntryError("");
-    // 在用户点击事件仍然有效时就创建/恢复播放上下文，避免等待 HTTP
-    // 以后再创建 AudioContext 被 Chromium 的自动播放策略挂起。
-    const playbackReady = playbackContext();
-    try {
-      const [result, audioStatus] = await Promise.all([
-        requestWithTimeout<{ settings: ProductSettings }>("/api/v1/settings", {
-          method: "PUT",
-          body: JSON.stringify({
-            interaction: {
-              voice_entry_mode: context.mode,
-              face_to_face_scene: context.scene,
-            },
-          }),
-          signal: controller.signal,
-        }),
-        requestWithTimeout<Record<string, unknown>>(
-          "/api/v1/audio/status",
-          { signal: controller.signal },
-          VOICE_ENTRY_TIMEOUT_MS,
-        ),
-        playbackReady,
-      ]);
-      if (!bool(audioStatus.asr_ready)) {
-        throw new Error(str(audioStatus.asr_error || "语音识别服务尚未就绪"));
+    setModalDirty(false);
+    setModal(null);
+    setVoiceEntryBusy(false);
+    enterVoice(context);
+
+    // Persist the user's last interaction choice in the background. Failure to
+    // save this preference does not tear down a healthy microphone session.
+    void requestWithTimeout<{ settings: ProductSettings }>("/api/v1/settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        interaction: {
+          voice_entry_mode: context.mode,
+          face_to_face_scene: context.scene,
+        },
+      }),
+      signal: controller.signal,
+    }, VOICE_ENTRY_PERSIST_TIMEOUT_MS).then((result) => {
+      if (generation === voiceEntryGenerationRef.current && !controller.signal.aborted) {
+        setSettings(result.settings);
       }
-      if (!bool(audioStatus.tts_ready)) {
-        throw new Error(str(audioStatus.tts_error || "语音播放服务尚未就绪"));
+    }).catch((error: Error) => {
+      if (error.name !== "AbortError" && generation === voiceEntryGenerationRef.current) {
+        notify(`通话偏好暂未保存：${error.message}`);
       }
-      if (generation !== voiceEntryGenerationRef.current || controller.signal.aborted) return;
-      setSettings(result.settings);
-      setModalDirty(false);
-      setModal(null);
-      enterVoice(context);
-    } catch (error) {
-      controller.abort("voice_entry_failed");
-      if ((error as Error).name !== "AbortError" && generation === voiceEntryGenerationRef.current) {
-        const message = (error as Error).message;
-        setVoiceEntryError(message);
-        notify(message);
-      }
-    } finally {
+    }).finally(() => {
       if (voiceEntryControllerRef.current === controller) voiceEntryControllerRef.current = null;
-      if (generation === voiceEntryGenerationRef.current) setVoiceEntryBusy(false);
-    }
-  }, [enterVoice, notify, playbackContext, voiceEntryBusy, voiceEntryMode, voiceEntryScene]);
+    });
+  }, [enterVoice, notify, voiceEntryBusy, voiceEntryMode, voiceEntryScene]);
 
   const exitVoice = useCallback(() => {
+    voiceEntryControllerRef.current?.abort();
+    voiceEntryControllerRef.current = null;
     cancelIdleContinuation();
     companionRoundRef.current = 0;
     companionArmedRef.current = false;
@@ -1896,53 +2873,79 @@ function App() {
     voiceMergeTimerRef.current = null;
     voiceSegmentsRef.current = [];
     deferredVoiceSegmentsRef.current = [];
-    voiceEmotionTokensRef.current = [];
-    deferredEmotionTokensRef.current = [];
-    activeVoiceEmotionTokensRef.current = [];
     activeVoiceTurnTextRef.current = "";
     activeVoiceTurnRoundRef.current = 0;
-    stopListening(false);
+    stopListening(false, true, true);
+    if (runIdRef.current) {
+      captureVoiceInterruption("voice_mode_closed");
+      void cancelRun();
+    }
     stopAudio();
-    closePlaybackContext();
     setVoice({ open: false, phase: "idle", transcript: "", reply: "", level: 0, error: "" });
     if (messages.some((item) => item.role === "assistant" && item.status === "complete")) {
       scheduleIdleContinuation("text");
     }
-  }, [cancelIdleContinuation, closePlaybackContext, messages, scheduleIdleContinuation, stopAudio, stopListening]);
+  }, [cancelIdleContinuation, cancelRun, captureVoiceInterruption, messages, scheduleIdleContinuation, stopAudio, stopListening]);
 
-  const retryVoice = useCallback(async () => {
+  const retryVoice = useCallback(() => {
     if (voiceReconnectTimerRef.current != null) window.clearTimeout(voiceReconnectTimerRef.current);
     voiceReconnectTimerRef.current = null;
     voiceReconnectAttemptRef.current = 0;
     voiceInputLockedRef.current = false;
     stopAudio();
-    try {
-      await playbackContext();
-      void startListening();
-    } catch (error) {
-      setVoice((current) => ({ ...current, phase: "error", error: (error as Error).message, level: 0 }));
-    }
-  }, [playbackContext, startListening, stopAudio]);
+    voiceFallbackCaptureRef.current = false;
+    stopListening(false);
+    void startListening();
+  }, [startListening, stopAudio, stopListening]);
 
-  const newSession = useCallback(() => {
+  const useBrowserVoiceFallback = useCallback(() => {
+    if (voiceReconnectTimerRef.current != null) window.clearTimeout(voiceReconnectTimerRef.current);
+    voiceReconnectTimerRef.current = null;
+    voiceReconnectAttemptRef.current = 0;
+    voiceFallbackCaptureRef.current = true;
+    stopListening(false);
+    void startListening();
+  }, [startListening, stopListening]);
+
+  const createSessionForCharacter = useCallback(async (character: CharacterSummary | CharacterRecord) => {
     cancelIdleContinuation();
     idleContinuationSentRef.current = false;
     companionRoundRef.current = 0;
     companionArmedRef.current = false;
     setCompanionRound(0);
     voiceDeliveryRef.current = null;
-    if (generating) void cancelRun();
+    if (generating) await cancelRun();
     const id = uid();
+    await request<SessionDocument>("/api/v1/sessions", {
+      method: "POST",
+      body: JSON.stringify({ session_id: id, character_id: character.character_id }),
+    });
     setSessionId(id);
     localStorage.setItem("mindspace.session", id);
+    setActiveCharacterId(character.character_id);
+    setActiveActivitySessionId("");
+    await loadConversationScene(id);
     setMessages([]); setRound(1); setEvents([]); setRetrieval([]); setSidebarOpen(false);
+    setCharacterPickerOpen(false);
+    setAppView("chat");
+    window.history.replaceState(null, "", `#/chat/${id}`);
+    await loadSessions();
     notify("已创建新对话");
-  }, [cancelIdleContinuation, cancelRun, generating, notify]);
+  }, [cancelIdleContinuation, cancelRun, generating, loadConversationScene, loadSessions, notify]);
+
+  const newSession = useCallback(() => {
+    setCharacterPickerScope("all");
+    setCharacterPickerOpen(true);
+  }, []);
 
   const deleteSession = async (id: string) => {
     if (!window.confirm("确定删除这个会话吗？")) return;
     await request(`/api/v1/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
-    if (id === sessionId) newSession();
+    if (id === sessionId) {
+      setMessages([]);
+      setConversationScene(null);
+      navigate("modes");
+    }
     await loadSessions();
     notify("会话已删除");
   };
@@ -1971,9 +2974,11 @@ function App() {
     link.download = `mindspace-${sessionId}.md`; link.click(); URL.revokeObjectURL(link.href); notify("会话已导出");
   };
 
-  const speakMessage = (text: string) => {
+  const speakMessage = (text: string, voiceCue = "neutral") => {
     stopAudio();
-    segmentSpeechText(text, voiceOpenRef.current).forEach((sentence) => enqueueSpeech(sentence, true));
+    // Manual replay and live Qwen replies both use one continuous synthesis
+    // request, so sentence boundaries cannot reset the sampled voice.
+    enqueueSpeech(text, true, voiceCue);
   };
   const openModal = (name: Exclude<ModalName, null>) => { setModalDirty(false); setModal(name); };
   const closeModal = useCallback(() => {
@@ -2005,58 +3010,183 @@ function App() {
     voiceEntryControllerRef.current?.abort();
     stopListening(false);
     stopAudio();
+    closeCaptureContext();
     closePlaybackContext();
-  }, [closePlaybackContext, stopAudio, stopListening]);
+  }, [closeCaptureContext, closePlaybackContext, stopAudio, stopListening]);
 
   const filteredSessions = useMemo(() => sessions.filter((item) => item.title.toLowerCase().includes(search.toLowerCase())), [search, sessions]);
   const title = sessions.find((item) => item.session_id === sessionId)?.title || "新对话";
   const userName = str(settings?.persona.user_name || "用户");
-  const characterName = str(settings?.persona.character_name || "Mindspace");
+  const characterName = activeCharacter?.display_name || str(settings?.persona.character_name || "Mindspace");
+  const pickerCharacters = characterPickerScope === "custom"
+    ? characters.filter((item) => item.source !== "draw")
+    : characters;
+  const interruptedSession = sessions.find((item) => Boolean((item as SessionSummary & { interrupted?: boolean }).interrupted));
+
+  const enterDrawMode = async () => {
+    const recent = characters.find((item) => item.source === "draw");
+    if (!recent) {
+      navigate("draw");
+      return;
+    }
+    if (recent.latest_session_id) {
+      await openSession(recent.latest_session_id);
+      return;
+    }
+    await createSessionForCharacter(recent);
+  };
+
+  const enterCustomMode = () => {
+    setCharacterPickerScope("custom");
+    setCharacterPickerOpen(true);
+  };
+
+  if (appView === "modes") {
+    return <>
+      <ModeLobby
+        characters={characters}
+        interrupted={interruptedSession}
+        onDraw={() => void enterDrawMode()}
+        onCustom={enterCustomMode}
+        onLibrary={() => navigate("characters")}
+        onResume={(id) => void openSession(id)}
+      />
+      <CharacterPicker
+        open={characterPickerOpen}
+        characters={pickerCharacters}
+        title={characterPickerScope === "custom" ? "选择自定义模式角色" : "选择本次对话的角色"}
+        onClose={() => setCharacterPickerOpen(false)}
+        onChoose={(character) => void createSessionForCharacter(character)}
+        onDraw={() => { setCharacterPickerOpen(false); navigate("draw"); }}
+      />
+      {toast && <div className="toast" role="status">{toast}</div>}
+    </>;
+  }
+
+  if (appView === "draw") {
+    return <DrawWorkshop
+      defaultUserName={userName}
+      onBack={() => navigate("modes")}
+      onCommitted={(character) => {
+        void loadCharacters().then(() => createSessionForCharacter(character));
+      }}
+    />;
+  }
+
+  if (appView === "characters") {
+    return <CharacterLibrary
+      characters={characters}
+      onBack={() => navigate("modes")}
+      onRefresh={async () => { await loadCharacters(); }}
+      onChat={(character) => void createSessionForCharacter(character)}
+      onDraw={() => navigate("draw")}
+    />;
+  }
+
+  if (activeCharacter && appView === "journal") {
+    return <JournalPage
+      character={activeCharacter}
+      sessionId={sessionId}
+      onBack={() => navigate("chat")}
+      onChanged={loadCharacters}
+      notify={notify}
+    />;
+  }
+
+  if (activeCharacter && appView === "scenes") {
+    return <ScenePickerPage
+      character={activeCharacter}
+      sessionId={sessionId}
+      current={conversationScene}
+      onBack={() => navigate("chat")}
+      onChanged={setConversationScene}
+      notify={notify}
+    />;
+  }
+
+  if (activeCharacter && appView === "moments") {
+    return <MomentsPage
+      character={activeCharacter}
+      onBack={() => navigate("chat")}
+      onChanged={loadCharacters}
+      notify={notify}
+    />;
+  }
+
+  if (activeCharacter && appView === "activities") {
+    return <ActivitiesPage
+      character={activeCharacter}
+      sessionId={sessionId}
+      onBack={() => navigate("chat")}
+      onChanged={loadCharacters}
+      onContinueChat={(activitySessionId) => {
+        setActiveActivitySessionId(activitySessionId);
+        navigate("chat");
+        notify("活动现场已接入本轮对话；界面动作仍由服务端推进");
+      }}
+      notify={notify}
+    />;
+  }
 
   return <div className={`app-shell ${inspectorOpen ? "inspector-visible" : "inspector-hidden"}`}>
     <aside className={`sidebar ${sidebarOpen ? "mobile-open" : ""}`}>
-      <div className="brand-row"><div className="brand-mark">M</div><div><strong>Mindspace</strong><small>LANGGRAPH STUDIO</small></div><button className="icon-button mobile-only" onClick={() => setSidebarOpen(false)} aria-label="关闭会话栏">×</button></div>
+      <div className="brand-row"><button className="brand-mark" onClick={() => navigate("modes")} title="返回模式大厅">M</button><div><strong>Mindspace</strong><small>LANGGRAPH STUDIO</small></div><button className="icon-button mobile-only" onClick={() => setSidebarOpen(false)} aria-label="关闭会话栏">×</button></div>
       <button className="new-chat" onClick={newSession}><span>＋</span> 新建对话 <kbd>Ctrl N</kbd></button>
       <label className="search-box"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索会话" aria-label="搜索会话" /></label>
       <div className="session-heading"><span>最近会话</span><small>{filteredSessions.length}</small></div>
       <nav className="session-list">
-        {filteredSessions.length ? filteredSessions.map((item) => <div className={`session-item ${item.session_id === sessionId ? "active" : ""}`} key={item.session_id}><button className="session-open" onClick={() => void openSession(item.session_id)}><span className="session-glyph">◌</span><span><strong>{item.title}</strong><small>{item.message_count} 条 · {formatTime(item.updated_at)}</small></span></button><button className="session-delete" onClick={() => void deleteSession(item.session_id)} title="删除会话" aria-label={`删除会话 ${item.title}`}>×</button></div>) : <div className="empty-mini">没有匹配的会话</div>}
+        {filteredSessions.length ? filteredSessions.map((item) => <div className={`session-item ${item.session_id === sessionId ? "active" : ""}`} key={item.session_id}><button className="session-open" onClick={() => void openSession(item.session_id)}>{item.character_avatar?.src ? <img className="session-avatar" src={item.character_avatar.src} alt="" /> : <span className="session-glyph">◌</span>}<span><strong>{item.title}</strong><small>{item.character_name ? `${item.character_name} · ` : ""}{item.message_count} 条 · {formatTime(item.updated_at)}</small></span></button><button className="session-delete" onClick={() => void deleteSession(item.session_id)} title="删除会话" aria-label={`删除会话 ${item.title}`}>×</button></div>) : <div className="empty-mini">没有匹配的会话</div>}
       </nav>
       <div className="sidebar-tools"><button onClick={() => openModal("knowledge")}><span>▱</span> 全局知识库</button><button onClick={() => openModal("memory")}><span>◎</span> 记忆中心</button><button onClick={() => { setProfileEditorRole("user"); openModal("profile"); }}><span>◇</span> 人物与状态档案</button><button onClick={() => openModal("diagnostics")}><span>⌁</span> 系统诊断</button></div>
-      <div className="account-card"><PortraitAvatar role="assistant" avatars={avatars} label={characterName} className="small" onClick={() => setProfileCardRole("assistant")} /><button className="account-settings" onClick={() => openModal("settings")}><span><strong>{characterName}</strong><small><i /> 服务已连接</small></span><b>设置</b></button></div>
+      <div className="account-card"><PortraitAvatar role="assistant" avatars={effectiveAvatars} label={characterName} className="small" onClick={() => setProfileCardRole("assistant")} /><button className="account-settings" onClick={() => navigate("characters")}><span><strong>{characterName}</strong><small><i /> 当前角色 · 已隔离</small></span><b>卡册</b></button></div>
     </aside>
 
-    <main className="workspace">
-      <header className="topbar"><button className="mobile-only mobile-menu" onClick={() => setSidebarOpen(true)} aria-label="打开会话栏">☰</button><div className="title-block"><h1>{title}</h1><span>{generating ? "正在运行编排" : `第 ${round} 轮 · 已就绪`}</span></div><div className="top-actions"><span className={`model-chip ${llmReady ? "" : "warning"}`} title={llmReady ? "真实 LLM API 已配置" : "LLM API 尚未配置"}><i />{llmReady ? str(settings?.llm.model || "LLM") : "LLM 未配置"}</span><button onClick={exportSession} title="导出会话" aria-label="导出会话">⇩</button><button className="text-action" onClick={showFlow} title="查看 LangGraph 节点执行过程">执行详情</button><button onClick={() => openModal("settings")} title="产品设置" aria-label="产品设置">⚙</button></div></header>
-      <section className="conversation">
+    <main className={`workspace${conversationScene?.scene ? " scene-active" : ""}`}>
+      {conversationScene?.scene && <div
+        key={conversationScene.scene.scene_id}
+        className="chat-scene-background"
+        style={{ backgroundImage: `url("${sceneAssetPath(conversationScene.scene.asset_id)}")` }}
+        aria-hidden="true"
+      />}
+      <header className="topbar"><button className="mobile-only mobile-menu" onClick={() => setSidebarOpen(true)} aria-label="打开会话栏">☰</button><div className="title-block"><h1>{title}</h1><span>{characterName} · {generating ? "正在运行编排" : `第 ${round} 轮 · 已就绪`}</span></div><div className="top-actions"><button className="chapter-heart-entry" onClick={() => navigate("moments")} title="打开共同篇章"><img src={`/assets/archive/icons/heart-${activeCharacter?.chapters?.heart_state === "trace" ? "trace" : activeCharacter?.chapters?.heart_state === "warm" ? "warm" : activeCharacter?.chapters?.heart_state === "glow" || activeCharacter?.chapters?.heart_state === "keepsake" ? "glow" : "empty"}.svg`} alt="" /><span>共同篇章</span><b>{activeCharacter?.chapters?.moment_count || 0}</b></button><button className="text-action" onClick={() => navigate("modes")}>模式大厅</button>{activeCharacter?.source === "draw" ? <button className="text-action" onClick={() => navigate("draw")}>重新抽卡</button> : <button className="text-action" onClick={() => navigate("draw")}>前往灵感抽卡</button>}<span className={`model-chip ${llmReady ? "" : "warning"}`} title={llmReady ? "真实 LLM API 已配置" : "LLM API 尚未配置"}><i />{llmReady ? str(settings?.llm.model || "LLM") : "LLM 未配置"}</span><button onClick={exportSession} title="导出会话" aria-label="导出会话">⇩</button><button className="text-action" onClick={showFlow} title="查看 LangGraph 节点执行过程">执行详情</button><button onClick={() => openModal("settings")} title="产品设置" aria-label="产品设置">⚙</button></div></header>
+      <section
+        className="conversation"
+        ref={conversationRef}
+        onScroll={handleConversationScroll}
+        onWheel={(event) => { if (event.deltaY < 0) pauseConversationFollow(); }}
+        onTouchMove={pauseConversationFollow}
+      >
         {!messages.length && <div className="welcome-panel"><span className="eyebrow">PRIVATE · LOCAL · STATEFUL</span><h2>让每一次对话<br />都成为连续的记忆</h2><p>双源检索、角色一致性、状态写回与实时语音，都由可观察的 LangGraph 流程调度。</p><div className="prompt-grid">{["解释当前 LangGraph 节点如何调度", "总结知识库中最重要的三点", "检查当前角色和状态档案", "设计一个低延迟语音对话流程"].map((value) => <button key={value} onClick={() => void sendMessage(value)}><span>↗</span>{value}</button>)}</div></div>}
-        <MessageList messages={messages} avatars={avatars} userName={userName} characterName={characterName} onProfile={setProfileCardRole} onCopy={(text) => { void navigator.clipboard.writeText(text); notify("已复制回复"); }} onSpeak={speakMessage} onRegenerate={(value, targetRound) => void sendMessage(value, "regenerate", targetRound)} onInitiative={(targetRound) => void sendMessage("", "regenerate", targetRound, true)} onDelete={(messageId) => void deleteReply(messageId)} />
+        <MessageList messages={messages} avatars={effectiveAvatars} userName={userName} characterName={characterName} onProfile={setProfileCardRole} onCopy={(text) => { void navigator.clipboard.writeText(text); notify("已复制回复"); }} onSpeak={speakMessage} onRegenerate={(value, targetRound) => void sendMessage(value, "regenerate", targetRound)} onInitiative={(targetRound) => void sendMessage("", "regenerate", targetRound, true)} onDelete={(messageId) => void deleteReply(messageId)} />
+        <div className="conversation-tail" ref={conversationTailRef} aria-hidden="true" />
       </section>
-      <section className="composer-wrap">{generating && <div className="run-strip"><span><i /> 正在流式执行 · {runId.slice(0, 8)}</span><button onClick={() => void cancelRun()}>停止生成</button></div>}<div className="composer"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} placeholder="输入消息，或开启实时语音…" rows={1} /><div className="composer-row"><div><button className="voice-entry" onClick={openVoiceEntry}>● 实时语音</button><button className="initiative-entry" disabled={generating} onClick={() => void sendMessage("", "primary", round, true)} title="不输入文字，让角色根据当前关系主动说点什么">✦ 让 AI 说点什么</button><button onClick={() => openModal("knowledge")}>＋ 知识</button><button onClick={showContext}>本轮引用 <b>{retrieval.length}</b></button></div><button className="send" onClick={() => generating ? void cancelRun() : void sendMessage()} disabled={!generating && !input.trim()} aria-label={generating ? "停止生成" : "发送消息"}>{generating ? "■" : "↑"}</button></div></div><div className="composer-meta"><span>Enter 发送 · Shift+Enter 换行 · Esc 打断</span><button onClick={() => void clearCurrent()}>清空当前上下文</button></div></section>
+      <section className="composer-wrap">{generating && <div className="run-strip"><span><i /> 正在流式执行 · {runId.slice(0, 8)}</span><button onClick={() => void cancelRun()}>停止生成</button></div>}{activeActivitySessionId && <div className="activity-context-strip"><span>活动现场已接入本轮 Prompt</span><button className="chapter-control-button secondary" onClick={() => navigate("activities")}>查看活动</button><button className="chapter-control-button quiet" onClick={() => setActiveActivitySessionId("")}>退出活动</button></div>}<div className="composer"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} placeholder="输入消息，或开启实时语音…" rows={1} /><div className="composer-row"><div><button className="voice-entry" onClick={openVoiceEntry}>● 实时语音</button><button className={`adult-entry${adultMode ? " active" : ""}`} aria-pressed={adultMode} onClick={toggleAdultMode} title="开启或关闭 NSFW 模式">NSFW</button>{adultMode && <select className="r18-style-select" value={r18StyleId} aria-label="R18 风格包" onChange={(event) => { const next = event.target.value; setR18StyleId(next); localStorage.setItem(R18_STYLE_STORAGE_KEY, next); }}><option value="high_intensity">高强度推进</option><option value="immersive_narrative">叙事沉浸</option><option value="dialogue_led">台词主导</option></select>}<button className="initiative-entry" disabled={generating} onClick={() => void sendMessage("", "primary", round, true)} title="不输入文字，让角色根据当前关系主动说点什么">✦ 让 AI 说点什么</button><button className={`scene-entry${conversationScene?.scene ? " active" : ""}`} onClick={() => navigate("scenes")}><img src="/assets/archive/icons/activity-scene.svg" alt="" /><span>{conversationScene?.scene?.title || "场景"}</span></button><details className="composer-menu"><summary>共同篇章</summary><div><button className="chapter-composer-entry" onClick={() => navigate("activities")}><img src="/assets/archive/icons/chapter-activity.svg" alt="" />陪伴活动</button><button className="chapter-composer-entry" onClick={() => navigate("journal")}><img src="/assets/archive/icons/chapter-journal.svg" alt="" />角色日记</button><button className="chapter-composer-entry" onClick={() => navigate("moments")}><img src="/assets/archive/icons/chapter-moments.svg" alt="" />共同片段</button></div></details><details className="composer-menu"><summary>更多</summary><div><button onClick={() => openModal("knowledge")}>＋ 知识</button><button onClick={showContext}>本轮引用 <b>{retrieval.length}</b></button></div></details></div><button className="send" onClick={() => generating ? void cancelRun() : void sendMessage()} disabled={!generating && !input.trim()} aria-label={generating ? "停止生成" : "发送消息"}>{generating ? "■" : "↑"}</button></div></div><div className="composer-meta"><span>Enter 发送 · Shift+Enter 换行 · Esc 打断</span><button onClick={() => void clearCurrent()}>清空当前上下文</button></div></section>
     </main>
 
     <Inspector open={inspectorOpen} tab={inspectorTab} onTab={setInspectorTab} onClose={() => setInspectorOpen(false)} events={events} retrieval={retrieval} runId={inspectionRunId} />
     {modal === "settings" && settings && <SettingsDialog value={settings} avatars={avatars} onClose={closeModal} onDirty={setModalDirty} onSaved={(next, nextAvatars) => { setSettings(next); setAvatars(nextAvatars); setModalDirty(false); setModal(null); }} onSettingsChange={setSettings} onAvatarsChange={setAvatars} notify={notify} />}
     {modal === "knowledge" && <KnowledgeDialog onClose={closeModal} onDirty={setModalDirty} notify={notify} />}
-    {modal === "memory" && <MemoryDialog onClose={closeModal} onDirty={setModalDirty} notify={notify} />}
-    {modal === "profile" && <ProfileDialog initialName={profileEditorRole} onClose={closeModal} onDirty={setModalDirty} notify={notify} />}
+    {modal === "memory" && <MemoryDialog characterId={activeCharacterId} onClose={closeModal} onDirty={setModalDirty} notify={notify} />}
+    {modal === "profile" && <ProfileDialog characterId={activeCharacterId} initialName={profileEditorRole} onClose={closeModal} onDirty={setModalDirty} notify={notify} />}
     {modal === "diagnostics" && <DiagnosticsDialog onClose={closeModal} notify={notify} onCleared={() => { newSession(); void loadSessions(); }} />}
     {modal === "voice-entry" && <VoiceEntryDialog mode={voiceEntryMode} scene={voiceEntryScene} busy={voiceEntryBusy} error={voiceEntryError} onModeChange={(next) => { setVoiceEntryMode(next); setModalDirty(true); }} onSceneChange={(next) => { setVoiceEntryScene(next); setModalDirty(true); }} onClose={closeVoiceEntry} onStart={() => void startVoiceFromEntry()} />}
-    {profileCardRole && <ProfileCardDialog role={profileCardRole} avatars={avatars} displayName={profileCardRole === "user" ? userName : characterName} onClose={() => setProfileCardRole(null)} onEdit={(role) => { setProfileCardRole(null); setProfileEditorRole(role); setModal("profile"); }} />}
-    {voice.open && <VoiceMode state={voice} avatar={avatars.assistant} characterName={characterName} context={voiceInteractionRef.current} companion={{ enabled: bool(settings?.interaction?.unlimited_reply_enabled), round: companionRound, limit: Math.max(1, Math.min(50, num(settings?.interaction?.unlimited_reply_max_rounds, 10))) }} onExit={exitVoice} onRetry={retryVoice} />}
+    {profileCardRole && <ProfileCardDialog characterId={activeCharacterId} role={profileCardRole} avatars={effectiveAvatars} displayName={profileCardRole === "user" ? userName : characterName} onClose={() => setProfileCardRole(null)} onEdit={(role) => { setProfileCardRole(null); setProfileEditorRole(role); setModal("profile"); }} />}
+    {voice.open && <VoiceMode state={voice} avatar={effectiveAvatars.assistant} characterName={characterName} context={voiceInteractionRef.current} companion={{ enabled: bool(settings?.interaction?.unlimited_reply_enabled), round: companionRound, limit: Math.max(1, Math.min(50, num(settings?.interaction?.unlimited_reply_max_rounds, 10))) }} onExit={exitVoice} onRetry={retryVoice} onFallback={useBrowserVoiceFallback} />}
+    <CharacterPicker open={characterPickerOpen} characters={pickerCharacters} onClose={() => setCharacterPickerOpen(false)} onChoose={(character) => void createSessionForCharacter(character)} onDraw={() => { setCharacterPickerOpen(false); navigate("draw"); }} />
+    {nsfwConfirmationOpen && <NsfwAdultConfirmation seconds={nsfwConfirmationSeconds} onCancel={() => setNsfwConfirmationOpen(false)} onConfirm={confirmAdultMode} />}
     {toast && <div className="toast" role="status">{toast}</div>}
   </div>;
 }
 
 const MessageList = memo(function MessageList({ messages, avatars, userName, characterName, onProfile, onCopy, onSpeak, onRegenerate, onInitiative, onDelete }: {
   messages: Message[]; avatars: AvatarConfig; userName: string; characterName: string;
-  onProfile: (role: Role) => void; onCopy: (text: string) => void; onSpeak: (text: string) => void;
+  onProfile: (role: Role) => void; onCopy: (text: string) => void; onSpeak: (text: string, voiceCue?: string) => void;
   onRegenerate: (text: string, round: number) => void; onInitiative: (round: number) => void; onDelete: (messageId?: string) => void;
 }) {
   return <div className="message-list">{messages.map((message, index) => {
     const label = message.role === "user" ? userName : characterName;
     const initiativeLabel = message.initiative_trigger === "continuous_companionship" ? "· 连续陪伴" : message.kind === "initiative_response" ? "· 主动回应" : "";
-    return <article className={`message ${message.role} ${message.status || "complete"}`} key={message.message_id || `${message.round}-${message.role}-${index}`}><PortraitAvatar role={message.role} avatars={avatars} label={label} onClick={() => onProfile(message.role)} /><div className="message-content"><div className="message-head"><strong>{label}</strong><span>第 {message.round} 轮 {initiativeLabel}{message.status === "streaming" && "· 正在生成"}{message.status === "cancelled" && "· 已打断"}{message.status === "interrupted" && "· 回答在此处中断"}{message.status === "error" && "· 失败"}</span></div><div className="message-text">{richText(message.content || (message.status === "streaming" ? "" : "…"))}{message.status === "streaming" && <i className="stream-caret" />}</div>{message.role === "assistant" && message.status !== "streaming" && <div className="message-actions"><button onClick={() => onCopy(message.content)}>复制</button><button onClick={() => onSpeak(message.content)}>朗读</button><button onClick={() => { if (message.kind === "initiative_response") { onInitiative(message.round); return; } const user = messages.find((item) => item.role === "user" && item.round === message.round); if (user) onRegenerate(user.content, message.round); }}>重新生成</button><button onClick={() => onDelete(message.message_id)}>删除回复</button></div>}</div></article>;
+    return <article className={`message ${message.role} ${message.status || "complete"}`} key={message.message_id || `${message.round}-${message.role}-${index}`}><PortraitAvatar role={message.role} avatars={avatars} label={label} onClick={() => onProfile(message.role)} /><div className="message-content"><div className="message-head"><strong>{label}</strong><span>第 {message.round} 轮 {initiativeLabel}{message.status === "streaming" && "· 正在生成"}{message.status === "cancelled" && "· 已打断"}{message.status === "interrupted" && "· 回答在此处中断"}{message.status === "error" && "· 失败"}</span></div><div className="message-text">{richText(message.content || (message.status === "streaming" ? "" : "…"))}{message.status === "streaming" && <i className="stream-caret" />}</div>{message.role === "assistant" && message.status !== "streaming" && <div className="message-actions"><button onClick={() => onCopy(message.content)}>复制</button><button onClick={() => onSpeak(message.content, message.voice_cue)}>朗读</button><button onClick={() => { if (message.kind === "initiative_response") { onInitiative(message.round); return; } const user = messages.find((item) => item.role === "user" && item.round === message.round); if (user) onRegenerate(user.content, message.round); }}>重新生成</button><button onClick={() => onDelete(message.message_id)}>删除回复</button></div>}</div></article>;
   })}</div>;
 });
 
@@ -2137,10 +3267,10 @@ function VoiceEntryDialog({ mode, scene, busy, error, onModeChange, onSceneChang
       {error && <p className="notice warning" role="alert">{error}</p>}
       <div className="voice-entry-options" role="group" aria-label="互动方式">
         <button type="button" className={mode === "call" ? "active" : ""} aria-pressed={mode === "call"} onClick={() => onModeChange("call")}><span>通话</span><small>默认 · 保持现有实时语音逻辑</small></button>
-        <button type="button" className={mode === "face_to_face" ? "active" : ""} aria-pressed={mode === "face_to_face"} onClick={() => onModeChange("face_to_face")}><span>面对面</span><small>通过语言呈现角色的外观、动作、距离与体感互动</small></button>
+        <button type="button" className={mode === "face_to_face" ? "active" : ""} aria-pressed={mode === "face_to_face"} onClick={() => onModeChange("face_to_face")}><span>面对面</span><small>共享当前场景，只进行自然口语对话</small></button>
       </div>
       {mode === "face_to_face" && <label className="voice-scene-field"><span>当前场景</span><textarea aria-label="当前场景" value={scene} maxLength={2000} rows={6} placeholder="例如：深夜的客厅，只开着落地灯，窗外正在下雨；我们坐在沙发两端。" onChange={(event) => onSceneChange(event.target.value)} /><small>{scene.length} / 2000 · 可留空，角色会使用未指定的普通面对面场景</small></label>}
-      <p className="voice-entry-boundary">{mode === "face_to_face" ? "用户默认看不到角色画面；角色会在合适时自然说出自身动作和可感知线索，但不会擅自替用户决定动作、反应或感受。" : "AI 只会知道当前正在实时语音通话，不会额外描述共同所处的物理场景。"}</p>
+      <p className="voice-entry-boundary">{mode === "face_to_face" ? "场景只用于理解当下语境；AI 只说自然口语，不朗读括号、动作、神态或第一人称动作播报。" : "AI 只会知道当前正在实时语音通话，不会额外描述共同所处的物理场景。"}</p>
     </div>
   </Modal>;
 }
@@ -2172,16 +3302,16 @@ function SettingsDialog({ value, avatars, onClose, onDirty, onSaved, onSettingsC
   const normalizedValue: ProductSettings = {
     ...structuredClone(value),
     audio: {
-      asr_listening_energy_threshold_db: -36,
-      asr_listening_min_speech_ms: 160,
-      asr_barge_in_energy_threshold_db: -27,
-      asr_barge_in_min_speech_ms: 420,
+      asr_listening_energy_threshold_db: -50,
+      asr_listening_min_speech_ms: 120,
+      asr_barge_in_energy_threshold_db: -38,
+      asr_barge_in_min_speech_ms: 300,
       asr_candidate_release_ms: 280,
-      asr_adaptive_noise_enabled: true,
+      asr_adaptive_noise_enabled: false,
       asr_noise_calibration_ms: 1500,
       asr_listening_noise_margin_db: 10,
       asr_barge_in_noise_margin_db: 16,
-      asr_utterance_merge_ms: 350,
+      asr_utterance_merge_ms: 1100,
       asr_deferred_during_playback: true,
       asr_hotwords_enabled: true,
       asr_dynamic_endpointing: true,
@@ -2220,6 +3350,7 @@ function SettingsDialog({ value, avatars, onClose, onDirty, onSaved, onSettingsC
   const [providerBusy, setProviderBusy] = useState(false);
   const [providerStatus, setProviderStatus] = useState("切换链路后立即保存，无需再点击底部保存按钮");
   const [gptVoices, setGptVoices] = useState<{ active_voice: string; items: Array<{ id: string; label: string; family: string; installed: boolean; selected: boolean }> }>({ active_voice: "v4-changli", items: [] });
+  const [qwenVoices, setQwenVoices] = useState<{ active_voice: string; items: Array<{ id: string; label: string; installed: boolean; selected: boolean }> }>({ active_voice: "serena", items: [] });
   const [avatarBusy, setAvatarBusy] = useState<Role | "">("");
   const [llmApiKey, setLlmApiKey] = useState("");
   const [ttsApiKey, setTtsApiKey] = useState("");
@@ -2234,10 +3365,32 @@ function SettingsDialog({ value, avatars, onClose, onDirty, onSaved, onSettingsC
   const initial = useRef(JSON.stringify({ value: normalizedValue, avatars }));
   const update = (group: keyof ProductSettings, key: string, next: unknown) => setDraft((current) => ({ ...current, [group]: { ...(current[group] as Record<string, unknown>), [key]: next } }));
   const dirty = Boolean(llmApiKey || ttsApiKey) || JSON.stringify({ value: draft, avatars: avatarDraft }) !== initial.current;
+  const externalAudioSelection = JSON.stringify({
+    provider: value.audio.tts_provider,
+    gpt: value.audio.tts_gpt_sovits_voice,
+    qwen: value.audio.tts_qwen3_vllm_voice,
+    auto: value.audio.auto_tts,
+  });
   useEffect(() => { onDirty(dirty); return () => onDirty(false); }, [dirty, onDirty]);
+  useEffect(() => {
+    if (providerBusy) return;
+    const externalAudio = {
+      tts_provider: value.audio.tts_provider,
+      tts_gpt_sovits_voice: value.audio.tts_gpt_sovits_voice,
+      tts_qwen3_vllm_voice: value.audio.tts_qwen3_vllm_voice,
+      auto_tts: value.audio.auto_tts,
+    };
+    setDraft((current) => ({ ...current, audio: { ...current.audio, ...externalAudio } }));
+    const baseline = JSON.parse(initial.current) as { value: ProductSettings; avatars: AvatarConfig };
+    baseline.value = { ...baseline.value, audio: { ...baseline.value.audio, ...externalAudio } };
+    initial.current = JSON.stringify(baseline);
+  }, [externalAudioSelection, providerBusy, value.audio]);
   useEffect(() => {
     request<{ active_voice: string; items: Array<{ id: string; label: string; family: string; installed: boolean; selected: boolean }> }>("/api/v1/audio/tts/voices")
       .then(setGptVoices)
+      .catch(() => undefined);
+    request<{ active_voice: string; items: Array<{ id: string; label: string; installed: boolean; selected: boolean }> }>("/api/v1/audio/tts/qwen3/voices")
+      .then(setQwenVoices)
       .catch(() => undefined);
     request<ASRVocabularySnapshot>("/api/v1/audio/asr/vocabulary")
       .then(setVocabulary)
@@ -2295,25 +3448,26 @@ function SettingsDialog({ value, avatars, onClose, onDirty, onSaved, onSettingsC
     setDraft(result.settings); setLlmApiKey(""); setTtsApiKey(""); onSettingsChange(result.settings); return result.settings;
   };
   const switchTtsProvider = async (next: string) => {
-    const provider = ["cosyvoice", "gpt-sovits"].includes(next) ? next : "siliconflow";
-    const previous = str(draft.audio.tts_provider || "siliconflow");
+    const provider = ["browser", "cosyvoice", "gpt-sovits", "qwen3-vllm", "siliconflow"].includes(next) ? next : "browser";
+    const previous = str(draft.audio.tts_provider || "qwen3-vllm");
+    const previousAutoTts = bool(draft.audio.auto_tts);
     if (provider === previous || providerBusy) return;
-    setDraft((current) => ({ ...current, audio: { ...current.audio, tts_provider: provider } }));
+    setDraft((current) => ({ ...current, audio: { ...current.audio, tts_provider: provider, auto_tts: provider !== "browser" } }));
     setProviderBusy(true);
-    setProviderStatus(provider === "cosyvoice" ? "正在切换到本地 CosyVoice…" : provider === "gpt-sovits" ? "正在切换到独立 GPT-SoVITS…" : "正在切换到 SiliconFlow API…");
+    setProviderStatus(provider === "browser" ? "正在关闭 TTS…" : provider === "cosyvoice" ? "正在切换到本地 CosyVoice…" : provider === "gpt-sovits" ? "正在切换到独立 GPT-SoVITS…" : provider === "qwen3-vllm" ? "正在切换到 Qwen3 实时语音…" : "正在切换到 SiliconFlow API…");
     try {
-      const result = await request<{ settings: ProductSettings }>("/api/v1/settings", { method: "PUT", body: JSON.stringify({ audio: { tts_provider: provider } }) });
+      const result = await request<{ settings: ProductSettings }>("/api/v1/settings", { method: "PUT", body: JSON.stringify({ audio: { tts_provider: provider, auto_tts: provider !== "browser" } }) });
       const confirmed = str(result.settings.audio.tts_provider);
       setDraft((current) => ({ ...current, audio: { ...current.audio, tts_provider: confirmed } }));
       const baseline = JSON.parse(initial.current) as { value: ProductSettings; avatars: AvatarConfig };
-      baseline.value = { ...baseline.value, audio: { ...baseline.value.audio, tts_provider: confirmed } };
+      baseline.value = { ...baseline.value, audio: { ...baseline.value.audio, tts_provider: confirmed, auto_tts: confirmed !== "browser" } };
       initial.current = JSON.stringify(baseline);
       onSettingsChange(result.settings);
-      const label = confirmed === "cosyvoice" ? "本地 CosyVoice" : confirmed === "gpt-sovits" ? "本地 GPT-SoVITS" : "SiliconFlow API";
+      const label = confirmed === "browser" ? "关闭声音（仅文字）" : confirmed === "cosyvoice" ? "本地 CosyVoice" : confirmed === "gpt-sovits" ? "本地 GPT-SoVITS" : confirmed === "qwen3-vllm" ? "Qwen3 实时语音" : "SiliconFlow API";
       setProviderStatus(`已切换并保存：${label}`);
       notify(`TTS 链路已切换为${label}`);
     } catch (error) {
-      setDraft((current) => ({ ...current, audio: { ...current.audio, tts_provider: previous } }));
+      setDraft((current) => ({ ...current, audio: { ...current.audio, tts_provider: previous, auto_tts: previousAutoTts } }));
       setProviderStatus(`切换失败，已保持原链路：${(error as Error).message}`);
       notify((error as Error).message);
     } finally {
@@ -2337,6 +3491,23 @@ function SettingsDialog({ value, avatars, onClose, onDirty, onSaved, onSettingsC
     } catch (error) {
       setDraft((current) => ({ ...current, audio: { ...current.audio, tts_gpt_sovits_voice: previous } }));
       setProviderStatus(`音色切换失败：${(error as Error).message}`); notify((error as Error).message);
+    } finally { setProviderBusy(false); }
+  };
+  const switchQwenVoice = async (voiceId: string) => {
+    if (providerBusy) return;
+    setProviderBusy(true);
+    try {
+      const result = await request<{ settings: ProductSettings }>("/api/v1/settings", {
+        method: "PUT",
+        body: JSON.stringify({ audio: { tts_provider: "qwen3-vllm", tts_qwen3_vllm_voice: voiceId, tts_qwen3_vllm_task_type: "CustomVoice" } }),
+      });
+      setDraft((current) => ({ ...current, audio: result.settings.audio }));
+      onSettingsChange(result.settings);
+      setQwenVoices((current) => ({ ...current, active_voice: voiceId, items: current.items.map((item) => ({ ...item, selected: item.id === voiceId })) }));
+      setProviderStatus("Qwen3 音色已保存；下一段语音立即生效");
+    } catch (error) {
+      setProviderStatus(`Qwen3 音色切换失败：${(error as Error).message}`);
+      notify((error as Error).message);
     } finally { setProviderBusy(false); }
   };
   const save = async () => {
@@ -2413,7 +3584,7 @@ function SettingsDialog({ value, avatars, onClose, onDirty, onSaved, onSettingsC
       await playTtsTest(next); setAudioStatus("测试语音生成并播放成功");
     } catch (error) { setAudioStatus((error as Error).message); notify((error as Error).message); } finally { setAudioBusy(""); }
   };
-  const ttsProvider = str(draft.audio.tts_provider || "cosyvoice");
+  const ttsProvider = str(draft.audio.tts_provider || "qwen3-vllm");
   const uploadAvatar = async (role: Role, file: File) => {
     if (file.size > 5 * 1024 * 1024) { notify("头像不能超过 5 MiB"); return; }
     setAvatarBusy(role);
@@ -2448,22 +3619,24 @@ function SettingsDialog({ value, avatars, onClose, onDirty, onSaved, onSettingsC
     {tab === "protocol" && <><h3>生成与 JSON 写回</h3><div className="form-grid"><Field label="协议模式" value={draft.protocol.mode} onChange={(next) => update("protocol", "mode", next)} /><Field label="角色审计模型（留空复用主模型）" value={draft.llm.role_audit_model} onChange={(next) => update("llm", "role_audit_model", next)} /></div><div className="toggle-grid"><Field label="自动结构修复" value={draft.protocol.auto_repair} type="checkbox" onChange={(next) => update("protocol", "auto_repair", next)} /><Field label="显示写回诊断" value={draft.protocol.diagnostics} type="checkbox" onChange={(next) => update("protocol", "diagnostics", next)} /><Field label="复杂角色异步审计" value={draft.llm.role_audit_enabled} type="checkbox" onChange={(next) => update("llm", "role_audit_enabled", next)} /></div><p className="notice">回复立即流式展示；JSON 每轮最多写入三个经过路径、证据和 revision 校验的叶子 Patch。复杂角色审计只在本轮完成后运行，不能替换已显示或已朗读的内容，严重偏移只影响下一轮。</p></>}
     {tab === "audio" && <>
       <h3>语音合成</h3>
-      <div className="form-grid"><SelectField label="TTS 链路" value={draft.audio.tts_provider} disabled={providerBusy} options={[["siliconflow", "SiliconFlow 云端流式 TTS（上线推荐）"], ["cosyvoice", "本地 CosyVoice（可选）"], ["gpt-sovits", "本地 GPT-SoVITS（独立可选）"]]} onChange={(next) => void switchTtsProvider(next)} /><Field label="速度" value={draft.audio.tts_speed} type="number" min={0.5} max={2} step={0.1} onChange={(next) => update("audio", "tts_speed", next)} /></div>
+      <div className="form-grid"><SelectField label="TTS 链路" value={draft.audio.tts_provider} disabled={providerBusy} options={[["browser", "关闭声音（仅文字）"], ["gpt-sovits", "GPT-SoVITS 二次元声线"], ["cosyvoice", "本地 CosyVoice 声音克隆"], ["qwen3-vllm", "Qwen3 高质量活人感"], ["siliconflow", "SiliconFlow 云端流式 TTS"]]} onChange={(next) => void switchTtsProvider(next)} /><Field label="速度" value={draft.audio.tts_speed} type="number" min={0.5} max={2} step={0.1} onChange={(next) => update("audio", "tts_speed", next)} /></div>
       <p className={`notice ${providerStatus.startsWith("切换失败") ? "warning" : ""}`}>{providerStatus}</p>
-      {ttsProvider === "cosyvoice" && <><div className="form-grid"><Field label="CosyVoice Worker" value={draft.audio.tts_worker_url} onChange={(next) => update("audio", "tts_worker_url", next)} /><Field label="识别出的参考文本（请校对）" value={draft.audio.tts_reference_text} type="textarea" onChange={(next) => update("audio", "tts_reference_text", next)} placeholder="上传后自动识别；必须与参考音频实际说出的内容一致" /></div><p className="notice warning">本地 CosyVoice 是可选链路，上线安装包不包含其模型。参考文本必须与音频逐字匹配；实时语音会朗读回复中的括号动作与体感内容。</p><div className="reference-panel"><div><strong>本地参考音频</strong><small>{audioStatus}</small></div><div><label className="secondary upload-button">{audioBusy === "upload" ? "上传中…" : bool(draft.audio.tts_reference_configured) ? "替换音频" : "选择并上传"}<input hidden disabled={Boolean(audioBusy)} type="file" accept=".wav,.mp3,.flac,.m4a,.ogg,audio/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadReference(file); event.currentTarget.value = ""; }} /></label><button className="secondary" disabled={Boolean(audioBusy) || !bool(draft.audio.tts_reference_configured)} onClick={() => void recognizeReference()}>{audioBusy === "recognize" ? "识别中…" : "识别音频文字"}</button><button className="secondary" disabled={Boolean(audioBusy) || !bool(draft.audio.tts_reference_configured)} onClick={() => void clearReference()}>清除</button></div></div></>}
+      {ttsProvider === "cosyvoice" && <><div className="form-grid"><Field label="CosyVoice Worker" value={draft.audio.tts_worker_url} onChange={(next) => update("audio", "tts_worker_url", next)} /><Field label="识别出的参考文本（请校对）" value={draft.audio.tts_reference_text} type="textarea" onChange={(next) => update("audio", "tts_reference_text", next)} placeholder="上传后自动识别；必须与参考音频实际说出的内容一致" /></div><p className="notice warning">本地 CosyVoice 是可选链路，上线安装包不包含其模型。参考文本必须与音频逐字匹配；实时语音只输出并朗读角色亲口说出的自然口语，不使用括号动作旁白。</p><div className="reference-panel"><div><strong>本地参考音频</strong><small>{audioStatus}</small></div><div><label className="secondary upload-button">{audioBusy === "upload" ? "上传中…" : bool(draft.audio.tts_reference_configured) ? "替换音频" : "选择并上传"}<input hidden disabled={Boolean(audioBusy)} type="file" accept=".wav,.mp3,.flac,.m4a,.ogg,audio/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadReference(file); event.currentTarget.value = ""; }} /></label><button className="secondary" disabled={Boolean(audioBusy) || !bool(draft.audio.tts_reference_configured)} onClick={() => void recognizeReference()}>{audioBusy === "recognize" ? "识别中…" : "识别音频文字"}</button><button className="secondary" disabled={Boolean(audioBusy) || !bool(draft.audio.tts_reference_configured)} onClick={() => void clearReference()}>清除</button></div></div></>}
       {ttsProvider === "gpt-sovits" && <><div className="form-grid"><SelectField label="GPT-SoVITS 音色" value={draft.audio.tts_gpt_sovits_voice || gptVoices.active_voice} disabled={providerBusy} options={gptVoices.items.length ? gptVoices.items.map((voice) => [voice.id, `${voice.label}${voice.installed ? " · 已安装" : " · 需在启动器安装"}`] as [string, string]) : [["v4-changli", "V4-长离"], ["v4-yae-miko", "V4-八重神子"], ["v2proplus-kafka", "V2ProPlus-卡芙卡"]]} onChange={(next) => void switchGptVoice(next)} /><Field label="GPT-SoVITS Worker" value={draft.audio.tts_gpt_sovits_worker_url || "http://127.0.0.1:5055"} onChange={(next) => update("audio", "tts_gpt_sovits_worker_url", next)} /></div><p className="notice warning">音色模型与原 CosyVoice 完全分离，由启动器按需安装。V4 原生输出 48 kHz；卡芙卡实际为 V2ProPlus。第三方角色音色仅用于本地非商业验证，正式上线前必须取得对应权利方授权。</p></>}
-      {ttsProvider === "siliconflow" && <p className="notice">云端 API 参数已集中到“模型与角色”。此处只选择链路与播放速度；逐句流式播放、首句抢跑和插话打断与本地链路一致，实时语音会朗读括号内容。</p>}
+      {ttsProvider === "qwen3-vllm" && <><div className="form-grid"><SelectField label="Qwen3 音色" value={draft.audio.tts_qwen3_vllm_voice || qwenVoices.active_voice} disabled={providerBusy} options={qwenVoices.items.length ? qwenVoices.items.map((voice) => [voice.id, voice.label] as [string, string]) : [["serena", "Serena · 温柔成年女声（运行时未就绪）"]]} onChange={(next) => void switchQwenVoice(next)} /><Field label="Qwen3 服务地址" value={draft.audio.tts_qwen3_vllm_url || "http://127.0.0.1:8091"} onChange={(next) => update("audio", "tts_qwen3_vllm_url", next)} /><Field label="模型名" value={draft.audio.tts_qwen3_vllm_model || "mindspace-qwen3-tts"} onChange={(next) => update("audio", "tts_qwen3_vllm_model", next)} /></div><p className="notice">Qwen3 使用 CustomVoice 固定 Serena speaker、固定随机种子和整篇单次合成。正文完成并通过格式清理后立即提交，不等待落库收尾；语气指令只控制语速、笑声、换气和情绪，不重新描述或改变音色。</p></>}
+      {ttsProvider === "browser" && <p className="notice">当前关闭声音，只保留文字对话。启动器与应用内会显示相同状态，也不会加载本地 TTS 或占用额外显存。</p>}
+      {ttsProvider === "siliconflow" && <p className="notice">云端 API 参数已集中到“模型与角色”。此处只选择链路与播放速度；逐句流式播放、首句抢跑和插话打断与本地链路一致，实时语音只输出可直接朗读的自然口语。</p>}
       <div className="row-actions"><button className="primary" disabled={Boolean(audioBusy)} onClick={() => void testTts()}>{audioBusy === "test" ? "生成中…" : "生成并试听 TTS"}</button></div>
-      <Field label="回复时逐句自动朗读" value={draft.audio.auto_tts} type="checkbox" onChange={(next) => update("audio", "auto_tts", next)} />
+      <Field label="回复时自动朗读" value={draft.audio.auto_tts} type="checkbox" onChange={(next) => update("audio", "auto_tts", next)} />
       <h3>实时识别与环境噪声</h3>
-      <div className="toggle-grid"><Field label="根据环境自动调整噪声门" value={draft.audio.asr_adaptive_noise_enabled} type="checkbox" onChange={(next) => update("audio", "asr_adaptive_noise_enabled", next)} /><Field label="启用人物与 JSON 动态词表" value={draft.audio.asr_hotwords_enabled} type="checkbox" onChange={(next) => update("audio", "asr_hotwords_enabled", next)} /><Field label="含糊停顿动态断句" value={draft.audio.asr_dynamic_endpointing} type="checkbox" onChange={(next) => update("audio", "asr_dynamic_endpointing", next)} /><Field label="Nano 整句复核" value={draft.audio.asr_final_refinement_enabled} type="checkbox" onChange={(next) => update("audio", "asr_final_refinement_enabled", next)} /></div>
-      <div className="form-grid"><Field label="ASR 提供方" value={draft.audio.asr_provider} onChange={(next) => update("audio", "asr_provider", next)} /><Field label="ASR 模型" value={draft.audio.asr_model} onChange={(next) => update("audio", "asr_model", next)} /><Field label="最低输入噪声门 dBFS" value={draft.audio.asr_noise_gate_db} type="number" min={-70} max={-20} step={1} onChange={(next) => update("audio", "asr_noise_gate_db", next)} /><Field label="环境校准毫秒" value={draft.audio.asr_noise_calibration_ms} type="number" min={500} max={5000} step={100} onChange={(next) => update("audio", "asr_noise_calibration_ms", next)} /><Field label="静音断句毫秒" value={draft.audio.asr_silence_ms} type="number" min={250} max={3000} onChange={(next) => update("audio", "asr_silence_ms", next)} /><Field label="多段话合并窗口毫秒" value={draft.audio.asr_utterance_merge_ms} type="number" min={300} max={3000} step={50} onChange={(next) => update("audio", "asr_utterance_merge_ms", next)} /></div><p className="notice">Paraformer 保持实时字幕；停顿尾部会在 400–900ms 间动态断句。安装 Fun-ASR Nano 后只在整句结束时低优先级复核，缺失、超时或播放回声场景自动回退，不影响现有识别。</p>
+      <div className="toggle-grid"><Field label="启用人物与 JSON 动态词表" value={draft.audio.asr_hotwords_enabled} type="checkbox" onChange={(next) => update("audio", "asr_hotwords_enabled", next)} /><Field label="含糊停顿动态断句" value={draft.audio.asr_dynamic_endpointing} type="checkbox" onChange={(next) => update("audio", "asr_dynamic_endpointing", next)} /><Field label="Nano 整句复核" value={draft.audio.asr_final_refinement_enabled} type="checkbox" onChange={(next) => update("audio", "asr_final_refinement_enabled", next)} /></div>
+      <div className="form-grid"><Field label="ASR 提供方" value={draft.audio.asr_provider} onChange={(next) => update("audio", "asr_provider", next)} /><Field label="ASR 模型" value={draft.audio.asr_model} onChange={(next) => update("audio", "asr_model", next)} /><Field label="静音断句毫秒" value={draft.audio.asr_silence_ms} type="number" min={250} max={3000} onChange={(next) => update("audio", "asr_silence_ms", next)} /><Field label="多段话合并窗口毫秒" value={draft.audio.asr_utterance_merge_ms} type="number" min={300} max={3000} step={50} onChange={(next) => update("audio", "asr_utterance_merge_ms", next)} /></div><p className="notice">语音入口不再等待环境噪声校准；浏览器只保留回声消除和自动增益，FunASR VAD 负责判断真实人声。Paraformer 保持实时字幕，Nano 仅在整句结束时低优先级复核。</p>
       <h3>语音情绪感知 · 实验性</h3>
       <div className="toggle-grid"><Field label="情绪侧链接口（暂时停用）" value={false} type="checkbox" onChange={() => undefined} /></div>
       <p className="advanced-note">情绪分析在本轮回复完成后后台执行，不再等待或延迟当前回复；完成后的状态仅供下一轮语音调整语气。</p>
       <p className="notice">当前版本不加载情绪模型，也不执行声学或文本情绪分析；仅保留后端接口，便于后续按需接入。</p>
-      <h3>AI 播放完：短回复优先</h3><div className="form-grid"><Field label="监听最低门槛 dBFS" value={draft.audio.asr_listening_energy_threshold_db} type="number" min={-60} max={-15} step={1} onChange={(next) => update("audio", "asr_listening_energy_threshold_db", next)} /><Field label="高于噪声底 dB" value={draft.audio.asr_listening_noise_margin_db} type="number" min={4} max={24} step={1} onChange={(next) => update("audio", "asr_listening_noise_margin_db", next)} /><Field label="监听最短发声毫秒" value={draft.audio.asr_listening_min_speech_ms} type="number" min={60} max={1000} step={20} onChange={(next) => update("audio", "asr_listening_min_speech_ms", next)} /></div>
-      <h3>AI 播放中：三重确认后打断</h3><div className="form-grid"><Field label="插话最低门槛 dBFS" value={draft.audio.asr_barge_in_energy_threshold_db} type="number" min={-60} max={-15} step={1} onChange={(next) => update("audio", "asr_barge_in_energy_threshold_db", next)} /><Field label="高于噪声底 dB" value={draft.audio.asr_barge_in_noise_margin_db} type="number" min={6} max={30} step={1} onChange={(next) => update("audio", "asr_barge_in_noise_margin_db", next)} /><Field label="插话最短发声毫秒" value={draft.audio.asr_barge_in_min_speech_ms} type="number" min={120} max={1500} step={20} onChange={(next) => update("audio", "asr_barge_in_min_speech_ms", next)} /><Field label="疑似声音释放毫秒" value={draft.audio.asr_candidate_release_ms} type="number" min={80} max={1000} step={20} onChange={(next) => update("audio", "asr_candidate_release_ms", next)} /></div>
+      <h3>AI 播放完：短回复优先</h3><div className="form-grid"><Field label="监听最低门槛 dBFS" value={draft.audio.asr_listening_energy_threshold_db} type="number" min={-60} max={-15} step={1} onChange={(next) => update("audio", "asr_listening_energy_threshold_db", next)} /><Field label="监听最短发声毫秒" value={draft.audio.asr_listening_min_speech_ms} type="number" min={60} max={1000} step={20} onChange={(next) => update("audio", "asr_listening_min_speech_ms", next)} /></div>
+      <h3>AI 播放中：三重确认后打断</h3><div className="form-grid"><Field label="插话最低门槛 dBFS" value={draft.audio.asr_barge_in_energy_threshold_db} type="number" min={-60} max={-15} step={1} onChange={(next) => update("audio", "asr_barge_in_energy_threshold_db", next)} /><Field label="插话最短发声毫秒" value={draft.audio.asr_barge_in_min_speech_ms} type="number" min={120} max={1500} step={20} onChange={(next) => update("audio", "asr_barge_in_min_speech_ms", next)} /><Field label="疑似声音释放毫秒" value={draft.audio.asr_candidate_release_ms} type="number" min={80} max={1000} step={20} onChange={(next) => update("audio", "asr_candidate_release_ms", next)} /></div>
       <div className="toggle-grid"><Field label="未达到打断条件的有效文字稍后发送" value={draft.audio.asr_deferred_during_playback} type="checkbox" onChange={(next) => update("audio", "asr_deferred_during_playback", next)} /><Field label="合并结束后自动发送" value={draft.audio.asr_auto_send} type="checkbox" onChange={(next) => update("audio", "asr_auto_send", next)} /></div>
       <p className="notice">候选噪声只降低播放音量；能量、FSMN-VAD 与有效识别共同确认后才打断。AI 尚未出声时，后续语音会合并进同一用户轮次；播放中未达到打断条件但识别出有效文字时，会在播放结束后统一发送。</p>
     </>}
@@ -2492,7 +3665,7 @@ function KnowledgeDialog({ onClose, onDirty, notify }: { onClose: () => void; on
   return <Modal title="全局知识库" kicker="KNOWLEDGE BASE" onClose={onClose}><div className="knowledge-layout"><section className="knowledge-compose"><h3>新增资料</h3><Field label="来源名称" value={source} onChange={(next) => setSource(str(next))} /><Field label="知识内容" value={text} type="textarea" onChange={(next) => setText(str(next))} placeholder="粘贴文本，空行会成为自然分块边界" /><div className="row-actions"><label className="upload-button">上传 TXT / MD / JSON<input hidden type="file" accept=".txt,.md,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); event.currentTarget.value = ""; }} /></label><button className="primary" disabled={!text.trim()} onClick={() => void add()}>保存知识</button></div></section><section className="knowledge-manage"><div className="manage-head"><h3>知识块 <b>{items.length}</b></h3><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索内容或来源" /></label></div>{loading ? <div className="empty-mini">正在读取知识库…</div> : <div className="knowledge-list">{items.length ? items.map((item) => <article key={item.chunk_id}><header><span>{item.source}</span><button onClick={async () => { if (!window.confirm("删除这个知识块？")) return; await request(`/api/v1/knowledge/${item.chunk_id}`, { method: "DELETE" }); notify("知识块已删除"); await load(); }}>删除</button></header><p>{item.text}</p><small>{item.chunk_id} · {formatTime(item.created_at)}</small></article>) : <div className="empty-mini">知识库中暂无匹配内容</div>}</div>}</section></div></Modal>;
 }
 
-function MemoryDialog({ onClose, onDirty, notify }: { onClose: () => void; onDirty: (dirty: boolean) => void; notify: (message: string) => void }) {
+function MemoryDialog({ characterId, onClose, onDirty, notify }: { characterId: string; onClose: () => void; onDirty: (dirty: boolean) => void; notify: (message: string) => void }) {
   const [items, setItems] = useState<MemoryItem[]>([]);
   const [includeHistory, setIncludeHistory] = useState(false);
   const [query, setQuery] = useState("");
@@ -2502,11 +3675,11 @@ function MemoryDialog({ onClose, onDirty, notify }: { onClose: () => void; onDir
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await request<{ items: MemoryItem[] }>(`/api/v1/memory/items?include_history=${includeHistory ? "true" : "false"}`);
+      const result = await request<{ items: MemoryItem[] }>(`/api/v1/memory/items?include_history=${includeHistory ? "true" : "false"}&character_id=${encodeURIComponent(characterId)}`);
       setItems(result.items);
     } catch (error) { notify((error as Error).message); }
     finally { setLoading(false); }
-  }, [includeHistory, notify]);
+  }, [characterId, includeHistory, notify]);
   useEffect(() => { void load(); }, [load]);
   useEffect(() => { onDirty(Boolean(editingKey)); return () => onDirty(false); }, [editingKey, onDirty]);
   const filtered = items.filter((item) => !query.trim() || `${item.category} ${item.display_name} ${item.value} ${item.source_text || ""}`.toLowerCase().includes(query.trim().toLowerCase()));
@@ -2541,6 +3714,21 @@ const PROFILE_FIELD_LABELS: Record<string, string> = {
   always_apply: "始终执行", contextual_rules: "情境规则", avoid: "避免行为", hard_boundaries: "硬性边界",
   continuity: "关系延续", important_shared_experiences: "共同经历", persistent_attitudes: "持续态度",
   long_term_goals: "长期目标", relationship_state: "当前关系", current_stage: "当前阶段",
+  roleplay: "角色演绎", selfhood: "角色自我", values: "价值取向", personal_opinions: "个人看法",
+  flaws: "缺点", contradictions: "内在矛盾", private_interests: "私人兴趣", personal_goals: "个人目标",
+  agency: "自主性", initiative_sources: "主动话题来源", self_directed_choices: "自主选择方式",
+  attention_triggers: "注意力触发", boredom_triggers: "厌倦触发", default_conflict_posture: "默认分歧立场",
+  voice: "角色语言", cadence: "语言节奏", preferred_vocabulary: "常用词", disliked_phrases: "禁用套话",
+  humor_style: "幽默方式", action_dialogue_balance: "动作与台词比例", scenario_baseline: "常态场景",
+  post_history_note: "历史后角色校准", r18_protocol: "用户私有 R18 描写协议",
+  examples: "分类对话示例", casual: "日常示例",
+  disagreement: "分歧示例", initiative: "主动表达示例", scene_transition: "转场示例",
+  intimate: "亲密互动示例", roleplay_state: "角色场景状态", scene: "当前场景",
+  location: "地点", time_anchor: "时间锚点", character_outfit: "角色穿着",
+  character_posture: "角色姿态", character_activity: "角色正在做的事", active_objects: "场景物件",
+  open_threads: "未完互动", last_transition: "最近转场", updated_round: "更新轮次",
+  agent_drive: "角色当前驱动力", current_intent: "角色当前意图", own_activity: "角色自身活动",
+  unresolved_choice: "角色未决选择", initiative_type_history: "主动类型历史",
   current_tone: "当前氛围", recent_conflicts: "近期冲突", recent_positive_events: "近期积极事件",
   unresolved_issues: "未解决事项", user_state: "用户当前状态", current_goal: "当前目标",
   current_task: "当前任务", current_topic: "当前话题", temporary_preferences: "临时偏好",
@@ -2556,7 +3744,8 @@ function ProfileFieldEditor({ fieldKey, value, path, onChange }: { fieldKey: str
     return <fieldset className="profile-form-section"><legend>{label}</legend><div className="profile-form-grid">{Object.entries(value as Record<string, unknown>).filter(([key]) => !PROFILE_TECHNICAL_FIELDS.has(key)).map(([key, item]) => <ProfileFieldEditor key={`${path.join(".")}.${key}`} fieldKey={key} value={item} path={[...path, key]} onChange={onChange} />)}</div></fieldset>;
   }
   if (Array.isArray(value)) {
-    return <label className="profile-form-field profile-form-list"><span>{label}</span><textarea aria-label={label} value={value.map(String).join("\n")} placeholder="每行一项；留空表示暂无记录" onChange={(event) => onChange(path, event.target.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))} /></label>;
+    const isExample = path.includes("examples");
+    return <label className="profile-form-field profile-form-list"><span>{label}</span><textarea aria-label={label} value={value.map(String).join("\n")} placeholder={isExample ? "每行一例，例如：用户：…… → 角色：……" : "每行一项；留空表示暂无记录"} onChange={(event) => onChange(path, event.target.value.split(/\r?\n/).map((item) => item.trim()).filter(Boolean))} />{isExample && <small>只会按当前情境选取最多两条，不会整份塞入 Prompt。</small>}</label>;
   }
   if (typeof value === "boolean") {
     return <label className="profile-form-field profile-form-check"><input aria-label={label} type="checkbox" checked={value} onChange={(event) => onChange(path, event.target.checked)} /><span>{label}</span></label>;
@@ -2567,22 +3756,23 @@ function ProfileFieldEditor({ fieldKey, value, path, onChange }: { fieldKey: str
   return <label className="profile-form-field"><span>{label}</span><input aria-label={label} type={typeof value === "number" ? "number" : "text"} value={value == null ? "" : String(value)} onChange={(event) => onChange(path, typeof value === "number" ? Number(event.target.value) : event.target.value)} /></label>;
 }
 
-function ProfileDialog({ initialName, onClose, onDirty, notify }: { initialName: Role | "state"; onClose: () => void; onDirty: (dirty: boolean) => void; notify: (message: string) => void }) {
+function ProfileDialog({ characterId, initialName, onClose, onDirty, notify }: { characterId: string; initialName: Role | "state"; onClose: () => void; onDirty: (dirty: boolean) => void; notify: (message: string) => void }) {
   const [name, setName] = useState(initialName); const [document, setDocument] = useState(""); const [savedDocument, setSavedDocument] = useState(""); const [history, setHistory] = useState<ProfileHistoryItem[]>([]); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [mode, setMode] = useState<"form" | "json">("form"); const [error, setError] = useState("");
   const parsed = useMemo(() => { try { const value = JSON.parse(document); return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null; } catch { return null; } }, [document]);
-  const load = useCallback(async () => { setLoading(true); setError(""); try { const [value, versions] = await Promise.all([request<Record<string, unknown>>(`/api/v1/profiles/${name}`), request<{ items: ProfileHistoryItem[] }>(`/api/v1/profiles/${name}/history`).catch(() => ({ items: [] }))]); const serialized = JSON.stringify(value, null, 2); setDocument(serialized); setSavedDocument(serialized); setHistory(versions.items); } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); } finally { setLoading(false); } }, [name, notify]);
+  const characterQuery = name === "user" || !characterId ? "" : `?character_id=${encodeURIComponent(characterId)}`;
+  const load = useCallback(async () => { setLoading(true); setError(""); try { const [value, versions] = await Promise.all([request<Record<string, unknown>>(`/api/v1/profiles/${name}${characterQuery}`), request<{ items: ProfileHistoryItem[] }>(`/api/v1/profiles/${name}/history${characterQuery}`).catch(() => ({ items: [] }))]); const serialized = JSON.stringify(value, null, 2); setDocument(serialized); setSavedDocument(serialized); setHistory(versions.items); } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); } finally { setLoading(false); } }, [characterQuery, name, notify]);
   useEffect(() => { void load(); }, [load]); useEffect(() => { onDirty(document !== savedDocument); return () => onDirty(false); }, [document, onDirty, savedDocument]);
   const updateValue = useCallback((path: string[], value: unknown) => { if (!parsed) return; const next = structuredClone(parsed); let cursor: Record<string, unknown> = next; path.slice(0, -1).forEach((key) => { cursor = cursor[key] as Record<string, unknown>; }); cursor[path[path.length - 1]] = value; setDocument(JSON.stringify(next, null, 2)); setError(""); }, [parsed]);
-  const save = async () => { if (!parsed) { setError("JSON 格式无效，请修正后再保存。"); return; } setSaving(true); setError(""); try { const result = await request<{ document: Record<string, unknown> }>(`/api/v1/profiles/${name}`, { method: "PUT", body: JSON.stringify(parsed) }); const serialized = JSON.stringify(result.document, null, 2); setDocument(serialized); setSavedDocument(serialized); notify("档案已保存，后续对话将使用新版本"); } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); } finally { setSaving(false); } };
-  const restorePrevious = async () => { const previous = history[0]; if (!previous || !parsed) return; if (!window.confirm(`恢复修订 ${previous.revision} 的内容？当前版本仍会保留在历史中。`)) return; setSaving(true); setError(""); try { const result = await request<{ document: Record<string, unknown> }>(`/api/v1/profiles/${name}/restore`, { method: "POST", body: JSON.stringify({ version_id: previous.version_id, expected_revision: parsed.revision }) }); const serialized = JSON.stringify(result.document, null, 2); setDocument(serialized); setSavedDocument(serialized); notify("已恢复上一版本，并生成新的修订"); await load(); } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); } finally { setSaving(false); } };
+  const save = async () => { if (!parsed) { setError("JSON 格式无效，请修正后再保存。"); return; } setSaving(true); setError(""); try { const result = await request<{ document: Record<string, unknown> }>(`/api/v1/profiles/${name}${characterQuery}`, { method: "PUT", body: JSON.stringify(parsed) }); const serialized = JSON.stringify(result.document, null, 2); setDocument(serialized); setSavedDocument(serialized); notify("档案已保存，后续对话将使用新版本"); } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); } finally { setSaving(false); } };
+  const restorePrevious = async () => { const previous = history[0]; if (!previous || !parsed) return; if (!window.confirm(`恢复修订 ${previous.revision} 的内容？当前版本仍会保留在历史中。`)) return; setSaving(true); setError(""); try { const result = await request<{ document: Record<string, unknown> }>(`/api/v1/profiles/${name}/restore${characterQuery}`, { method: "POST", body: JSON.stringify({ version_id: previous.version_id, expected_revision: parsed.revision }) }); const serialized = JSON.stringify(result.document, null, 2); setDocument(serialized); setSavedDocument(serialized); notify("已恢复上一版本，并生成新的修订"); await load(); } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); } finally { setSaving(false); } };
   const switchProfile = (id: Role | "state") => { if (document !== savedDocument && !window.confirm("切换会放弃未保存修改，是否继续？")) return; setName(id); };
   return <Modal title="人物与状态档案" kicker="PROFILE DOCUMENTS" onClose={onClose} footer={<><button className="secondary" disabled={loading || saving || !history.length} onClick={() => void restorePrevious()}>恢复上一版本</button><button className="secondary" disabled={loading || saving} onClick={() => void load()}>放弃修改并重载</button><button className="primary" disabled={loading || saving || !parsed || document === savedDocument} onClick={() => void save()}>{saving ? "正在保存…" : "保存档案"}</button></>}><div className="profile-tabs">{([["user", "用户档案"], ["assistant", "AI 档案"], ["state", "运行状态"]] as Array<[Role | "state", string]>).map(([id, label]) => <button className={name === id ? "active" : ""} key={id} onClick={() => switchProfile(id)}>{label}</button>)}</div><div className="profile-editor-toolbar"><p className="advanced-note">用户修改直接生效并生成新 revision；AI 后续写回必须基于该 revision。当前保留 {history.length} 个可恢复版本。</p><div><button className={mode === "form" ? "active" : ""} onClick={() => setMode("form")}>表单编辑</button><button className={mode === "json" ? "active" : ""} onClick={() => setMode("json")}>高级 JSON</button></div></div>{error && <div className="profile-editor-error" role="alert">{error}</div>}{loading ? <div className="empty-mini">正在载入档案…</div> : mode === "json" ? <textarea aria-label="高级 JSON 编辑器" className="json-editor" value={document} onChange={(event) => { setDocument(event.target.value); setError(""); }} spellCheck={false} /> : parsed ? <div className="profile-form">{Object.entries(parsed).filter(([key]) => !PROFILE_TECHNICAL_FIELDS.has(key)).map(([key, value]) => <ProfileFieldEditor key={key} fieldKey={key} value={value} path={[key]} onChange={updateValue} />)}</div> : <div className="profile-editor-error" role="alert">JSON 格式无效，请切换到高级 JSON 修正。</div>}</Modal>;
 }
 
-function ProfileCardDialog({ role, avatars, displayName, onClose, onEdit }: { role: Role; avatars: AvatarConfig; displayName: string; onClose: () => void; onEdit: (role: Role) => void }) {
+function ProfileCardDialog({ characterId, role, avatars, displayName, onClose, onEdit }: { characterId: string; role: Role; avatars: AvatarConfig; displayName: string; onClose: () => void; onEdit: (role: Role) => void }) {
   const [card, setCard] = useState<ProfileCardData | null>(null); const [error, setError] = useState("");
-  useEffect(() => { request<ProfileCardData>(`/api/v1/profiles/${role}/card`).then(setCard).catch((reason: Error) => setError(reason.message)); }, [role]);
-  const blocks: [string, Record<string, unknown>][] = card ? [["身份信息", card.identity], ["人物性格", card.personality], ["近期关系", card.relationship]] : [];
+  useEffect(() => { const query = role === "user" || !characterId ? "" : `?character_id=${encodeURIComponent(characterId)}`; request<ProfileCardData>(`/api/v1/profiles/${role}/card${query}`).then(setCard).catch((reason: Error) => setError(reason.message)); }, [characterId, role]);
+  const blocks: [string, Record<string, unknown>][] = card ? [["身份信息", card.identity], ["人物性格", card.personality], ["角色演绎", card.roleplay || {}], ["近期关系", card.relationship]] : [];
   return <Modal title={`${displayName} · 人物卡`} kicker="CHARACTER PROFILE" onClose={onClose} compact footer={<button className="primary" onClick={() => onEdit(role)}>编辑这份档案</button>}><div className="profile-card-hero"><PortraitAvatar role={role} avatars={avatars} label={displayName} /><div><h3>{displayName}</h3><p>{role === "assistant" ? "AI 角色设定与当前关系状态" : "用户设定与偏好"}</p></div></div>{error ? <div className="profile-card-empty">{error}</div> : !card ? <div className="profile-card-empty">正在读取人物关键字段…</div> : <div className="profile-card-blocks">{blocks.map(([title, value]) => <section className="profile-card-block" key={title}><h3>{title}</h3>{Object.keys(value).length ? Object.entries(value).map(([key, item]) => <div className="profile-card-row" key={key}><span>{key}</span><strong>{friendlyValue(item)}</strong></div>) : <div className="profile-card-empty">暂无记录</div>}</section>)}<small className="profile-revision">修订 {card.revision} · {formatTime(card.updated_at)}</small></div>}</Modal>;
 }
 
@@ -2594,10 +3784,10 @@ function DiagnosticsDialog({ onClose, notify, onCleared }: { onClose: () => void
   return <Modal title="系统诊断与数据管理" kicker="SYSTEM HEALTH" onClose={onClose}>{loading ? <div className="empty-mini">正在检查服务状态…</div> : <><div className="diagnostic-grid"><article><span>主服务</span><strong>{report?.ok ? "正常" : "异常"}</strong><small>{str(report?.app.version)}</small></article><article><span>会话</span><strong>{num(report?.counts.sessions)}</strong><small>SQLite 权威存储 · JSON 投影</small></article><article><span>知识块</span><strong>{num(report?.counts.chunks)}</strong><small>{num(report?.counts.characters)} 字符</small></article><article><span>语音</span><strong>{bool(report?.audio.asr_ready) ? "ASR 就绪" : "ASR 降级"}</strong><small>{str(report?.audio.asr_provider)}</small></article></div><details className="report-json"><summary>查看完整诊断报告</summary><pre>{JSON.stringify(report, null, 2)}</pre></details><section className="danger-zone"><h3>危险数据操作</h3><p>这些操作只影响当前新项目的 runtime，不会修改原 Mindscape 数据。</p><div><button onClick={() => void clear("knowledge")}>清空知识库</button><button onClick={() => void clear("sessions")}>清空会话</button><button className="danger" onClick={() => void clear("all")}>清空全部运行数据</button></div></section></>}</Modal>;
 }
 
-function VoiceMode({ state, avatar, characterName, context, companion, onExit, onRetry }: { state: VoiceSessionState; avatar: AvatarEntry; characterName: string; context: VoiceInteractionContext; companion: { enabled: boolean; round: number; limit: number }; onExit: () => void; onRetry: () => void }) {
+function VoiceMode({ state, avatar, characterName, context, companion, onExit, onRetry, onFallback }: { state: VoiceSessionState; avatar: AvatarEntry; characterName: string; context: VoiceInteractionContext; companion: { enabled: boolean; round: number; limit: number }; onExit: () => void; onRetry: () => void; onFallback: () => void }) {
   const intensity = Math.max(0.08, state.level);
   const faceToFace = context.mode === "face_to_face";
-  return <section className={`voice-mode phase-${state.phase}`} style={{ "--voice-level": intensity, "--voice-avatar": `url("${avatar.src}")` } as CSSProperties} aria-label="沉浸式实时语音"><div className="voice-background" /><div className="voice-shade" /><button className="voice-exit" onClick={onExit}>退出语音</button><div className="voice-stage"><span className="voice-kicker">{faceToFace ? "FACE TO FACE" : "LIVE CONVERSATION"}</span>{faceToFace && <div className="voice-scene-chip" title={context.scene || "普通面对面场景"}><span>面对面</span><small>{context.scene || "未指定具体场景"}</small></div>}{companion.enabled && <div className={`voice-companion ${companion.round >= companion.limit ? "complete" : ""}`} role="status"><span>连续陪伴</span><strong>{companion.round} / {companion.limit}</strong><small>{companion.round >= companion.limit ? "已到本次上限" : "朗读结束 10 秒后继续 · 可随时插话"}</small></div>}<div className="voice-portrait-shell"><i className="voice-ring ring-one" /><i className="voice-ring ring-two" /><div className="voice-portrait portrait-avatar" style={avatarStyle(avatar)}><img src={avatar.src} alt={`${characterName}头像`} /></div></div><h1>{characterName}</h1><div className="voice-status"><i />{VOICE_LABELS[state.phase]}</div><div className="voice-wave" aria-hidden="true">{Array.from({ length: 18 }, (_, index) => <i key={index} style={{ "--bar": (index % 5) + 1 } as CSSProperties} />)}</div><div className="voice-caption"><small>{state.reply ? `${characterName} 正在回应` : "你刚刚说"}</small><p>{state.reply || state.transcript || (state.phase === "error" ? state.error : "直接开始说话，我会自动识别、发送并回应。")}</p></div>{state.phase === "error" && <div className="voice-error"><span>{state.error}</span><button onClick={onRetry}>恢复语音</button></div>}<span className="voice-tip">连续说话确认后才会打断 · 插话会重定向话题 · Ctrl+Shift+M 切换 · Esc 退出</span></div></section>;
+  return <section className={`voice-mode phase-${state.phase}`} style={{ "--voice-level": intensity, "--voice-avatar": `url("${avatar.src}")` } as CSSProperties} aria-label="沉浸式实时语音"><div className="voice-background" /><div className="voice-shade" /><button className="voice-exit" onClick={onExit}>退出语音</button><div className="voice-stage"><span className="voice-kicker">{faceToFace ? "FACE TO FACE" : "LIVE CONVERSATION"}</span>{faceToFace && <div className="voice-scene-chip" title={context.scene || "普通面对面场景"}><span>面对面</span><small>{context.scene || "未指定具体场景"}</small></div>}{companion.enabled && <div className={`voice-companion ${companion.round >= companion.limit ? "complete" : ""}`} role="status"><span>连续陪伴</span><strong>{companion.round} / {companion.limit}</strong><small>{companion.round >= companion.limit ? "已到本次上限" : "朗读结束 10 秒后继续 · 可随时插话"}</small></div>}<div className="voice-portrait-shell"><i className="voice-ring ring-one" /><i className="voice-ring ring-two" /><div className="voice-portrait portrait-avatar" style={avatarStyle(avatar)}><img src={avatar.src} alt={`${characterName}头像`} /></div></div><h1>{characterName}</h1><div className="voice-status"><i />{VOICE_LABELS[state.phase]}</div><div className="voice-wave" aria-hidden="true">{Array.from({ length: 18 }, (_, index) => <i key={index} style={{ "--bar": (index % 5) + 1 } as CSSProperties} />)}</div><div className="voice-caption"><small>{state.reply ? `${characterName} 正在回应` : "你刚刚说"}</small><p>{state.reply || state.transcript || ((state.phase === "error" || state.phase === "preparing") ? state.error : "直接开始说话，我会自动识别、发送并回应。")}</p></div>{(state.phase === "error" || state.phase === "preparing") && <div className="voice-error"><span>{state.error}</span><button onClick={onRetry}>重试原生采集</button><button onClick={onFallback}>切换备用采集</button></div>}<span className="voice-tip">连续说话确认后才会打断 · 插话会重定向话题 · Ctrl+Shift+M 切换 · Esc 退出</span></div></section>;
 }
 
 export default App;

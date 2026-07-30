@@ -8,19 +8,25 @@ const pyproject = fs.readFileSync(pyprojectPath, "utf8");
 const match = pyproject.match(/^version\s*=\s*"([^"]+)"/m);
 if (!match) throw new Error("pyproject.toml does not contain project.version");
 const version = match[1];
+const syncLauncher = process.argv.includes("--launcher");
 
-for (const relative of ["frontend/package.json", "desktop/package.json"]) {
+for (const relative of [
+  "frontend/package.json",
+  ...(syncLauncher ? ["desktop/package.json"] : []),
+]) {
   const target = path.join(root, relative);
   const value = JSON.parse(fs.readFileSync(target, "utf8"));
   value.version = version;
   fs.writeFileSync(target, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
-const desktopLockPath = path.join(root, "desktop/package-lock.json");
-const desktopLock = JSON.parse(fs.readFileSync(desktopLockPath, "utf8"));
-desktopLock.version = version;
-if (desktopLock.packages?.[""]) desktopLock.packages[""].version = version;
-fs.writeFileSync(desktopLockPath, `${JSON.stringify(desktopLock, null, 2)}\n`, "utf8");
+if (syncLauncher) {
+  const desktopLockPath = path.join(root, "desktop/package-lock.json");
+  const desktopLock = JSON.parse(fs.readFileSync(desktopLockPath, "utf8"));
+  desktopLock.version = version;
+  if (desktopLock.packages?.[""]) desktopLock.packages[""].version = version;
+  fs.writeFileSync(desktopLockPath, `${JSON.stringify(desktopLock, null, 2)}\n`, "utf8");
+}
 
 const frontendLockPath = path.join(root, "frontend/package-lock.json");
 const frontendLock = JSON.parse(fs.readFileSync(frontendLockPath, "utf8"));

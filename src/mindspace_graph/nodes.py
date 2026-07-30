@@ -9,11 +9,6 @@ from langgraph.types import StreamWriter
 
 from mindspace_graph.cancellation import GenerationCancelled
 from mindspace_graph.capabilities import CapabilityPlan, enforce_capability_claims
-from mindspace_graph.memory_update import (
-    build_memory_extraction_messages,
-    parse_memory_plan,
-    should_extract_memory,
-)
 from mindspace_graph.models import (
     ChatResponse,
     JsonUpdatePlan,
@@ -23,17 +18,14 @@ from mindspace_graph.models import (
     ProtocolOutput,
     RoleValidation,
 )
-from mindspace_graph.policies import (
-    normalize_json_update,
-    rank_with_temporal_decay,
-    sanitize_profile_bootstrap,
-    validate_json_update,
-)
+from mindspace_graph.policies import rank_with_temporal_decay
 from mindspace_graph.ports import Dependencies
 from mindspace_graph.profile_bootstrap import evaluate_profile_bootstrap
 from mindspace_graph.prompting import build_prompt, resolve_initiative_request
 from mindspace_graph.protocol import IncrementalResponseParser, ProtocolParser
+from mindspace_graph.roleplay import allow_raw_chat_retrieval, normalize_voice_response
 from mindspace_graph.state import TurnState
+from mindspace_graph.voice_render import VoiceCueStream, extract_voice_cue, normalize_voice_cue
 
 
 class NodeFactory:
@@ -43,19 +35,16 @@ class NodeFactory:
     StreamWriter 只负责发诊断/SSE 事件，不应被当成业务状态存储。
     """
 
-    def __init__(self, dependencies: Dependencies, *, max_protocol_repairs: int = 1):
+    def __init__(self, dependencies: Dependencies):
         self.deps = dependencies
         self.parser = ProtocolParser()
-        self.max_protocol_repairs = max_protocol_repairs
 
     CALL_BUDGETS = {
         "planner": 1,
         "research_review": 1,
         "generation": 1,
-        "protocol_repair": 1,
-        "memory_extract": 1,
     }
-    TOTAL_CALL_BUDGET = 5
+    TOTAL_CALL_BUDGET = 3
 
     @classmethod
     def _call_allowed(cls, state: TurnState, kind: str) -> bool:
@@ -114,8 +103,6 @@ class NodeFactory:
             {"session_id": request.session_id, "round": request.round, "mode": request.mode},
         )
         return {
-            "protocol_attempts": 0,
-            "role_attempts": 0,
             "llm_call_count": 0,
             "llm_call_counts": {},
             "model_call_summary": [],
@@ -127,7 +114,7 @@ class NodeFactory:
 
         self._check_cancelled(state)
         request = state["request"]
-        profiles = self.deps.profiles.load_bundle()
+        profiles = self.deps.profiles.load_bundle(request.character_id)
         request = resolve_initiative_request(request, profiles)
         deletion_events = self.deps.sessions.load_pending_deletions(request.session_id)
         recent_history = self.deps.sessions.load_all(request.session_id)
@@ -174,6 +161,11 @@ class NodeFactory:
         request = state["request"]
         settings = request.retrieval
         chunks = []
+        if not settings.ready:
+            return {
+                "knowledge_chunks": [],
+                "trace": ["retrieve_knowledge_deferred"],
+            }
         capability_allowed = (
             self.deps.capabilities is None
             or self.deps.capabilities.enabled("local_knowledge_enabled")
@@ -197,6 +189,11 @@ class NodeFactory:
         request = state["request"]
         settings = request.retrieval
         chunks = []
+        if not settings.ready:
+            return {
+                "chat_chunks": [],
+                "trace": ["retrieve_chat_deferred"],
+            }
         capability_allowed = (
             self.deps.capabilities is None
             or self.deps.capabilities.enabled("local_knowledge_enabled")
@@ -207,12 +204,25 @@ class NodeFactory:
                 query,
                 request.session_id,
                 settings.chat_k * settings.candidate_multiplier,
+                character_id=request.character_id,
                 settings=settings,
                 user_name=request.user_name,
                 character_name=request.character_name,
                 messages=state.get("recent_history", []),
+                include_raw_chat=allow_raw_chat_retrieval(request),
             )
             chunks = [item for item in chunks if item.score >= settings.similarity_threshold]
+            if self.deps.activities is not None:
+                narratives = self.deps.activities.search_narratives(
+                    request.character_id,
+                    query,
+                    limit=min(3, settings.memory_family_limit),
+                )
+                chunks.extend(
+                    item
+                    for item in narratives
+                    if item.score >= settings.similarity_threshold
+                )
         if not settings.structured_memory_enabled:
             chunks = [item for item in chunks if item.source != "memory"]
         return {"chat_chunks": chunks, "trace": ["retrieve_chat"]}
@@ -231,10 +241,13 @@ class NodeFactory:
                     "knowledge": len(state.get("knowledge_chunks", [])),
                     "chat": len(state.get("chat_chunks", [])),
                     "ranked": [item.model_dump(mode="json") for item in ranked],
+                    "ready": request.retrieval.ready,
+                    "deferred_reason": request.retrieval.deferred_reason,
                 },
             }
         )
-        return {"ranked_context": ranked, "trace": ["rank_context"]}
+        trace = "rank_context" if request.retrieval.ready else "rank_context_deferred"
+        return {"ranked_context": ranked, "trace": [trace]}
 
     def capability_route(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
         """先用确定性规则路由能力，再判断是否值得支付一次私有规划调用。
@@ -278,13 +291,23 @@ class NodeFactory:
             "available_capabilities": available,
             "capability_policy": policy,
             "capability_plan": plan,
+            # Keep the state shape stable even when ordinary chat bypasses the
+            # two empty execution/review nodes.
+            "capability_results": [],
+            "capability_notice": "",
             "preflight_required": preflight_required,
             "trace": ["capability_route"],
         }
 
     @staticmethod
     def route_capability_plan(state: TurnState) -> str:
-        return "planner" if state.get("preflight_required", False) else "execute"
+        if state.get("preflight_required", False):
+            return "planner"
+        plan = state.get("capability_plan") or CapabilityPlan()
+        if plan.decision == "use_capabilities" and plan.calls:
+            return "execute"
+        # Ordinary companion chat should not traverse two empty tool nodes.
+        return "compose"
 
     def plan_capabilities(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
         """执行一次非流式私有规划；失败时只保留服务端能够确定授权的调用。"""
@@ -603,6 +626,7 @@ class NodeFactory:
             self.deps.prompt_inspector.record(
                 run_id=state.get("request_id", ""),
                 session_id=state["request"].session_id,
+                character_id=state["request"].character_id,
                 messages=built.messages,
                 pending_events=built.pending_events,
             )
@@ -631,19 +655,59 @@ class NodeFactory:
         if not self._call_allowed(state, "generation"):
             raise RuntimeError("generation model call budget exhausted")
         request = state["request"]
+        # The primary generation remains the only foreground content call.
+        # R18 intensity and stage advancement are decided in the final prompt,
+        # never by a second rewrite request.
+        defer_visible_response = False
         started = time.perf_counter()
         extractor = IncrementalResponseParser()
+        # Retain backward-compatible cue parsing for older model templates.
+        # The Base character voice no longer requires a leading cue.
+        voice_cue_stream = VoiceCueStream(allow_adult=request.adult_mode)
+        active_tts_provider = (
+            self.deps.tts_provider()
+            if callable(self.deps.tts_provider)
+            else self.deps.tts_provider
+        )
+        emit_voice_cue = (
+            request.interaction_mode == "voice"
+            and active_tts_provider == "qwen3-vllm"
+        )
+        voice_cue_sent = False
         chunks: list[str] = []
         for token in self.deps.llm.stream(state["prompt_messages"], request.api):
             self._check_cancelled(state)
             chunks.append(token)
-            for delta in extractor.feed(token):
-                writer({"event": "response.delta", "data": {"delta": delta}})
+            if not defer_visible_response:
+                for delta in extractor.feed(token):
+                    deltas = voice_cue_stream.feed(delta)
+                    if emit_voice_cue and voice_cue_stream.resolved and not voice_cue_sent:
+                        writer(
+                            {
+                                "event": "response.voice_cue",
+                                "data": {"cue": voice_cue_stream.cue},
+                            }
+                        )
+                        voice_cue_sent = True
+                    for spoken_delta in deltas:
+                        normalized = normalize_voice_response(spoken_delta, request)
+                        if normalized:
+                            writer({"event": "response.delta", "data": {"delta": normalized}})
+        if not defer_visible_response:
+            for delta in voice_cue_stream.flush():
+                if emit_voice_cue and not voice_cue_sent:
+                    writer({"event": "response.voice_cue", "data": {"cue": voice_cue_stream.cue}})
+                    voice_cue_sent = True
+                normalized = normalize_voice_response(delta, request)
+                if normalized:
+                    writer({"event": "response.delta", "data": {"delta": normalized}})
         raw = "".join(chunks)
         usage = self._take_model_usage(writer)
         self._check_cancelled(state)
         return {
             "raw_candidate": raw,
+            "voice_cue": voice_cue_stream.cue,
+            "voice_cue_event_sent": voice_cue_sent,
             "model_usage": [*state.get("model_usage", []), *([usage] if usage else [])],
             **self._record_call(state, "generation", started),
             "trace": ["generate_candidate"],
@@ -661,50 +725,67 @@ class NodeFactory:
 
         self._check_cancelled(state)
         raw = state.get("raw_candidate", "")
-        protocol, errors = self.parser.parse(raw)
+        request = state["request"]
+        parsed_protocol, errors = self.parser.parse(raw)
         previous_visible = state.get("fallback_response")
-        protocol_repaired = state.get("protocol_attempts", 0) > 0
-        role_repaired = state.get("role_attempts", 0) > 0
-        lock_visible_response = bool(previous_visible and protocol_repaired and not role_repaired)
         parsed_visible = self.parser.response_text(raw)
-        visible_response = (
-            previous_visible if lock_visible_response else parsed_visible or previous_visible
+        parsed_voice_cue, _spoken_response, explicit_cue = extract_voice_cue(
+            parsed_visible or "", allow_adult=request.adult_mode
         )
-        fallback_used = False
-        if protocol is None and visible_response:
-            # 正文已经完整可用时，不再花一次模型调用修复外围协议。丢弃无法
-            # 验证的 JSON 写回，使用服务端生成的空更新计划，既保住回复也避免
-            # 模型为格式问题重复生成一份不同正文。
-            protocol = self._safe_protocol(visible_response, state)
+        # Adult/director runs intentionally defer visible deltas, so their cue
+        # must be recovered from the completed response instead of inheriting
+        # the stream parser's neutral default.
+        voice_cue = parsed_voice_cue if explicit_cue else normalize_voice_cue(
+            state.get("voice_cue"), allow_adult=request.adult_mode
+        )
+        active_tts_provider = (
+            self.deps.tts_provider()
+            if callable(self.deps.tts_provider)
+            else self.deps.tts_provider
+        )
+        emit_voice_cue = (
+            request.interaction_mode == "voice"
+            and active_tts_provider == "qwen3-vllm"
+        )
+        if emit_voice_cue and not state.get("voice_cue_event_sent"):
+            writer({"event": "response.voice_cue", "data": {"cue": voice_cue}})
+        visible_response = parsed_visible or previous_visible
+        if visible_response:
+            visible_response = normalize_voice_response(visible_response, request)
+        # Model-authored profile patches are disabled.  The model may still
+        # emit a legacy <json_update> block, but the server ignores it and
+        # always owns an empty plan.  This also makes protocol formatting
+        # incapable of triggering a second foreground model call.
+        protocol = self._safe_protocol(visible_response, state) if visible_response else None
+        if protocol is not None:
             self.deps.audit.record(
                 "protocol_fallback",
                 {
                     "request_id": state.get("request_id", ""),
                     "errors": errors,
-                    "reason": "visible_response_recovered",
+                    "reason": (
+                        "model_json_update_ignored"
+                        if parsed_protocol is not None
+                        else "visible_response_recovered"
+                    ),
                 },
             )
             errors = []
-            fallback_used = True
-        call_limit_reached = not self._call_allowed(state, "protocol_repair")
-        if protocol is None and (
-            state.get("protocol_attempts", 0) >= self.max_protocol_repairs
-            or call_limit_reached
-        ):
-            if visible_response:
-                protocol = self._safe_protocol(visible_response, state)
-                self.deps.audit.record(
-                    "protocol_fallback",
-                    {"request_id": state.get("request_id", ""), "errors": errors},
-                )
-                errors = []
-                fallback_used = True
-        update: dict[str, Any] = {"protocol_errors": errors, "trace": ["parse_protocol"]}
+        update: dict[str, Any] = {
+            "protocol_errors": errors,
+            "voice_cue": voice_cue,
+            "voice_cue_event_sent": bool(
+                emit_voice_cue or state.get("voice_cue_event_sent")
+            ),
+            "trace": ["parse_protocol"],
+        }
         if visible_response:
             update["fallback_response"] = visible_response
         if protocol is not None:
-            if lock_visible_response and protocol.response != visible_response:
-                protocol = protocol.model_copy(update={"response": visible_response})
+            normalized_response = normalize_voice_response(protocol.response, request)
+            if normalized_response != protocol.response:
+                protocol = protocol.model_copy(update={"response": normalized_response})
+                update["fallback_response"] = normalized_response
             guarded_response, capability_violations = enforce_capability_claims(
                 protocol.response,
                 plan=state.get("capability_plan"),
@@ -730,22 +811,18 @@ class NodeFactory:
                     }
                 )
             update["protocol"] = protocol
-            if (
-                (protocol_repaired or role_repaired)
-                and not lock_visible_response
-                and not capability_violations
-            ):
-                writer(
-                    {
-                        "event": "response.replace",
-                        "data": {
-                            "content": protocol.response,
-                            "reason": (
-                                "safe_protocol_fallback" if fallback_used else "validated_repair"
-                            ),
-                        },
-                    }
-                )
+            # The visible reply is now complete, bracket-cleaned and guarded.
+            # Let full-context TTS start here instead of waiting for role
+            # diagnostics, persistence and the terminal run.completed event.
+            writer(
+                {
+                    "event": "response.ready",
+                    "data": {
+                        "content": protocol.response,
+                        "voice_cue": voice_cue,
+                    },
+                }
+            )
         return update
 
     @staticmethod
@@ -761,36 +838,12 @@ class NodeFactory:
             ),
         )
 
-    def repair_protocol(self, state: TurnState) -> dict[str, Any]:
-        """追加错误和原输出后修复协议；不会重新构造检索或工具上下文。"""
-
-        self._check_cancelled(state)
-        if not self._call_allowed(state, "protocol_repair"):
-            return {"trace": ["repair_protocol_skipped"]}
-        started = time.perf_counter()
-        chunks: list[str] = []
-        for token in self.deps.llm.stream_repair(
-            state["prompt_messages"],
-            state.get("raw_candidate", ""),
-            state.get("protocol_errors", []),
-            state["request"].api,
-        ):
-            self._check_cancelled(state)
-            chunks.append(token)
-        usage = self._take_model_usage(lambda _event: None)
-        return {
-            "raw_candidate": "".join(chunks),
-            "protocol_attempts": state.get("protocol_attempts", 0) + 1,
-            **self._record_call(state, "protocol_repair", started),
-            "model_usage": [*state.get("model_usage", []), *([usage] if usage else [])],
-            "trace": ["repair_protocol"],
-        }
-
     def validate_role(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
         self._check_cancelled(state)
+        request = state["request"]
         result = self.deps.role_policy.validate(
             state["protocol"].response,
-            request=state["request"],
+            request=request,
             history=state.get("recent_history", []),
         )
         writer(
@@ -799,129 +852,42 @@ class NodeFactory:
                 "data": {"kind": "role", **result.model_dump(mode="json")},
             }
         )
+        if not result.is_valid:
+            self.deps.audit.record(
+                "foreground_role_diagnostic",
+                {
+                    "request_id": state.get("request_id", ""),
+                    "message": result.message,
+                    "suggestion": result.suggestion,
+                },
+            )
         return {"role_validation": result, "trace": ["validate_role"]}
 
-    def repair_role(self, state: TurnState) -> dict[str, Any]:
-        """保留的兼容方法；当前 graph.py 未注册该节点，不属于实际主链路。"""
-
-        self._check_cancelled(state)
-        validation = state["role_validation"]
-        errors = [validation.message, validation.suggestion]
-        chunks: list[str] = []
-        for token in self.deps.llm.stream_repair(
-            state["prompt_messages"], state["raw_candidate"], errors, state["request"].api
-        ):
-            self._check_cancelled(state)
-            chunks.append(token)
-        usage = self._take_model_usage(lambda _event: None)
-        return {
-            "raw_candidate": "".join(chunks),
-            "role_attempts": state.get("role_attempts", 0) + 1,
-            "model_usage": [*state.get("model_usage", []), *([usage] if usage else [])],
-            "trace": ["repair_role"],
-        }
-
     def validate_json_update(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
-        """校验模型 Patch；主输出为空时才可能条件触发独立记忆提取。"""
+        """Install the server-owned no-profile-write plan.
+
+        Direct profile APIs remain user-controlled and revisioned.  Foreground
+        chat no longer asks the model to infer or patch user/AI/runtime JSON;
+        recent continuity is produced by the non-blocking post-turn worker.
+        """
 
         self._check_cancelled(state)
-        role_validation = state.get("role_validation")
-        if role_validation is not None and not role_validation.is_valid:
-            plan = self._safe_protocol(state["protocol"].response, state).json_update
-            result = JsonUpdateValidation(
-                is_valid=False,
-                errors=[
-                    "角色一致性校验未通过；已保留流式正文，但本轮禁止 JSON 写回",
-                    role_validation.message,
-                ],
-            )
-            writer(
-                {
-                    "event": "validation.completed",
-                    "data": {
-                        "kind": "json_update",
-                        "trigger": "none",
-                        "patch_count": 0,
-                        **result.model_dump(mode="json", exclude={"normalized_plan"}),
-                    },
-                }
-            )
-            return {
-                "json_update_plan": plan,
-                "json_update_validation": result,
-                "trace": ["validate_json_update"],
-            }
-        plan = state["protocol"].json_update
-        extraction_attempted = False
-        usages = list(state.get("model_usage", []))
-        extractor = getattr(self.deps.llm, "extract_memory", None)
         request = state["request"]
-        if (
-            plan.trigger == "none"
-            and not plan.patches
-            and not request.initiative
-            and should_extract_memory(request.message)
-            and callable(extractor)
-            and self._call_allowed(state, "memory_extract")
-        ):
-            extraction_attempted = True
-            extraction_started = time.perf_counter()
-            extraction_error = ""
-            try:
-                raw = extractor(
-                    build_memory_extraction_messages(
-                        request,
-                        state["profiles"],
-                        state["protocol"].response,
-                    ),
-                    request.api,
-                    timeout_seconds=6.0,
-                )
-                extracted = parse_memory_plan(raw)
-                # The server owns these concurrency and turn identifiers.
-                plan = extracted.model_copy(
-                    update={
-                        "turn_id": f"round_{request.round}",
-                        "base_revisions": state["profiles"].revisions,
-                    }
-                )
-                usage = self._take_model_usage(writer)
-                if usage is not None:
-                    usages.append(usage)
-            except Exception as exc:  # noqa: BLE001 - optional extraction is fail-closed
-                extraction_error = str(exc)
-                self.deps.audit.record(
-                    "memory_extract_degraded",
-                    {"request_id": state.get("request_id", ""), "error": str(exc)},
-                )
-                plan = state["protocol"].json_update
-        call_update: dict[str, Any] = {}
-        if extraction_attempted:
-            call_update = self._record_call(
-                state,
-                "memory_extract",
-                extraction_started,
-                status="degraded" if extraction_error else "success",
-                error=extraction_error,
-            )
-        plan = normalize_json_update(plan, state["profiles"], self.deps.entities)
-        plan = sanitize_profile_bootstrap(plan, state.get("profile_bootstrap"))
-        pending_ids = {event.event_id for event in state.get("deletion_events", [])}
-        result = validate_json_update(
-            plan,
-            state["profiles"],
-            pending_deletion_ids=pending_ids,
-            bootstrap=state.get("profile_bootstrap"),
-            current_response=state["protocol"].response,
-            current_user=request.message if extraction_attempted else "",
+        plan = JsonUpdatePlan(
+            turn_id=f"round_{request.round}",
+            base_revisions=state["profiles"].revisions,
+            trigger="none",
+            patches=[],
         )
+        result = JsonUpdateValidation(is_valid=True, normalized_plan=plan)
         self.deps.audit.record(
             "json_update_validated",
             {
-                "valid": result.is_valid,
-                "errors": result.errors,
-                "trigger": plan.trigger,
-                "extraction_attempted": extraction_attempted,
+                "valid": True,
+                "errors": [],
+                "trigger": "none",
+                "extraction_attempted": False,
+                "model_profile_writes_enabled": False,
             },
         )
         writer(
@@ -929,8 +895,9 @@ class NodeFactory:
                 "event": "validation.completed",
                 "data": {
                     "kind": "json_update",
-                    "trigger": plan.trigger,
-                    "patch_count": len(plan.patches),
+                    "trigger": "none",
+                    "patch_count": 0,
+                    "model_profile_writes_enabled": False,
                     **result.model_dump(mode="json", exclude={"normalized_plan"}),
                 },
             }
@@ -938,8 +905,6 @@ class NodeFactory:
         return {
             "json_update_plan": plan,
             "json_update_validation": result,
-            "model_usage": usages,
-            **call_update,
             "trace": ["validate_json_update"],
         }
 
@@ -1058,7 +1023,7 @@ class NodeFactory:
                         metadata = dict(item.get("metadata") or {})
                         metadata["message_id"] = persisted["user_message_id"]
                         item["metadata"] = metadata
-                current_profiles = self.deps.profiles.load_bundle()
+                current_profiles = self.deps.profiles.load_bundle(request.character_id)
                 context_commit = self.deps.context.append_turn(
                     request_id=state.get("request_id")
                     or f"{request.session_id}:{request.round}:{persisted['assistant_message_id']}",
@@ -1180,24 +1145,8 @@ class NodeFactory:
         return {"response": response, "errors": errors, "trace": ["finalize_error"]}
 
     def route_protocol(self, state: TurnState) -> str:
-        """选择解析后的去向。
-
-        规划、研究复核和协议修复使用独立预算；前两者不会挤掉唯一一次修复机会。
-        """
+        """Accept visible text once; malformed model-only output fails once."""
 
         if state.get("protocol") is not None and not state.get("protocol_errors"):
             return "valid"
-        if self._call_allowed(state, "protocol_repair") and state.get(
-            "protocol_attempts", 0
-        ) < self.max_protocol_repairs:
-            return "repair"
-        return "fail"
-
-    @staticmethod
-    def route_role(state: TurnState) -> str:
-        result = state.get("role_validation")
-        if result and result.is_valid:
-            return "valid"
-        if state.get("role_attempts", 0) < 1:
-            return "repair"
         return "fail"

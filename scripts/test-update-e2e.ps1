@@ -4,6 +4,7 @@ param(
     [string]$UpdateUrl = 'http://127.0.0.1:9780/manifest.json',
     [string]$CurrentVersion = '0.0.0',
     [string]$TargetVersion = '',
+    [ValidateSet('stable', 'beta')] [string]$Channel = 'stable',
     [int]$Port = 9780
 )
 
@@ -47,11 +48,12 @@ try {
     $env:UPDATE_E2E_URL = $UpdateUrl
     $env:UPDATE_E2E_CURRENT = $CurrentVersion
     $env:UPDATE_E2E_TARGET = $TargetVersion
+    $env:UPDATE_E2E_CHANNEL = $Channel
     $env:UPDATE_E2E_LAUNCHER = [string](Get-Content -LiteralPath (Join-Path $ProjectRoot 'desktop\package.json') -Raw | ConvertFrom-Json).version
     node (Join-Path $ProjectRoot 'desktop\update-e2e.cjs')
     if ($LASTEXITCODE -ne 0) { throw 'Updater end-to-end test failed' }
 }
 finally {
     Stop-Process -Id $Server.Id -Force -ErrorAction SilentlyContinue
-    Remove-Item Env:UPDATE_E2E_URL, Env:UPDATE_E2E_CURRENT, Env:UPDATE_E2E_TARGET, Env:UPDATE_E2E_LAUNCHER -ErrorAction SilentlyContinue
+    Remove-Item Env:UPDATE_E2E_URL, Env:UPDATE_E2E_CURRENT, Env:UPDATE_E2E_TARGET, Env:UPDATE_E2E_LAUNCHER, Env:UPDATE_E2E_CHANNEL -ErrorAction SilentlyContinue
 }

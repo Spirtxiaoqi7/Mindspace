@@ -9,10 +9,12 @@ contextBridge.exposeInMainWorld("launcher", {
   maintenance: (action) => ipcRenderer.invoke("launcher:maintenance", action),
   selectRoot: () => ipcRenderer.invoke("launcher:select-root"),
   selectStorage: () => ipcRenderer.invoke("launcher:select-storage"),
+  migrateRecommendedStorage: () => ipcRenderer.invoke("launcher:migrate-recommended-storage"),
   shortcut: () => ipcRenderer.invoke("launcher:shortcut"),
   update: (action, options = {}) => ipcRenderer.invoke("launcher:update", { action, ...options }),
   component: (action, id = "") => ipcRenderer.invoke("launcher:component", { action, id }),
   voice: (action, id = "") => ipcRenderer.invoke("launcher:voice", { action, id }),
+  onboarding: (action, payload = {}) => ipcRenderer.invoke("launcher:onboarding", { action, payload }),
   diagnostics: () => ipcRenderer.invoke("runtime:diagnostics"),
   runtime: (action, id = "") => {
     const channel = {
@@ -21,6 +23,7 @@ contextBridge.exposeInMainWorld("launcher", {
       cancel: "runtime:cancel",
       retry: "runtime:retry",
       repair: "runtime:repair",
+      remove: "runtime:action",
     }[action];
     return ipcRenderer.invoke(channel || "runtime:action", { action, id });
   },

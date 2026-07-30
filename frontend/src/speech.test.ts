@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { estimateDeliveredPrefix, segmentSpeechText, SpeechSegmenter, stripLeadingTtsFiller } from "./speech";
+import {
+  estimateDeliveredPrefix,
+  hasSpeakableContent,
+  segmentSpeechText,
+  SpeechSegmenter,
+  stripLeadingTtsFiller,
+} from "./speech";
 
 describe("TTS speech segmentation", () => {
   it("removes Chinese and ASCII parenthetical stage directions", () => {
@@ -9,10 +15,10 @@ describe("TTS speech segmentation", () => {
     ]);
   });
 
-  it("reads every parenthetical action as its own spoken segment in voice mode", () => {
+  it("discards parenthetical stage directions in voice mode", () => {
     expect(
       segmentSpeechText("（轻轻靠近）你好。(低声说)今天过得好吗？", true),
-    ).toEqual(["轻轻靠近。", "你好。", "低声说。", "今天过得好吗？"]);
+    ).toEqual(["你好。", "今天过得好吗？"]);
   });
 
   it("emits complete sentences for punctuation and ellipsis across chunks", () => {
@@ -22,35 +28,75 @@ describe("TTS speech segmentation", () => {
     expect(segmenter.feed("最后一句", true)).toEqual(["最后一句"]);
   });
 
+  it("never emits punctuation-only TTS segments and attaches leading ellipsis to prose", () => {
+    const segmenter = new SpeechSegmenter();
+    expect(segmenter.feed("第一句？")).toEqual(["第一句？"]);
+    expect(segmenter.feed("……")).toEqual([]);
+    expect(segmenter.feed("不过后面还有正文。")).toEqual(["……不过后面还有正文。"]);
+    expect(segmenter.feed("——♡", true)).toEqual([]);
+    expect(hasSpeakableContent("…… —— ♡")).toBe(false);
+    expect(hasSpeakableContent("……还有内容")).toBe(true);
+  });
+
+  it("keeps a streamed leading ellipsis attached in full voice mode", () => {
+    const segmenter = new SpeechSegmenter();
+    expect(segmenter.feed("第一句？", false, true)).toEqual(["第一句？"]);
+    expect(segmenter.feed("……", false, true)).toEqual([]);
+    expect(segmenter.feed("不过后面还有正文。", true, true)).toEqual([
+      "……不过后面还有正文。",
+    ]);
+  });
+
+  it("keeps the sentence after the exact first-sentence ellipsis pattern", () => {
+    expect(
+      segmentSpeechText(
+        "（翻了个身，抬头看你）这么晚还醒着，是不是又在想什么不该想的？……不过我倒是有个正经事提醒你。今天可别找借口。",
+      ),
+    ).toEqual([
+      "这么晚还醒着，是不是又在想什么不该想的？",
+      "……不过我倒是有个正经事提醒你。",
+      "今天可别找借口。",
+    ]);
+  });
+
   it("keeps punctuation inside a split parenthetical out of speech", () => {
     const segmenter = new SpeechSegmenter();
     expect(segmenter.feed("你好（她停顿。", false)).toEqual([]);
     expect(segmenter.feed("然后笑了）今天下雨。", false)).toEqual(["你好今天下雨。"]);
   });
 
-  it("waits for a split parenthetical and then reads all of it in voice mode", () => {
+  it("waits for a split parenthetical and discards all of it in voice mode", () => {
     const segmenter = new SpeechSegmenter();
     expect(segmenter.feed("你好（她停顿。", false, true)).toEqual(["你好。"]);
-    expect(segmenter.feed("然后笑了）今天下雨。", false, true)).toEqual([
-      "她停顿。然后笑了。",
-    ]);
+    expect(segmenter.feed("然后笑了）今天下雨。", false, true)).toEqual([]);
     expect(segmenter.feed("", true, true)).toEqual(["今天下雨。"]);
   });
 
-  it("reads the first sentence early then groups prose until each parenthetical boundary", () => {
+  it("reads the first sentence early, groups prose, and skips parenthetical blocks", () => {
     const segmenter = new SpeechSegmenter();
     expect(segmenter.feed("第一句。第二句继续。第三句也一起。", false, true)).toEqual([
       "第一句。",
     ]);
     expect(segmenter.feed("\n下一段也一起。（抬手摸了摸你）", false, true)).toEqual([
       "第二句继续。第三句也一起。 下一段也一起。",
-      "抬手摸了摸你。",
     ]);
     expect(segmenter.feed("括号后的第一句。括号后的第二句。（笑了一下）", false, true)).toEqual([
       "括号后的第一句。括号后的第二句。",
-      "笑了一下。",
     ]);
     expect(segmenter.feed("最后一句。", true, true)).toEqual(["最后一句。"]);
+  });
+
+  it("keeps a leading spoken hesitation attached to the first real sentence", () => {
+    const segmenter = new SpeechSegmenter();
+    expect(segmenter.feed("嗯……我想了一下。后面的内容还在生成。", false, true)).toEqual([
+      "嗯……我想了一下。",
+    ]);
+    expect(segmenter.feed("", true, true)).toEqual(["后面的内容还在生成。"]);
+
+    const laughing = new SpeechSegmenter();
+    expect(laughing.feed("呵……你还真会挑时候。后面继续说。", false, true)).toEqual([
+      "呵……你还真会挑时候。",
+    ]);
   });
 
   it("keeps closing quotation marks with the sentence", () => {
@@ -60,10 +106,10 @@ describe("TTS speech segmentation", () => {
     ]);
   });
 
-  it("removes only a standalone leading 嗯 from the first TTS segment", () => {
+  it("removes only an all-filler segment and preserves spoken hesitation", () => {
     expect(stripLeadingTtsFiller("嗯。 ")).toBe("");
-    expect(stripLeadingTtsFiller("嗯，今天想和你聊聊。 ")).toBe("今天想和你聊聊。");
-    expect(stripLeadingTtsFiller("嗯……我在听。 ")).toBe("我在听。");
+    expect(stripLeadingTtsFiller("嗯，今天想和你聊聊。 ")).toBe("嗯，今天想和你聊聊。");
+    expect(stripLeadingTtsFiller("嗯……我在听。 ")).toBe("嗯……我在听。");
     expect(stripLeadingTtsFiller("嗯哼，这次不错。 ")).toBe("嗯哼，这次不错。");
   });
 

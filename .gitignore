@@ -26,6 +26,13 @@ desktop/bootstrap/
 *.exe
 *.blockmap
 
+# The NSIS policy is source code even though electron-builder keeps it below a
+# directory named build. Keep generated files ignored and track only the
+# reviewed installer include.
+!desktop/build/
+desktop/build/*
+!desktop/build/installer.nsh
+
 # Runtime state, downloads, logs, signing keys and user data
 runtime/
 logs/
@@ -38,6 +45,11 @@ logs/
 # Models and local voice material are distributed separately
 assets/models/
 assets/audio/**/*.wav
+payload.json
+
+# Locally sealed, user-authorized R18 source material.  The encrypted resource
+# is intentionally available to local packaging but is never committed.
+src/mindspace_graph/resources/r18-private-library.bin
 
 # CosyVoice is pinned as a Git submodule rather than vendored into this repository
 vendor/CosyVoice/

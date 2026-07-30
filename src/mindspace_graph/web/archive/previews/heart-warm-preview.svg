@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+  <title id="title">共同篇章温暖心形状态</title>
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e7a17f"/><stop offset="1" stop-color="#b75d59"/></linearGradient></defs>
+  <path fill="url(#g)" stroke="#9c514d" stroke-width="10" d="M128 218 46 142C-1 99 25 38 77 38c23 0 40 12 51 29 11-17 28-29 51-29 52 0 78 61 31 104z"/>
+  <path fill="none" stroke="#ffe9d8" stroke-linecap="round" stroke-width="8" d="M67 117c-15-23-1-51 23-55"/>
+  <path fill="#f2d487" d="m202 42 5 14 14 5-14 5-5 14-5-14-14-5 14-5z"/>
+</svg>

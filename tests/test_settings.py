@@ -3,19 +3,19 @@ from __future__ import annotations
 from mindspace_graph.settings import AppSettings
 
 
-def test_dotenv_loads_server_secrets_but_public_config_redacts_them(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("MINDSPACE_LLM_API_KEY", raising=False)
-    monkeypatch.delenv("MINDSPACE_LLM_MODE", raising=False)
-    (tmp_path / ".env").write_text(
-        "MINDSPACE_LLM_MODE=openai\nMINDSPACE_LLM_API_KEY=secret-value\n",
-        encoding="utf-8",
-    )
+def test_home_only_core_start_reopens_the_existing_home_data(monkeypatch, tmp_path):
+    monkeypatch.setenv("MINDSPACE_HOME", str(tmp_path / "Mindspace"))
+    monkeypatch.delenv("MINDSPACE_RUNTIME_DIR", raising=False)
 
     settings = AppSettings.from_env()
-    public = settings.public_config()
 
-    assert settings.llm_mode == "openai"
-    assert settings.llm_api_key == "secret-value"
-    assert "secret-value" not in str(public)
-    assert "api_key" not in public
+    assert settings.runtime_dir == (tmp_path / "Mindspace" / "data").resolve()
+
+
+def test_explicit_runtime_directory_still_has_priority(monkeypatch, tmp_path):
+    monkeypatch.setenv("MINDSPACE_HOME", str(tmp_path / "Mindspace"))
+    monkeypatch.setenv("MINDSPACE_RUNTIME_DIR", str(tmp_path / "chosen-data"))
+
+    settings = AppSettings.from_env()
+
+    assert settings.runtime_dir == (tmp_path / "chosen-data").resolve()

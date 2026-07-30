@@ -105,7 +105,8 @@ flowchart TD
     G --> H["parse_protocol"]
     H -->|"结构错误，最多一次"| I["repair_protocol"]
     I --> H
-    H --> J["validate_role"]
+    H --> R["response.ready（Qwen 全文 TTS）"]
+    R --> J["validate_role"]
     J --> K["validate_json_update"]
     K --> L["persist_turn：统一事务"]
     L --> M["run.completed"]
@@ -116,6 +117,8 @@ flowchart TD
 
 - `retrieve_knowledge` 和 `retrieve_chat` 由图并行调度。
 - `<response>` 中的文本通过 `response.delta` 立即流出。
+- `parse_protocol` 完成正文归一化与能力声明保护后发送 `response.ready`；Qwen 只消费该事件中的
+  完整正文，`run.completed` 仅负责丢失事件兜底。
 - 协议修复锁定已经流出的正文，只修正尾部结构。
 - 正则角色校验位于前台；复杂角色语义审计位于 `run.completed` 之后。
 - 只有 `persist_turn` 成功提交后才发送成功终态。
@@ -289,12 +292,12 @@ SQLite 开启 WAL、外键、`synchronous=FULL` 和 busy timeout。任一步抛�
 
 VAD final 触发正常聊天 SSE。`asr.speech_start` 会取消当前 LangGraph run、TTS 请求和播放队列，形成插话。退出语音模式必须释放媒体轨、Worklet、AudioContext、WebSocket、AbortController 和音频缓冲。
 
-TTS 客户端只把第一条完整自然句用于低延迟起播；实时语音把括号动作作为独立段，
-其余普通正文跨句、跨段累计到下一个括号或本轮结束，并调用
-`/api/v1/audio/tts/stream`。Core 保证同一时刻只有一个请求进入本地 Worker，
-前端只在当前合成完成后准备一个后续段。云端 SiliconFlow 和本地 TTS 共用分段、
-队列、取消和错误语义。响应、首包、流空闲、播放器启动与结束都必须有看门狗，
-任何失败路径都要清空队列并解除输入门，禁止异常时偷偷切换浏览器音色。
+实时语音丢弃括号及其动作内容。Qwen CustomVoice 等待归一化后的完整正文，并通过
+`response.ready` 一次调用 `/api/v1/audio/tts/stream`；不得再按首句或段落拆成多个
+声学请求。其他 Provider 可以保留流式分段策略。Core 保证同一时刻只有一个请求进入
+本地 Worker。云端 SiliconFlow 和本地 TTS 共用队列、取消和错误语义。响应、首包、
+流空闲、播放器启动与结束都必须有看门狗，任何失败路径都要清空队列并解除输入门，
+禁止异常时偷偷切换浏览器音色。
 
 ASR 连接异常时前端先释放旧媒体资源，再以最高五秒间隔持续重连；每次取得麦克风
 前必须确认 Worker 就绪，用户退出语音时停止恢复。Launcher 对自己启动的服务只做
@@ -328,12 +331,15 @@ ASR CUDA 的依赖导入必须通过 `process-check.cjs` 异步执行，不允�
 - `node.started` / `node.completed`
 - `retrieval.completed`
 - `response.delta`
+- `response.ready`
 - `model.usage`
 - `validation.completed`
 - `json_update.committed`
 - `run.completed` / `run.error` / `run.cancelled`
 
-前端不得把 `node.completed` 当作消息完成；只有 run 终态结束本轮。TTS 只消费 `response.delta` 内的可见正文。
+前端不得把 `node.completed` 当作消息完成；只有 run 终态结束本轮。屏幕文字消费
+`response.delta`；Qwen TTS 消费 `response.ready` 的归一化完整正文，并以 `run.completed`
+作为不重复的兜底。
 
 ## 16. 配置
 

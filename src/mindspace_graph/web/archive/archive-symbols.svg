@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg">
+  <symbol id="trait-warm" viewBox="0 0 24 24"><path d="M12 20s-8-4.5-8-10a4 4 0 0 1 7-2.6A4 4 0 0 1 18 10c0 5.5-6 10-6 10Z" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="trait-assertive" viewBox="0 0 24 24"><path d="m12 3 7 4v5c0 4.2-2.8 7.2-7 9-4.2-1.8-7-4.8-7-9V7l7-4Z" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="trait-playful" viewBox="0 0 24 24"><path d="M5 6c5 0 4 4 7 4s2-4 7-4v7a7 7 0 0 1-14 0V6Zm3 7h2m4 0h2m-7 3c2 1.5 4 1.5 6 0" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="trait-rational" viewBox="0 0 24 24"><path d="M9 4h6l4 5-7 11L5 9l4-5Zm-4 5h14M9 4l3 5 3-5" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="trait-sensitive" viewBox="0 0 24 24"><path d="M12 21c4-3 7-6 7-11a7 7 0 0 0-14 0c0 5 3 8 7 11Zm0-13v5m0 3h.01" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="trait-frank" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4V5Zm4 4h8m-8 3h6" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="trait-independent" viewBox="0 0 24 24"><path d="M12 3v18M5 8h14M7 8c0 5-2 7-4 8m14-8c0 5 2 7 4 8M8 21h8" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="trait-romantic" viewBox="0 0 24 24"><path d="M12 21 4 13a5 5 0 0 1 7-7l1 1 1-1a5 5 0 0 1 7 7l-8 8Z" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="trait-calm" viewBox="0 0 24 24"><path d="M4 8c3-3 5 3 8 0s5 3 8 0M4 13c3-3 5 3 8 0s5 3 8 0M4 18c3-3 5 3 8 0s5 3 8 0" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="trait-curious" viewBox="0 0 24 24"><path d="M10.8 17a7 7 0 1 1 5.2-2.3L21 20m-9-12v4m0 3h.01" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="trait-protective" viewBox="0 0 24 24"><path d="M12 3 5 6v6c0 4 2.7 7 7 9 4.3-2 7-5 7-9V6l-7-3Zm-3 9 2 2 4-5" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="trait-witty" viewBox="0 0 24 24"><path d="M7 5h10l3 5-8 10-8-10 3-5Zm-3 5h16M8 14h8" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="relation-friend" viewBox="0 0 24 24"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="16" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M3 19c0-4 2-6 5-6m13 6c0-4-2-6-5-6m-5 6h2" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="relation-lover" viewBox="0 0 24 24"><path d="M12 20s-8-4.5-8-10a4 4 0 0 1 7-2.6A4 4 0 0 1 18 10c0 5.5-6 10-6 10Z" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="relation-spouse" viewBox="0 0 24 24"><circle cx="9" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="15" cy="12" r="5" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="relation-childhood" viewBox="0 0 24 24"><path d="M12 21V9m0 2C8 11 5 9 5 5c4 0 7 2 7 6Zm0 3c4 0 7-2 7-6-4 0-7 2-7 6ZM7 21h10" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="relation-roommate" viewBox="0 0 24 24"><path d="m3 11 9-8 9 8v10H3V11Zm6 10v-7h6v7" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="relation-colleague" viewBox="0 0 24 24"><path d="M4 7h16v13H4V7Zm5 0V4h6v3m-11 5h16M9 12v2h6v-2" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="relation-partner" viewBox="0 0 24 24"><path d="m4 12 5-5 4 4 3-3 4 4-8 8-8-8Z" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="relation-companion" viewBox="0 0 24 24"><path d="M4 17c4-1 5-5 8-5s4 4 8 5M7 9a5 5 0 0 1 10 0" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="op-chat" viewBox="0 0 24 24"><path d="M4 4h16v12H9l-5 4V4Z" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="op-clone" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M16 8V4H4v12h4" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="op-archive" viewBox="0 0 24 24"><path d="M4 7h16v14H4V7Zm-1-4h18v4H3V3Zm6 8h6" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="op-import" viewBox="0 0 24 24"><path d="M12 3v12m-4-4 4 4 4-4M5 20h14" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="op-export" viewBox="0 0 24 24"><path d="M12 17V5m-4 4 4-4 4 4M5 20h14" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="op-restore" viewBox="0 0 24 24"><path d="M5 8V3m0 0h5M5 3l4 4a7 7 0 1 1-2 8" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="status-active" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m8 12 3 3 5-6" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="status-archived" viewBox="0 0 24 24"><path d="M4 7h16v14H4V7Zm-1-4h18v4H3V3Zm6 8h6" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="status-draft" viewBox="0 0 24 24"><path d="M5 3h11l3 3v15H5V3Zm4 6h6m-6 4h6m-6 4h4" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+  <symbol id="status-error" viewBox="0 0 24 24"><path d="m12 3 9 17H3L12 3Zm0 6v5m0 3h.01" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
+</svg>

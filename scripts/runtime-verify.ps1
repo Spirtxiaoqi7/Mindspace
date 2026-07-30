@@ -49,6 +49,13 @@ if ($settings.llm.mode -eq 'openai' -and -not $settings.llm.api_key) {
 if ($settings.audio.tts_provider -eq 'siliconflow' -and -not $settings.audio.tts_siliconflow_api_key) {
     Write-Warning 'SiliconFlow TTS 尚未配置密钥；文字对话和 ASR 不受影响。'
 }
+if ($settings.audio.tts_provider -eq 'qwen3-vllm') {
+    $QwenRoot = if ($env:MINDSPACE_QWEN3_RUNTIME_ROOT) { $env:MINDSPACE_QWEN3_RUNTIME_ROOT } else { Join-Path $env:MINDSPACE_HOME 'environment\qwen3-vllm' }
+    $QwenMarker = Join-Path $QwenRoot 'ready.json'
+    if (-not (Test-Path -LiteralPath $QwenMarker)) {
+        Write-Warning 'Qwen3 实时语音运行时尚未安装；文字对话和 ASR 不受影响，请在 Launcher 组件区安装。'
+    }
+}
 if ($settings.audio.tts_provider -eq 'cosyvoice') {
     $TtsMarkerRoot = if ($env:MINDSPACE_TTS_MARKER_ROOT) { $env:MINDSPACE_TTS_MARKER_ROOT } else { Join-Path $ProjectRoot 'runtime\components\tts-runtime' }
     $TtsMarker = Join-Path $TtsMarkerRoot 'ready.json'

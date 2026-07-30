@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 420" role="img" aria-labelledby="title">
+  <title id="title">共同篇章日记边框预览</title>
+  <rect x="18" y="18" width="604" height="384" rx="28" fill="#fffaf1" stroke="#9d6757" stroke-width="5"/>
+  <rect x="32" y="32" width="576" height="356" rx="22" fill="none" stroke="#cfbca7" stroke-width="2" stroke-dasharray="7 8"/>
+  <path fill="#4f8074" d="M50 72c32-5 47 11 47 11S80 99 50 94c8-8 8-14 0-22zm540 260c-32 5-47-11-47-11s17-16 47-11c-8 8-8 14 0 22z"/>
+  <path fill="#d6816c" d="M76 46c-16-17-41 7-13 30l13 10 13-10c28-23 3-47-13-30zm488 298c-16-17-41 7-13 30l13 10 13-10c28-23 3-47-13-30z"/>
+</svg>

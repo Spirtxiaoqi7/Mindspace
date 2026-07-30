@@ -108,6 +108,7 @@ const DEFAULT_COMPONENTS = [
     required: ["cosyvoice3.yaml", "llm.pt", "flow.pt", "hift.pt"],
     estimatedBytes: 9_747_517_123,
     optional: true,
+    hardware: "nvidia",
   },
   {
     id: "tts-runtime",
@@ -121,6 +122,22 @@ const DEFAULT_COMPONENTS = [
     installScript: "scripts/prepare-tts.ps1",
     installArgs: [],
     optional: true,
+    hardware: "nvidia",
+  },
+  {
+    id: "qwen3-vllm-runtime",
+    name: "Qwen3 实时语音运行时",
+    description: "可选；仅接入已就绪的 WSL2/vLLM/Qwen3 本地环境。条件不满足时不会下载或安装大模型",
+    provider: "installer",
+    category: "voice",
+    target: "environment/qwen3-vllm",
+    required: ["ready.json"],
+    estimatedBytes: 0,
+    displayEstimatedBytes: false,
+    installScript: "scripts/prepare-qwen3-tts.ps1",
+    installArgs: [],
+    optional: true,
+    hardware: "nvidia",
   },
   ...GPT_SOVITS_COMPONENTS,
 ];
@@ -275,16 +292,39 @@ function createComponentManager(options) {
     return states.get(component.id);
   }
 
+  function targetFor(component) {
+    return path.resolve(options.resolveTarget ? options.resolveTarget(component) : path.join(options.rootPath(), component.target));
+  }
+
+  function markerPath(component) {
+    const markerRoot = options.markerRoot || path.join(options.rootPath(), "runtime", "components");
+    return path.join(markerRoot, `${component.id}.json`);
+  }
+
+  function markerFor(component) {
+    try { return JSON.parse(fs.readFileSync(markerPath(component), "utf8")); } catch { return {}; }
+  }
+
+  function readyDependents(component) {
+    return catalog.filter((candidate) => (candidate.dependencies || []).includes(component.id))
+      .filter((candidate) => reportReady(options.rootPath(), candidate, options.resolveTarget).ready)
+      .map((candidate) => candidate.name);
+  }
+
   function itemSnapshot(component) {
     const report = reportReady(options.rootPath(), component, options.resolveTarget);
     const state = stateFor(component);
+    const marker = markerFor(component);
+    const dependents = readyDependents(component);
+    const installedBytes = report.ready ? Number(marker.bytes || component.estimatedBytes || 0) : 0;
+    const removable = Boolean(component.optional && report.ready && dependents.length === 0);
     if (report.ready && !["downloading", "installing", "resolving", "verifying"].includes(state.status)) {
-      return { ...component, category: categoryFor(component), filter: undefined, files: undefined, archives: undefined, official: undefined, ...state, ...report, status: "ready", progress: 100, message: "组件已就绪", error: "" };
+      return { ...component, category: categoryFor(component), filter: undefined, files: undefined, archives: undefined, official: undefined, ...state, ...report, managed: true, installedBytes, removable, dependents, status: "ready", progress: 100, message: dependents.length ? `组件已就绪；被 ${dependents.join("、")} 使用` : "组件已就绪", error: "" };
     }
     const message = report.partial && !["downloading", "installing", "resolving", "verifying"].includes(state.status)
       ? "上次安装未完成；点击继续将复用现有文件并补齐依赖"
       : state.message;
-    return { ...component, category: categoryFor(component), filter: undefined, files: undefined, archives: undefined, official: undefined, ...state, message, ...report };
+    return { ...component, category: categoryFor(component), filter: undefined, files: undefined, archives: undefined, official: undefined, ...state, managed: true, installedBytes, removable, dependents, message, ...report };
   }
 
   function snapshot() {
@@ -396,7 +436,7 @@ function createComponentManager(options) {
     setState(component, { status: "resolving", progress: 0, downloadedBytes: 0, speedBps: 0, message: downloadSource === "china" ? "正在读取国内镜像清单…" : "正在读取官方源清单…", error: "", operationId, errorCode: "", errorStage: "", startedAt: new Date().toISOString() });
     log("component.start", { component: id, operation_id: operationId, provider: component.provider, repository: component.repo, source: downloadSource });
     try {
-      const targetRoot = options.resolveTarget ? options.resolveTarget(component) : path.join(options.rootPath(), component.target);
+      const targetRoot = targetFor(component);
       fs.mkdirSync(targetRoot, { recursive: true });
       let totalBytes = component.estimatedBytes || 0;
       if (typeof fs.statfsSync === "function") {
@@ -412,7 +452,7 @@ function createComponentManager(options) {
           progress: 2,
           downloadedBytes: 0,
           totalBytes,
-          message: `正在准备${component.id === "tts-runtime" ? " CosyVoice" : component.id === "gpt-sovits-runtime" ? " GPT-SoVITS" : " ASR CUDA"}运行时…`,
+          message: `正在准备${component.id === "tts-runtime" ? " CosyVoice" : component.id === "gpt-sovits-runtime" ? " GPT-SoVITS" : component.id === "qwen3-vllm-runtime" ? " Qwen3 实时语音" : " ASR CUDA"}运行时…`,
           error: "",
         });
         await options.installComponent(component, controller.signal, (progress, message) => {
@@ -442,9 +482,8 @@ function createComponentManager(options) {
       }
       const report = reportReady(options.rootPath(), component, options.resolveTarget);
       if (!report.ready) throw new Error(`下载完成但组件仍不完整：${report.missing.join("、")}`);
-      const markerRoot = options.markerRoot || path.join(options.rootPath(), "runtime", "components");
-      fs.mkdirSync(markerRoot, { recursive: true });
-      fs.writeFileSync(path.join(markerRoot, `${id}.json`), `${JSON.stringify({ id, source: downloadSource, repository: componentForSource(component, downloadSource).repo || component.provider, downloaded_at: new Date().toISOString(), bytes: totalBytes, files: fileCount }, null, 2)}\n`);
+      fs.mkdirSync(path.dirname(markerPath(component)), { recursive: true });
+      fs.writeFileSync(markerPath(component), `${JSON.stringify({ id, source: downloadSource, repository: componentForSource(component, downloadSource).repo || component.provider, downloaded_at: new Date().toISOString(), bytes: totalBytes, files: fileCount }, null, 2)}\n`);
       setState(component, { status: "ready", progress: 100, downloadedBytes: totalBytes, totalBytes, speedBps: 0, message: "下载、校验并安装完成", error: "" });
       log("component.ready", { component: id, operation_id: operationId, files: fileCount, bytes: totalBytes });
     } catch (error) {
@@ -483,7 +522,45 @@ function createComponentManager(options) {
     return snapshot();
   }
 
-  return { snapshot, download, downloadAll, cancel };
+  function assertManagedTarget(target) {
+    const roots = (options.managedRoots?.() || [options.rootPath()]).map((item) => path.resolve(item));
+    const parent = roots.find((root) => target.startsWith(`${root}${path.sep}`));
+    if (!parent || target.toLowerCase() === parent.toLowerCase()) {
+      throw new Error("拒绝移除不在 Mindspace 组件目录内的路径");
+    }
+    return parent;
+  }
+
+  async function remove(id) {
+    if (active) throw new Error(`正在处理 ${active}，请等待或取消后再卸载`);
+    const component = catalog.find((item) => item.id === id);
+    if (!component) throw new Error("未知组件");
+    if (!component.optional) throw new Error(`${component.name} 是文字聊天所需的基础组件，不能卸载`);
+    const dependents = readyDependents(component);
+    if (dependents.length) throw new Error(`请先卸载依赖此组件的项目：${dependents.join("、")}`);
+    const target = targetFor(component);
+    assertManagedTarget(target);
+    const sameTarget = catalog.filter((candidate) => targetFor(candidate).toLowerCase() === target.toLowerCase());
+    setState(component, { status: "removing", progress: 0, message: "正在卸载组件", error: "" });
+    if (sameTarget.length > 1) {
+      for (const relative of component.required || []) {
+        const file = safeFile(target, relative);
+        await fs.promises.rm(file, { recursive: true, force: true });
+      }
+    } else {
+      const quarantine = `${target}.removing-${Date.now()}`;
+      if (fs.existsSync(target)) {
+        await fs.promises.rename(target, quarantine);
+        await fs.promises.rm(quarantine, { recursive: true, force: true });
+      }
+    }
+    await fs.promises.rm(markerPath(component), { force: true });
+    states.delete(component.id);
+    log("component.removed", { component: component.id, target });
+    return snapshot();
+  }
+
+  return { snapshot, download, downloadAll, cancel, remove };
 }
 
 module.exports = {

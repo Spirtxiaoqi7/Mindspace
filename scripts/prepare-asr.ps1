@@ -76,13 +76,13 @@ Write-Output 'ASR_STAGE=funasr'
 $BuildPackages = @('setuptools<81', 'wheel')
 & $UvExe pip install --python $PythonExe @BuildPackages --index-url $PackageIndex
 if ($LASTEXITCODE -ne 0) { throw "ASR 构建基础依赖从$SourceLabel安装失败。" }
-$SpeechPackages = @('funasr>=1.3.15,<2', 'tiktoken>=0.9,<1', 'huggingface-hub>=0.34,<2', 'fastapi>=0.115,<1', 'uvicorn>=0.34,<1', 'websockets>=15,<17')
+$SpeechPackages = @('funasr>=1.3.15,<2', 'tiktoken>=0.9,<1', 'huggingface-hub>=0.34,<2', 'fastapi>=0.115,<1', 'uvicorn>=0.34,<1', 'websockets>=15,<17', 'sounddevice>=0.5.5,<0.6')
 & $UvExe pip install --python $PythonExe @SpeechPackages --index-url $PackageIndex
 if ($LASTEXITCODE -ne 0) { throw "FunASR 运行依赖从$SourceLabel安装失败。" }
 Write-Output 'ASR_STAGE=project'
 & $UvExe pip install --python $PythonExe --no-deps -e .
 Write-Output 'ASR_STAGE=verify'
-& $PythonExe -c "import torch, torchaudio, funasr, fastapi, uvicorn, websockets; assert torch.cuda.is_available(); print(torch.__version__, funasr.__version__)"
+& $PythonExe -c "import torch, torchaudio, funasr, fastapi, uvicorn, websockets, sounddevice; assert torch.cuda.is_available(); print(torch.__version__, funasr.__version__, sounddevice.__version__)"
 
 if (-not $SkipModels) {
     New-Item -ItemType Directory -Force -Path $ModelRoot | Out-Null
@@ -92,7 +92,7 @@ if (-not $SkipModels) {
 Write-Output "ASR_PYTHON=$PythonExe"
 Write-Output "ASR_MODELS=$ModelRoot"
 @{
-    schema_version = '1.1.0'
+    schema_version = '1.2.0'
     ready = $true
     final_refinement = 'Fun-ASR-Nano-2512'
     python = $PythonExe

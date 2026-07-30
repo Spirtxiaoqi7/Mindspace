@@ -155,7 +155,7 @@ def test_bootstrap_rejects_overwrite_and_closes_on_fourth_round():
     assert validate_json_update(empty_field_patch, bundle, bootstrap=closed).is_valid is False
 
 
-def test_prompt_exposes_bootstrap_only_during_active_window():
+def test_prompt_never_exposes_profile_write_bootstrap_to_the_chat_model():
     bundle = profiles()
     active = evaluate_profile_bootstrap(request(), bundle, [])
     active_messages = build_messages(request(), bundle, [], [], [], active)
@@ -167,10 +167,9 @@ def test_prompt_exposes_bootstrap_only_during_active_window():
         item["content"] for item in active_messages if item["role"] == "system"
     )
 
-    assert "人物档案初始化窗口" in active_prompt
-    assert "trigger=profile_bootstrap" in active_prompt
-    assert "最多补充 8 个不同字段" in active_prompt
-    assert "总叶子 Patch 不得超过 24 个" in active_prompt
-    assert "field_code" not in active_prompt
+    assert "人物档案初始化窗口" not in active_prompt
+    assert "trigger=profile_bootstrap" not in active_prompt
+    assert "最多补充 8 个不同字段" not in active_prompt
+    assert "总叶子 Patch 不得超过 24 个" not in active_prompt
     assert "profile_bootstrap" not in closed_prompt
     assert "人物档案初始化窗口" not in active_system

@@ -39,7 +39,12 @@ AUDIT_ONLY_KINDS = {
 }
 EPHEMERAL_KINDS = {"research_plan", "emotion_state", "asr_uncertain_evidence"}
 MODEL_HISTORY_ROUNDS = 8
-MODEL_DIALOGUE_KINDS = {"current_user", "user_message", "assistant_message"}
+MODEL_DIALOGUE_KINDS = {
+    "current_user",
+    "user_message",
+    "assistant_message",
+    "continuity_digest",
+}
 
 
 def _trust_defaults(kind: str) -> tuple[str, float, str]:
@@ -354,6 +359,13 @@ class ContextLedger:
                 """,
                 audit_kinds,
             )
+            # Assistant prose remains available as recent model-visible
+            # dialogue, but it is never a long-term retrieval source.  This
+            # migration covers ledgers created by versions that marked every
+            # visible message as retrievable.
+            db.execute(
+                "UPDATE context_events SET retrieval_eligible=0 WHERE role='assistant'"
+            )
 
     def record_model_usage(
         self,
@@ -462,29 +474,64 @@ class ContextLedger:
                 "updated_at=? WHERE job_id=?",
                 (_now(), job["job_id"]),
             )
+            summary = str(value.get("recent_event_summary") or "").strip()
+            progression = str(value.get("event_progression") or "").strip()
+            open_threads = [
+                str(item).strip()
+                for item in value.get("open_threads", [])
+                if str(item).strip()
+            ][:3]
+            correction = ""
             if (
                 not bool(value.get("is_consistent", True))
                 and value.get("severity") in {"identity", "boundary", "reality"}
                 and float(value.get("confidence", 0)) >= 0.85
                 and str(value.get("next_turn_instruction") or "").strip()
             ):
+                correction = str(value["next_turn_instruction"]).strip()
+            if summary or progression or open_threads or correction:
                 session = db.execute(
                     "SELECT active_epoch_id FROM context_sessions WHERE session_id=?",
                     (job["session_id"],),
                 ).fetchone()
                 if session and session["active_epoch_id"]:
+                    # Only the newest continuity digest remains model-visible.
+                    # Older digests stay in the audit trail but cannot stack up
+                    # in the live prompt or compete with newer scene state.
+                    db.execute(
+                        "UPDATE context_events SET model_visible=0, retrieval_eligible=0, "
+                        "visibility='audit' WHERE session_id=? AND kind='continuity_digest' "
+                        "AND model_visible=1",
+                        (job["session_id"],),
+                    )
+                    lines = ["【近期连续性摘要（辅助上下文）】"]
+                    if summary:
+                        lines.append(f"本轮事件：{summary}")
+                    if progression:
+                        lines.append(f"事件推进：{progression}")
+                    if open_threads:
+                        lines.append("待承接：" + "；".join(open_threads))
+                    if correction:
+                        lines.append("下一轮角色纠偏：" + correction)
+                    lines.append("若与当前用户输入或权威角色档案冲突，以后两者为准。")
                     self._insert_event(
                         db,
                         session_id=job["session_id"],
                         epoch_id=int(session["active_epoch_id"]),
-                        kind="role_correction",
+                        kind="continuity_digest",
                         role="user",
-                        content=(
-                            "【服务端角色一致性纠偏】上一回复存在已确认的角色偏移；"
-                            "本轮只避免重复该偏移，不得据此修改权威 JSON。\n"
-                            + str(value["next_turn_instruction"])
-                        ),
-                        metadata={"job_id": job["job_id"], "severity": value["severity"]},
+                        content="\n".join(lines),
+                        metadata={
+                            "job_id": job["job_id"],
+                            "severity": value["severity"],
+                            "round": job["round_num"],
+                        },
+                        model_visible=True,
+                        retrieval_eligible=False,
+                        persistence_eligible=True,
+                        source="assistant_inference",
+                        confidence=0.72,
+                        visibility="model",
                     )
         if usage is not None:
             self.record_model_usage(
@@ -661,7 +708,7 @@ class ContextLedger:
                     "migrated": True,
                 },
                 ui_visible=True,
-                retrieval_eligible=True,
+                retrieval_eligible=role == "user",
             )
         return epoch_id
 
@@ -826,7 +873,7 @@ class ContextLedger:
                     content=response,
                     metadata={"message_id": assistant_message_id, "round": round_num},
                     ui_visible=True,
-                    retrieval_eligible=True,
+                    retrieval_eligible=False,
                 )
             )
             patch_message = authoritative_patch_message(receipt, profiles.revisions)

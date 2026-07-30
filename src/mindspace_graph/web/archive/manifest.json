@@ -1,0 +1,3430 @@
+{
+  "schema_version": "2.0.0",
+  "library_id": "mindspace-archive-0.7.0",
+  "license": "Mindspace Original Assets",
+  "approval_status": "approved_for_expansion",
+  "defaults": {
+    "pack_id": "core",
+    "theme": "anime-scrapbook",
+    "min_app_version": "0.6.0",
+    "license": "Mindspace Original Assets"
+  },
+  "categories": {
+    "svg_icons": 72,
+    "scrapbook_stickers": 24,
+    "frames": 16,
+    "textures": 12,
+    "state_illustrations": 12,
+    "scene_thumbnails": 20,
+    "journal_covers": 8,
+    "compatibility_extras": 7
+  },
+  "packs": [],
+  "preview_index": "/assets/archive/previews/index.json",
+  "assets": [
+    {
+      "id": "mode-frame-draw",
+      "type": "frame",
+      "path": "/assets/archive/mode-frame-draw.svg",
+      "license": "Mindspace Original Assets",
+      "sha256": "f96cc016b08a966a73433e083beb94a9699563f11040fdc7f57197307fda11c4",
+      "fallback": "css:1px solid var(--line)",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "frame"
+      ],
+      "dimensions": {
+        "width": 784,
+        "height": 504
+      },
+      "bytes": 689,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "mode-frame-custom",
+      "type": "frame",
+      "path": "/assets/archive/mode-frame-custom.svg",
+      "license": "Mindspace Original Assets",
+      "sha256": "b5083da0d78b0eedd494fd718316e0fb8f940207861db4f8114ff94aae32f46e",
+      "fallback": "css:1px solid var(--line)",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "frame"
+      ],
+      "dimensions": {
+        "width": 784,
+        "height": 504
+      },
+      "bytes": 535,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "status-active",
+      "type": "card-state",
+      "path": "/assets/archive/archive-symbols.svg#status-active",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:可用",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "card-state"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "status-archived",
+      "type": "card-state",
+      "path": "/assets/archive/archive-symbols.svg#status-archived",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:已归档",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "card-state"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "status-draft",
+      "type": "card-state",
+      "path": "/assets/archive/archive-symbols.svg#status-draft",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:草稿",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "card-state"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "status-error",
+      "type": "card-state",
+      "path": "/assets/archive/archive-symbols.svg#status-error",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:错误",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "card-state"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "texture-paper",
+      "type": "texture",
+      "path": "/assets/archive/texture-paper.webp",
+      "license": "Mindspace Original Assets",
+      "sha256": "9849eb89a5105a387a9008d91c3c97146544934a324ba73dfa39bb6555943cb5",
+      "fallback": "color:#fff9f0",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "texture"
+      ],
+      "dimensions": {
+        "width": 1024,
+        "height": 1024
+      },
+      "bytes": 14744,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "texture-jade",
+      "type": "texture",
+      "path": "/assets/archive/texture-jade.webp",
+      "license": "Mindspace Original Assets",
+      "sha256": "7791790d2aff8fc142734eeb2621a313457e056283805bb5b76dceedefbfd98b",
+      "fallback": "color:#eef6f1",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "texture"
+      ],
+      "dimensions": {
+        "width": 1024,
+        "height": 1024
+      },
+      "bytes": 15394,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "texture-constellation",
+      "type": "texture",
+      "path": "/assets/archive/texture-constellation.webp",
+      "license": "Mindspace Original Assets",
+      "sha256": "80fa8b60e0e09886c4c31abd66d49b8bf8837fdea5539751049e268c3512eb22",
+      "fallback": "color:#272d3d",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "texture"
+      ],
+      "dimensions": {
+        "width": 1024,
+        "height": 1024
+      },
+      "bytes": 13176,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "trait-warm",
+      "type": "trait-icon",
+      "path": "/assets/archive/archive-symbols.svg#trait-warm",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:温",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "trait-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "trait-assertive",
+      "type": "trait-icon",
+      "path": "/assets/archive/archive-symbols.svg#trait-assertive",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:强",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "trait-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "trait-playful",
+      "type": "trait-icon",
+      "path": "/assets/archive/archive-symbols.svg#trait-playful",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:趣",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "trait-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "trait-rational",
+      "type": "trait-icon",
+      "path": "/assets/archive/archive-symbols.svg#trait-rational",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:理",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "trait-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "trait-sensitive",
+      "type": "trait-icon",
+      "path": "/assets/archive/archive-symbols.svg#trait-sensitive",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:敏",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "trait-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "trait-frank",
+      "type": "trait-icon",
+      "path": "/assets/archive/archive-symbols.svg#trait-frank",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:直",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "trait-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "trait-independent",
+      "type": "trait-icon",
+      "path": "/assets/archive/archive-symbols.svg#trait-independent",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:独",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "trait-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "trait-romantic",
+      "type": "trait-icon",
+      "path": "/assets/archive/archive-symbols.svg#trait-romantic",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:漫",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "trait-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "trait-calm",
+      "type": "trait-icon",
+      "path": "/assets/archive/archive-symbols.svg#trait-calm",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:稳",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "trait-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "trait-curious",
+      "type": "trait-icon",
+      "path": "/assets/archive/archive-symbols.svg#trait-curious",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:奇",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "trait-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "trait-protective",
+      "type": "trait-icon",
+      "path": "/assets/archive/archive-symbols.svg#trait-protective",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:护",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "trait-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "trait-witty",
+      "type": "trait-icon",
+      "path": "/assets/archive/archive-symbols.svg#trait-witty",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:妙",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "trait-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "relation-friend",
+      "type": "relationship-stamp",
+      "path": "/assets/archive/archive-symbols.svg#relation-friend",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:朋友",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "relationship-stamp"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "relation-lover",
+      "type": "relationship-stamp",
+      "path": "/assets/archive/archive-symbols.svg#relation-lover",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:恋人",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "relationship-stamp"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "relation-spouse",
+      "type": "relationship-stamp",
+      "path": "/assets/archive/archive-symbols.svg#relation-spouse",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:夫妻",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "relationship-stamp"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "relation-childhood",
+      "type": "relationship-stamp",
+      "path": "/assets/archive/archive-symbols.svg#relation-childhood",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:青梅竹马",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "relationship-stamp"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "relation-roommate",
+      "type": "relationship-stamp",
+      "path": "/assets/archive/archive-symbols.svg#relation-roommate",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:室友",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "relationship-stamp"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "relation-colleague",
+      "type": "relationship-stamp",
+      "path": "/assets/archive/archive-symbols.svg#relation-colleague",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:同事",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "relationship-stamp"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "relation-partner",
+      "type": "relationship-stamp",
+      "path": "/assets/archive/archive-symbols.svg#relation-partner",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:搭档",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "relationship-stamp"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "relation-companion",
+      "type": "relationship-stamp",
+      "path": "/assets/archive/archive-symbols.svg#relation-companion",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:陪伴者",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "relationship-stamp"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "op-chat",
+      "type": "operation-icon",
+      "path": "/assets/archive/archive-symbols.svg#op-chat",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:对话",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "operation-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "op-clone",
+      "type": "operation-icon",
+      "path": "/assets/archive/archive-symbols.svg#op-clone",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:复制",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "operation-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "op-archive",
+      "type": "operation-icon",
+      "path": "/assets/archive/archive-symbols.svg#op-archive",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:归档",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "operation-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "op-import",
+      "type": "operation-icon",
+      "path": "/assets/archive/archive-symbols.svg#op-import",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:导入",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "operation-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "op-export",
+      "type": "operation-icon",
+      "path": "/assets/archive/archive-symbols.svg#op-export",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:导出",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "operation-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "op-restore",
+      "type": "operation-icon",
+      "path": "/assets/archive/archive-symbols.svg#op-restore",
+      "license": "Mindspace Original Assets",
+      "sha256": "71bc7fbb0651121a91e49c1414c772aa1fdbaf6163f023ffbaeecf8c1dc1bdd3",
+      "fallback": "text:恢复",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "operation-icon"
+      ],
+      "dimensions": {
+        "width": 1,
+        "height": 12
+      },
+      "bytes": 5546,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "placeholder-anime-1",
+      "type": "placeholder-avatar",
+      "path": "/assets/characters/placeholder-1.webp",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "ca15aaf04bf9bb12dc55db637ae321391eb6bed159802ef5c9a4337401b1390c",
+      "fallback": "/assets/avatar-ai-default.webp",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "placeholder-avatar"
+      ],
+      "dimensions": {
+        "width": 512,
+        "height": 768
+      },
+      "bytes": 70408,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "placeholder-anime-2",
+      "type": "placeholder-avatar",
+      "path": "/assets/characters/placeholder-2.webp",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "8c0aa98b029808d223b98b4ceec179b056e08c3efd1c1164667b5053290e64cd",
+      "fallback": "/assets/avatar-ai-default.webp",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "placeholder-avatar"
+      ],
+      "dimensions": {
+        "width": 512,
+        "height": 768
+      },
+      "bytes": 72032,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "placeholder-anime-3",
+      "type": "placeholder-avatar",
+      "path": "/assets/characters/placeholder-3.webp",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "b8e6d9af8be0a9f0fcf56b56725226c104323cbc9a81c0c3ab1ce84f8e27747c",
+      "fallback": "/assets/avatar-ai-default.webp",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "placeholder-avatar"
+      ],
+      "dimensions": {
+        "width": 512,
+        "height": 768
+      },
+      "bytes": 80518,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "placeholder-anime-4",
+      "type": "placeholder-avatar",
+      "path": "/assets/characters/placeholder-4.webp",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "e01d12477b00b4e1c512c4516ba43b32a8eb3ed81c536fc1183420f2f3beaef6",
+      "fallback": "/assets/avatar-ai-default.webp",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "placeholder-avatar"
+      ],
+      "dimensions": {
+        "width": 512,
+        "height": 768
+      },
+      "bytes": 53732,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "interaction-lift",
+      "type": "interaction",
+      "path": "/assets/archive/interactions.css#mindspace-card-lift",
+      "license": "Mindspace Original Assets",
+      "sha256": "f3911a16821d7f27849148d98a76f94a9b657c2ffad3da15ab6225dbe62a5409",
+      "fallback": "none",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "interaction"
+      ],
+      "dimensions": {
+        "width": 0,
+        "height": 0
+      },
+      "bytes": 653,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "interaction-reveal",
+      "type": "interaction",
+      "path": "/assets/archive/interactions.css#mindspace-card-reveal",
+      "license": "Mindspace Original Assets",
+      "sha256": "f3911a16821d7f27849148d98a76f94a9b657c2ffad3da15ab6225dbe62a5409",
+      "fallback": "none",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "interaction"
+      ],
+      "dimensions": {
+        "width": 0,
+        "height": 0
+      },
+      "bytes": 653,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "interaction-seal",
+      "type": "interaction",
+      "path": "/assets/archive/interactions.css#mindspace-seal-pulse",
+      "license": "Mindspace Original Assets",
+      "sha256": "f3911a16821d7f27849148d98a76f94a9b657c2ffad3da15ab6225dbe62a5409",
+      "fallback": "none",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "interaction"
+      ],
+      "dimensions": {
+        "width": 0,
+        "height": 0
+      },
+      "bytes": 653,
+      "min_app_version": "0.6.0"
+    },
+    {
+      "id": "icon-journal",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/icon-journal.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 399,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "ec8a93f241355f412afbf96a1a4110ce279721bd7ff695fdb663987e7b85dbe5",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "heart-empty",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "heart-state",
+      "path": "/assets/archive/icons/heart-empty.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 376,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "e96c02f28c163662b834c6d62ae001f6e1d51443fb3f0ca1aee907175c61e90d",
+      "fallback": "text:共同篇章"
+    },
+    {
+      "id": "heart-trace",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "heart-state",
+      "path": "/assets/archive/icons/heart-trace.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 476,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "30bca727fc130dd243e2c1277f9ba02ddab1106133a8f6d22a1e51fb18973d8c",
+      "fallback": "text:共同篇章"
+    },
+    {
+      "id": "heart-warm",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "heart-state",
+      "path": "/assets/archive/icons/heart-warm.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 379,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "f3c65e69c9aff45c4836923957e422b6f2e543b6ebaaffe4c7695f48a10d1854",
+      "fallback": "text:共同篇章"
+    },
+    {
+      "id": "heart-glow",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "heart-state",
+      "path": "/assets/archive/icons/heart-glow.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 480,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "e4eccc229d97d0b7fdae391cef1c14e598339a49ac91a8f617459992c29d1988",
+      "fallback": "text:共同篇章"
+    },
+    {
+      "id": "activity-scene",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/activity-scene.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 441,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "12c973abf59edf1f3df6deb9d96f9a9dcda70b5300a80c4226c56cd6341ef7ae",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "activity-questions",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/activity-questions.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 375,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "b7f71bb474237428cb7bed2a3e1bef6f8a4ecc38382bc25f43515ecb1d4f75c3",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "activity-story",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/activity-story.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 399,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "ec8a93f241355f412afbf96a1a4110ce279721bd7ff695fdb663987e7b85dbe5",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "activity-walk",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/activity-walk.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 441,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "12c973abf59edf1f3df6deb9d96f9a9dcda70b5300a80c4226c56cd6341ef7ae",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "activity-night",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/activity-night.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 267,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "353d53c614d74491b83cc7adfd0e3a2219136a9a3dcfc293ba8d1b770ca13134",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "activity-indoor",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/activity-indoor.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 427,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "722cb57560bb171239a3e2a822540c94676a6856437821709030f80e03e8887a",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "chapter-journal",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/chapter-journal.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 399,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "ec8a93f241355f412afbf96a1a4110ce279721bd7ff695fdb663987e7b85dbe5",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "chapter-moments",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/chapter-moments.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 214,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "efa1819b0f631d2e51939d0d4e3519913882baaaf7435b3061d7ea7daf06373f",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "chapter-activity",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/chapter-activity.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 427,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "722cb57560bb171239a3e2a822540c94676a6856437821709030f80e03e8887a",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "chapter-collect",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/chapter-collect.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 379,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "f3c65e69c9aff45c4836923957e422b6f2e543b6ebaaffe4c7695f48a10d1854",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "chapter-edit",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/chapter-edit.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 214,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "efa1819b0f631d2e51939d0d4e3519913882baaaf7435b3061d7ea7daf06373f",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "chapter-delete",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/chapter-delete.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 300,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "b15360fd69647aba4278c2bacf84f74e63cb28671c7edfee68649cec467978f6",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "chapter-regenerate",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/chapter-regenerate.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 354,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "1462d4cd8cf013419ddc970e58310ff3c9ecb3a90f2d692c805c12af06ccebd3",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "chapter-back",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/chapter-back.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 214,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "efa1819b0f631d2e51939d0d4e3519913882baaaf7435b3061d7ea7daf06373f",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "chapter-filter",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/chapter-filter.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 214,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "efa1819b0f631d2e51939d0d4e3519913882baaaf7435b3061d7ea7daf06373f",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "chapter-search",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/chapter-search.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 214,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "efa1819b0f631d2e51939d0d4e3519913882baaaf7435b3061d7ea7daf06373f",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "moment-chat",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/moment-chat.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 375,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "b7f71bb474237428cb7bed2a3e1bef6f8a4ecc38382bc25f43515ecb1d4f75c3",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "moment-heart-keepsake",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/moment-heart-keepsake.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 379,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "f3c65e69c9aff45c4836923957e422b6f2e543b6ebaaffe4c7695f48a10d1854",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "moment-date",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/moment-date.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 379,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "f3c65e69c9aff45c4836923957e422b6f2e543b6ebaaffe4c7695f48a10d1854",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "moment-promise",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/moment-promise.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 305,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "78a5abce1542c1c56f210077b6d4f6ab243497b8ff7de707f6ba78966c8512a5",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "moment-discovery",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/moment-discovery.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 214,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "efa1819b0f631d2e51939d0d4e3519913882baaaf7435b3061d7ea7daf06373f",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "moment-travel",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/moment-travel.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 441,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "12c973abf59edf1f3df6deb9d96f9a9dcda70b5300a80c4226c56cd6341ef7ae",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "moment-home",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/moment-home.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 214,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "efa1819b0f631d2e51939d0d4e3519913882baaaf7435b3061d7ea7daf06373f",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "moment-celebration",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/moment-celebration.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 214,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "efa1819b0f631d2e51939d0d4e3519913882baaaf7435b3061d7ea7daf06373f",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "moment-quiet",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/moment-quiet.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 267,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "353d53c614d74491b83cc7adfd0e3a2219136a9a3dcfc293ba8d1b770ca13134",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "state-empty",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/state-empty.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 214,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "efa1819b0f631d2e51939d0d4e3519913882baaaf7435b3061d7ea7daf06373f",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "state-loading",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/state-loading.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 354,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "1462d4cd8cf013419ddc970e58310ff3c9ecb3a90f2d692c805c12af06ccebd3",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "state-error",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/state-error.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 300,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "b15360fd69647aba4278c2bacf84f74e63cb28671c7edfee68649cec467978f6",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "state-offline",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/state-offline.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 267,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "353d53c614d74491b83cc7adfd0e3a2219136a9a3dcfc293ba8d1b770ca13134",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "state-interrupted",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/state-interrupted.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 300,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "b15360fd69647aba4278c2bacf84f74e63cb28671c7edfee68649cec467978f6",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "state-saved",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/state-saved.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 305,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "78a5abce1542c1c56f210077b6d4f6ab243497b8ff7de707f6ba78966c8512a5",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "state-candidate",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/state-candidate.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 379,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "f3c65e69c9aff45c4836923957e422b6f2e543b6ebaaffe4c7695f48a10d1854",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "state-archived",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/state-archived.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 214,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "efa1819b0f631d2e51939d0d4e3519913882baaaf7435b3061d7ea7daf06373f",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "icon-calendar",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/icon-calendar.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 427,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "722cb57560bb171239a3e2a822540c94676a6856437821709030f80e03e8887a",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "icon-seal",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/icon-seal.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 305,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "78a5abce1542c1c56f210077b6d4f6ab243497b8ff7de707f6ba78966c8512a5",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "icon-ribbon",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/icon-ribbon.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 214,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "efa1819b0f631d2e51939d0d4e3519913882baaaf7435b3061d7ea7daf06373f",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "icon-photo",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "shared-chapters",
+        "compact-ui"
+      ],
+      "type": "operation-icon",
+      "path": "/assets/archive/icons/icon-photo.svg",
+      "dimensions": {
+        "width": 64,
+        "height": 64
+      },
+      "bytes": 214,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "efa1819b0f631d2e51939d0d4e3519913882baaaf7435b3061d7ea7daf06373f",
+      "fallback": "text:功能"
+    },
+    {
+      "id": "sticker-heart-note",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-heart-note.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 793,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "b318a07dde404fdc0dee8a7b74f57e822251f9499f5c8954f2b4f670044f1ac5",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-moon",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-moon.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "a02df2cf52075b13dd533c8711b94ea8e96b144d5c0f7b9ad4b939b57a94ba85",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-star",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-star.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "c7b6d3ffb2fe5554e196179c9066be9acf914e1c8f9628afe64070787e5ff5fc",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-flower",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-flower.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "a53250f64c1311f55f5bf44bdd68d34884721cc15981e7b4d8f583af88949d34",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-ribbon",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-ribbon.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "243dd67854cf4040104242742ce8111dd0c16389a61e177b4b9d3ee453d87ea1",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-teacup",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-teacup.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "915a60b59f372cb26b971acbe4e96c5677e09f29bf36beedf13504cc9b034e5f",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-umbrella",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-umbrella.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "b89b932fb6a794e6a34c84eea109d61ba23075483f8799750dc75800c59eefa6",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-cat",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-cat.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "14d7f09b828c62b174804b2b3072016fe709efbfe0c812d47edef571ff01ba99",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-letter",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-letter.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "0c8c72c58c7cdf367916f5f5600fac402f1d63a63fc86b883cb5f8eb09dbf097",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-camera",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-camera.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 629,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "027d6da5802383625dd27e6617f02bd64f95188e8ecdadf0bcffb1242befb308",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-leaf",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-leaf.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "db819075be0f40cd32f37ad03abca407c170a4f975c8785d0dade9e28e8b1d4d",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-sparkle",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-sparkle.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "05eb2d428d678e8ebb8d7f28a5a0b206f30e9996218f8967707f11bd9aeee568",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-cloud",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-cloud.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "7555e27905ac6f2b960a034bc878105c221be1230d6e09efa782bc5a40a97faf",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-lantern",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-lantern.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "3eae18eefacf5a7ed9bf8a6d62aa40bd7129e777a39b1b17159ea60eb09d2745",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-bookmark",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-bookmark.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 813,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "ac6ea1aac78a12a63a687f6f7ebb90a625760495b28b71b0912f7711af814693",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-ticket",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-ticket.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 629,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "12dfcad00ba9d491dd5901928f51cd99bed486952de02e8e6dc7190cccb290a8",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-seashell",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-seashell.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "a6f94a45d7a01d78e0f4e9699a00eca6945dc3bb2e6a83eb1f5b173072069544",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-music",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-music.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "523b718a130b7476953a03f4f099d23c72bb228c17bf433b6c91e7795ba91673",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-firefly",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-firefly.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "d6b41ac8372174eee90d5c3a4ea4f173ef53d698dae635470cd8566c8fe40d1b",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-snowflake",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-snowflake.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "b6e78141cb0c9ba78a6452704503adc6fae43112a876d55dc7db89b3b26d5f32",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-cookie",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-cookie.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "8d8f36204a2a1aab8f773f834d2552659fe158709fe31b2bf0a105041eb53383",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-key",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-key.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 628,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "dea1fc0141a417c6f4c424118b6d3f7a90ef752df3498a226de677338bcf8d79",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-map-pin",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-map-pin.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 855,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "a6829aa845b4b5318cd4fda99db9ec9db7c6694a2595b0085fbde07c0462cf5e",
+      "fallback": "none"
+    },
+    {
+      "id": "sticker-wax-seal",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-decoration",
+        "moment-decoration"
+      ],
+      "type": "scrapbook-sticker",
+      "path": "/assets/archive/stickers/sticker-wax-seal.svg",
+      "dimensions": {
+        "width": 128,
+        "height": 128
+      },
+      "bytes": 719,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "09732379aa6e3c8a3b8da3c3a61f821543189570fea8262b098ab299ff8c66b0",
+      "fallback": "none"
+    },
+    {
+      "id": "frame-journal-paper",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-card",
+        "moment-card",
+        "activity-card"
+      ],
+      "type": "frame",
+      "path": "/assets/archive/frames/frame-journal-paper.svg",
+      "dimensions": {
+        "width": 640,
+        "height": 420
+      },
+      "bytes": 727,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "83e78084fc73de607fb13f37cbd014f858eecc400a568fa5b56eadbd1fc49b3e",
+      "fallback": "css:1px solid var(--line)"
+    },
+    {
+      "id": "frame-journal-night",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-card",
+        "moment-card",
+        "activity-card"
+      ],
+      "type": "frame",
+      "path": "/assets/archive/frames/frame-journal-night.svg",
+      "dimensions": {
+        "width": 640,
+        "height": 420
+      },
+      "bytes": 727,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "3944c524642c40f94d17e8ca195431a4e1cab19b77a347f9b58ea5aaa933fc38",
+      "fallback": "css:1px solid var(--line)"
+    },
+    {
+      "id": "frame-moment-line",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-card",
+        "moment-card",
+        "activity-card"
+      ],
+      "type": "frame",
+      "path": "/assets/archive/frames/frame-moment-line.svg",
+      "dimensions": {
+        "width": 640,
+        "height": 420
+      },
+      "bytes": 727,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "87221613e34cfd641028b55d9b2558320f77bfed8322477a18d7222e32b5b46d",
+      "fallback": "css:1px solid var(--line)"
+    },
+    {
+      "id": "frame-moment-seal",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-card",
+        "moment-card",
+        "activity-card"
+      ],
+      "type": "frame",
+      "path": "/assets/archive/frames/frame-moment-seal.svg",
+      "dimensions": {
+        "width": 640,
+        "height": 420
+      },
+      "bytes": 727,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "8c0ac524ce2af8c2964a7502f8ab4c9e19a1b129426cbe1c1aa1290275ed962e",
+      "fallback": "css:1px solid var(--line)"
+    },
+    {
+      "id": "frame-activity-scene",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-card",
+        "moment-card",
+        "activity-card"
+      ],
+      "type": "frame",
+      "path": "/assets/archive/frames/frame-activity-scene.svg",
+      "dimensions": {
+        "width": 640,
+        "height": 420
+      },
+      "bytes": 727,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "83e78084fc73de607fb13f37cbd014f858eecc400a568fa5b56eadbd1fc49b3e",
+      "fallback": "css:1px solid var(--line)"
+    },
+    {
+      "id": "frame-activity-question",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-card",
+        "moment-card",
+        "activity-card"
+      ],
+      "type": "frame",
+      "path": "/assets/archive/frames/frame-activity-question.svg",
+      "dimensions": {
+        "width": 640,
+        "height": 420
+      },
+      "bytes": 727,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "3944c524642c40f94d17e8ca195431a4e1cab19b77a347f9b58ea5aaa933fc38",
+      "fallback": "css:1px solid var(--line)"
+    },
+    {
+      "id": "frame-activity-story",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-card",
+        "moment-card",
+        "activity-card"
+      ],
+      "type": "frame",
+      "path": "/assets/archive/frames/frame-activity-story.svg",
+      "dimensions": {
+        "width": 640,
+        "height": 420
+      },
+      "bytes": 727,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "87221613e34cfd641028b55d9b2558320f77bfed8322477a18d7222e32b5b46d",
+      "fallback": "css:1px solid var(--line)"
+    },
+    {
+      "id": "frame-dialog-soft",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-card",
+        "moment-card",
+        "activity-card"
+      ],
+      "type": "frame",
+      "path": "/assets/archive/frames/frame-dialog-soft.svg",
+      "dimensions": {
+        "width": 640,
+        "height": 420
+      },
+      "bytes": 727,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "8c0ac524ce2af8c2964a7502f8ab4c9e19a1b129426cbe1c1aa1290275ed962e",
+      "fallback": "css:1px solid var(--line)"
+    },
+    {
+      "id": "frame-dialog-night",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-card",
+        "moment-card",
+        "activity-card"
+      ],
+      "type": "frame",
+      "path": "/assets/archive/frames/frame-dialog-night.svg",
+      "dimensions": {
+        "width": 640,
+        "height": 420
+      },
+      "bytes": 727,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "83e78084fc73de607fb13f37cbd014f858eecc400a568fa5b56eadbd1fc49b3e",
+      "fallback": "css:1px solid var(--line)"
+    },
+    {
+      "id": "frame-card-spring",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-card",
+        "moment-card",
+        "activity-card"
+      ],
+      "type": "frame",
+      "path": "/assets/archive/frames/frame-card-spring.svg",
+      "dimensions": {
+        "width": 640,
+        "height": 420
+      },
+      "bytes": 727,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "3944c524642c40f94d17e8ca195431a4e1cab19b77a347f9b58ea5aaa933fc38",
+      "fallback": "css:1px solid var(--line)"
+    },
+    {
+      "id": "frame-card-summer",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-card",
+        "moment-card",
+        "activity-card"
+      ],
+      "type": "frame",
+      "path": "/assets/archive/frames/frame-card-summer.svg",
+      "dimensions": {
+        "width": 640,
+        "height": 420
+      },
+      "bytes": 727,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "87221613e34cfd641028b55d9b2558320f77bfed8322477a18d7222e32b5b46d",
+      "fallback": "css:1px solid var(--line)"
+    },
+    {
+      "id": "frame-card-autumn",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-card",
+        "moment-card",
+        "activity-card"
+      ],
+      "type": "frame",
+      "path": "/assets/archive/frames/frame-card-autumn.svg",
+      "dimensions": {
+        "width": 640,
+        "height": 420
+      },
+      "bytes": 727,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "8c0ac524ce2af8c2964a7502f8ab4c9e19a1b129426cbe1c1aa1290275ed962e",
+      "fallback": "css:1px solid var(--line)"
+    },
+    {
+      "id": "frame-card-winter",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-card",
+        "moment-card",
+        "activity-card"
+      ],
+      "type": "frame",
+      "path": "/assets/archive/frames/frame-card-winter.svg",
+      "dimensions": {
+        "width": 640,
+        "height": 420
+      },
+      "bytes": 727,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "83e78084fc73de607fb13f37cbd014f858eecc400a568fa5b56eadbd1fc49b3e",
+      "fallback": "css:1px solid var(--line)"
+    },
+    {
+      "id": "frame-popup-keepsake",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-card",
+        "moment-card",
+        "activity-card"
+      ],
+      "type": "frame",
+      "path": "/assets/archive/frames/frame-popup-keepsake.svg",
+      "dimensions": {
+        "width": 640,
+        "height": 420
+      },
+      "bytes": 727,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "3944c524642c40f94d17e8ca195431a4e1cab19b77a347f9b58ea5aaa933fc38",
+      "fallback": "css:1px solid var(--line)"
+    },
+    {
+      "id": "texture-sakura",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "page-background",
+        "card-background"
+      ],
+      "type": "texture",
+      "path": "/assets/archive/textures/texture-sakura.webp",
+      "dimensions": {
+        "width": 256,
+        "height": 256
+      },
+      "bytes": 996,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "982f8abaad7643b2d64c3f9ae6f7605f3fa5c996fd06df42a875ace07d2f1ab2",
+      "fallback": "color:#fff7e9"
+    },
+    {
+      "id": "texture-summer-night",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "page-background",
+        "card-background"
+      ],
+      "type": "texture",
+      "path": "/assets/archive/textures/texture-summer-night.webp",
+      "dimensions": {
+        "width": 256,
+        "height": 256
+      },
+      "bytes": 1172,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "28eb7fca8c4ab6d0559c3ecea8d284261188c287c393b4c67c8e751920e390f2",
+      "fallback": "color:#fff7e9"
+    },
+    {
+      "id": "texture-autumn-leaf",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "page-background",
+        "card-background"
+      ],
+      "type": "texture",
+      "path": "/assets/archive/textures/texture-autumn-leaf.webp",
+      "dimensions": {
+        "width": 256,
+        "height": 256
+      },
+      "bytes": 818,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "0e62ba4d26766295fcf3909bee8e2e24dfa9efb59857d3f0922407651385a6ca",
+      "fallback": "color:#fff7e9"
+    },
+    {
+      "id": "texture-winter-snow",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "page-background",
+        "card-background"
+      ],
+      "type": "texture",
+      "path": "/assets/archive/textures/texture-winter-snow.webp",
+      "dimensions": {
+        "width": 256,
+        "height": 256
+      },
+      "bytes": 1220,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "3c18115bb54186678d8b4426e5c307e8eba6baccab9c421a697633913a594cec",
+      "fallback": "color:#fff7e9"
+    },
+    {
+      "id": "texture-rainy-glass",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "page-background",
+        "card-background"
+      ],
+      "type": "texture",
+      "path": "/assets/archive/textures/texture-rainy-glass.webp",
+      "dimensions": {
+        "width": 256,
+        "height": 256
+      },
+      "bytes": 2790,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "73e5f61cb05bd6f64b3880222dbead4427a2d2280bf3d1765274da4126888d9b",
+      "fallback": "color:#fff7e9"
+    },
+    {
+      "id": "texture-kraft",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "page-background",
+        "card-background"
+      ],
+      "type": "texture",
+      "path": "/assets/archive/textures/texture-kraft.webp",
+      "dimensions": {
+        "width": 256,
+        "height": 256
+      },
+      "bytes": 696,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "d242af137cce101ac80a2fe9da3961c815c0d9ba6df00be28d9aece4dcc8cfdd",
+      "fallback": "color:#fff7e9"
+    },
+    {
+      "id": "texture-linen",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "page-background",
+        "card-background"
+      ],
+      "type": "texture",
+      "path": "/assets/archive/textures/texture-linen.webp",
+      "dimensions": {
+        "width": 256,
+        "height": 256
+      },
+      "bytes": 2542,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "b6c5397899ee2779f00a379f814d9766b7d4fe1ab5645a8d0ddb41bb93d2113c",
+      "fallback": "color:#fff7e9"
+    },
+    {
+      "id": "texture-cloud",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "page-background",
+        "card-background"
+      ],
+      "type": "texture",
+      "path": "/assets/archive/textures/texture-cloud.webp",
+      "dimensions": {
+        "width": 256,
+        "height": 256
+      },
+      "bytes": 648,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "caf48f18229bc5423497c05232feb072c028af90125d1492d34f39021ee3b409",
+      "fallback": "color:#fff7e9"
+    },
+    {
+      "id": "texture-firefly",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "page-background",
+        "card-background"
+      ],
+      "type": "texture",
+      "path": "/assets/archive/textures/texture-firefly.webp",
+      "dimensions": {
+        "width": 256,
+        "height": 256
+      },
+      "bytes": 1156,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "a33be6845561322a2a4f0776d2890cc404a657e6418a7539142f3cfde1e0e8fc",
+      "fallback": "color:#fff7e9"
+    },
+    {
+      "id": "state-journal-empty",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "empty-state",
+        "progress-state",
+        "failure-state"
+      ],
+      "type": "state-illustration",
+      "path": "/assets/archive/states/state-journal-empty.webp",
+      "dimensions": {
+        "width": 640,
+        "height": 640
+      },
+      "bytes": 18592,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original and AI-assisted Assets",
+      "sha256": "44251d5cc733ffc99c522d7b642726854e0c2714ccfd9ab8a45a65cb4d9aa599",
+      "fallback": "text:当前没有可显示内容"
+    },
+    {
+      "id": "state-journal-generating",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "empty-state",
+        "progress-state",
+        "failure-state"
+      ],
+      "type": "state-illustration",
+      "path": "/assets/archive/states/state-journal-generating.webp",
+      "dimensions": {
+        "width": 640,
+        "height": 640
+      },
+      "bytes": 28994,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original and AI-assisted Assets",
+      "sha256": "b73ce1d0654723a21d09068634934b3be7baa44ee313f51a22a4c5b76341aa76",
+      "fallback": "text:当前没有可显示内容"
+    },
+    {
+      "id": "state-journal-recover",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "empty-state",
+        "progress-state",
+        "failure-state"
+      ],
+      "type": "state-illustration",
+      "path": "/assets/archive/states/state-journal-recover.webp",
+      "dimensions": {
+        "width": 640,
+        "height": 640
+      },
+      "bytes": 25368,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original and AI-assisted Assets",
+      "sha256": "9e77df90669fcaf3490e73165859445751ec8ec10a95937ed37d3bfc8e899d4e",
+      "fallback": "text:当前没有可显示内容"
+    },
+    {
+      "id": "state-moment-saved",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "empty-state",
+        "progress-state",
+        "failure-state"
+      ],
+      "type": "state-illustration",
+      "path": "/assets/archive/states/state-moment-saved.webp",
+      "dimensions": {
+        "width": 640,
+        "height": 640
+      },
+      "bytes": 21056,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original and AI-assisted Assets",
+      "sha256": "c4fd46d2da10bbd3a8e2ab2bf60323528b9a242b7adc74be68019fc9810a0dea",
+      "fallback": "text:当前没有可显示内容"
+    },
+    {
+      "id": "state-moment-empty",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "empty-state",
+        "progress-state",
+        "failure-state"
+      ],
+      "type": "state-illustration",
+      "path": "/assets/archive/states/state-moment-empty.webp",
+      "dimensions": {
+        "width": 640,
+        "height": 640
+      },
+      "bytes": 3908,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original and AI-assisted Assets",
+      "sha256": "9aef8b280e5c526801e33553c308c89fae754a9496d1069cf9d06c26cd971131",
+      "fallback": "text:当前没有可显示内容"
+    },
+    {
+      "id": "state-moment-candidate",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "empty-state",
+        "progress-state",
+        "failure-state"
+      ],
+      "type": "state-illustration",
+      "path": "/assets/archive/states/state-moment-candidate.webp",
+      "dimensions": {
+        "width": 640,
+        "height": 640
+      },
+      "bytes": 3620,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original and AI-assisted Assets",
+      "sha256": "8b9a0eb211fbb643c58249cfe6409b8723c9935436b495dff7a99bd62c18dbbf",
+      "fallback": "text:当前没有可显示内容"
+    },
+    {
+      "id": "state-activity-empty",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "empty-state",
+        "progress-state",
+        "failure-state"
+      ],
+      "type": "state-illustration",
+      "path": "/assets/archive/states/state-activity-empty.webp",
+      "dimensions": {
+        "width": 640,
+        "height": 640
+      },
+      "bytes": 5446,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original and AI-assisted Assets",
+      "sha256": "78d62fe42e876fae45d769587e0774bd4ec84455e1b3de8f741b967dc498c43f",
+      "fallback": "text:当前没有可显示内容"
+    },
+    {
+      "id": "state-activity-active",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "empty-state",
+        "progress-state",
+        "failure-state"
+      ],
+      "type": "state-illustration",
+      "path": "/assets/archive/states/state-activity-active.webp",
+      "dimensions": {
+        "width": 640,
+        "height": 640
+      },
+      "bytes": 4744,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original and AI-assisted Assets",
+      "sha256": "dcae0d3de783ada87c7365742f1e1939f858f63e88e18aa53878b385644eb314",
+      "fallback": "text:当前没有可显示内容"
+    },
+    {
+      "id": "state-activity-completed",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "empty-state",
+        "progress-state",
+        "failure-state"
+      ],
+      "type": "state-illustration",
+      "path": "/assets/archive/states/state-activity-completed.webp",
+      "dimensions": {
+        "width": 640,
+        "height": 640
+      },
+      "bytes": 4782,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original and AI-assisted Assets",
+      "sha256": "90f875bafae7c855fba137b2be01a516872e982eed124a6a27dc97e868d1832e",
+      "fallback": "text:当前没有可显示内容"
+    },
+    {
+      "id": "state-offline",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "empty-state",
+        "progress-state",
+        "failure-state"
+      ],
+      "type": "state-illustration",
+      "path": "/assets/archive/states/state-offline.webp",
+      "dimensions": {
+        "width": 640,
+        "height": 640
+      },
+      "bytes": 4044,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original and AI-assisted Assets",
+      "sha256": "3b353f7e539456afa426f58669d253f332d33d2f1f282091ef069b89272dcddc",
+      "fallback": "text:当前没有可显示内容"
+    },
+    {
+      "id": "state-asset-missing",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "empty-state",
+        "progress-state",
+        "failure-state"
+      ],
+      "type": "state-illustration",
+      "path": "/assets/archive/states/state-asset-missing.webp",
+      "dimensions": {
+        "width": 640,
+        "height": 640
+      },
+      "bytes": 3754,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original and AI-assisted Assets",
+      "sha256": "9b0873b9b2c6d1fce612dcc832e3b201f4a7c53aa23a26245ea21d3526899275",
+      "fallback": "text:当前没有可显示内容"
+    },
+    {
+      "id": "state-revision-conflict",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "empty-state",
+        "progress-state",
+        "failure-state"
+      ],
+      "type": "state-illustration",
+      "path": "/assets/archive/states/state-revision-conflict.webp",
+      "dimensions": {
+        "width": 640,
+        "height": 640
+      },
+      "bytes": 3546,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original and AI-assisted Assets",
+      "sha256": "d4fead4854c51839ba8e75c44db2f1ae170521f04c63acfc622836350032eefd",
+      "fallback": "text:当前没有可显示内容"
+    },
+    {
+      "id": "scene-riverside",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-riverside.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 54020,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "a3cf6c2f80cc3434fa1693e27748eeafa957fceecee7178d444123f99fbd9ceb",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-rainy-room",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-rainy-room.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 31450,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "83398b165aabf64272100b574d102a6e23af482a38a5493f891f79aa7a57293e",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-spring-park",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-spring-park.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 97762,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "f654b8b6e49eabeadde56a733391238fc004d1dd6025714e3142d623d5dd8555",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-sunset-rooftop",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-sunset-rooftop.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 57718,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "5d03c815f5a14f131097f3a56e21aeb902aea48e54f3296b58223fa845fb293a",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-night-market",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-night-market.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 79400,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "c06a8b88b14dea5135fd59525ba339055cced5e66e36ef877f4151436d029481",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-library-afternoon",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-library-afternoon.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 83272,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "8bf645442d36b346c85d50a40bb92da182bc730d958e4e197438dc1add5253a0",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-seaside-dawn",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-seaside-dawn.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 66558,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "29f33e9b289c51eabf0262037518e82e387b9364e9b18d8bfef00baa16c69b00",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-mountain-cabin",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-mountain-cabin.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 71716,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "a192780c7867df2fd6ef62e73bbcb9736afbbe90d27b6df7db9ca6f806e629c5",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-snowy-window",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-snowy-window.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 60338,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "0048028709e498a9993ac8ece1da062ed1159d68d643c4d6a9dd204252f94738",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-summer-balcony",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-summer-balcony.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 80030,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "d52c83b61448288db08276667b953099e3b72138a9570738f42108d5a9f9616a",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-autumn-train",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-autumn-train.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 74748,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "1322ee848735f03a9741a53a8ed7143e6ea9cf144bedd4ec33a7e395aa57b2e0",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-cafe-corner",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-cafe-corner.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 4334,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "6f63f70e3212b5e140ac863ee05982f7457d17384c2f3a5b3284bf622c9b9603",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-kitchen-evening",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-kitchen-evening.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 58450,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "5e819471853a8c6492ed04f62dfc366183cb7e1b0d282e973b534cb0cf499aa0",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-stargazing-field",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-stargazing-field.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 74038,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "8402f47c7cd8885533201e312965730978a500a2eaeacf7affa72c2d8976359d",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-museum-hall",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-museum-hall.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 45220,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "99d1749f1efb027b343488994dfe324921c3e9025f523a91a3612dac01ba786d",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-flower-shop",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-flower-shop.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 85078,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "d084083120346008aad923cc93574020befeac6f02ea1d7f26e2910f4c775edb",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-old-street",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-old-street.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 87894,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "d63f520975da207104d664777dc4b0205df749b68cc0140c73fce045ca36dd7d",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-lakeside-picnic",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-lakeside-picnic.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 85996,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "b5719d74fbfa536f432d088bc2578fe4ad19fc194ff09c006a9b50fb3040190a",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-festival-lantern",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-festival-lantern.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 59008,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "c94842dc0b549453243043c2e3937affe9888e99e72dfca61e741942c1034dc9",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "scene-late-night-drive",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "activity-scene",
+        "scene-selection"
+      ],
+      "type": "scene-thumbnail",
+      "path": "/assets/archive/scenes/scene-late-night-drive.webp",
+      "dimensions": {
+        "width": 960,
+        "height": 540
+      },
+      "bytes": 52110,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original AI-generated Asset",
+      "sha256": "8b2a95279ac46cadcf42e302cb1f08c7d8183ecb4a73b1fcf68690d3cc08f953",
+      "fallback": "color:#dfe9e2"
+    },
+    {
+      "id": "journal-cover-paper",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-cover",
+        "journal-library"
+      ],
+      "type": "journal-cover",
+      "path": "/assets/archive/covers/journal-cover-paper.webp",
+      "dimensions": {
+        "width": 512,
+        "height": 768
+      },
+      "bytes": 8924,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "ea0e39c29e4048365efe1f9550e5774355c2b5ffb1b819dfe8aa8fd57422807c",
+      "fallback": "color:#eadbc2"
+    },
+    {
+      "id": "journal-cover-jade",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-cover",
+        "journal-library"
+      ],
+      "type": "journal-cover",
+      "path": "/assets/archive/covers/journal-cover-jade.webp",
+      "dimensions": {
+        "width": 512,
+        "height": 768
+      },
+      "bytes": 10234,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "733b1126ec151031d1d19387b041ab1632111f3ef2bbbdcf818e04e692ded523",
+      "fallback": "color:#eadbc2"
+    },
+    {
+      "id": "journal-cover-night",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-cover",
+        "journal-library"
+      ],
+      "type": "journal-cover",
+      "path": "/assets/archive/covers/journal-cover-night.webp",
+      "dimensions": {
+        "width": 512,
+        "height": 768
+      },
+      "bytes": 13586,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "e8f032ec6660643d5e7bb048dbf623b56edc283f168495bd35f754d1d6688fe1",
+      "fallback": "color:#eadbc2"
+    },
+    {
+      "id": "journal-cover-spring",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-cover",
+        "journal-library"
+      ],
+      "type": "journal-cover",
+      "path": "/assets/archive/covers/journal-cover-spring.webp",
+      "dimensions": {
+        "width": 512,
+        "height": 768
+      },
+      "bytes": 8814,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "4d20c060ff53a3a39a915556ddf0c5a737274349956f20e6ef60cbe9d347a4af",
+      "fallback": "color:#eadbc2"
+    },
+    {
+      "id": "journal-cover-summer",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-cover",
+        "journal-library"
+      ],
+      "type": "journal-cover",
+      "path": "/assets/archive/covers/journal-cover-summer.webp",
+      "dimensions": {
+        "width": 512,
+        "height": 768
+      },
+      "bytes": 9672,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "09b8ec103cf87ed486683cd687b32fdf7a1966f1b41e1acc222551a9feaeb706",
+      "fallback": "color:#eadbc2"
+    },
+    {
+      "id": "journal-cover-autumn",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-cover",
+        "journal-library"
+      ],
+      "type": "journal-cover",
+      "path": "/assets/archive/covers/journal-cover-autumn.webp",
+      "dimensions": {
+        "width": 512,
+        "height": 768
+      },
+      "bytes": 9044,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "0ffcff535740ea9b46cd9a26370dcb2132b67b359f5cc05601741613bdb9d745",
+      "fallback": "color:#eadbc2"
+    },
+    {
+      "id": "journal-cover-winter",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-cover",
+        "journal-library"
+      ],
+      "type": "journal-cover",
+      "path": "/assets/archive/covers/journal-cover-winter.webp",
+      "dimensions": {
+        "width": 512,
+        "height": 768
+      },
+      "bytes": 9740,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "579cc535729d80eb64b229b0edbc03f9d00e465861fdbe8dd5d32ef013c4f0bf",
+      "fallback": "color:#eadbc2"
+    },
+    {
+      "id": "journal-cover-constellation",
+      "pack_id": "core",
+      "theme": "anime-scrapbook",
+      "usage": [
+        "journal-cover",
+        "journal-library"
+      ],
+      "type": "journal-cover",
+      "path": "/assets/archive/covers/journal-cover-constellation.webp",
+      "dimensions": {
+        "width": 512,
+        "height": 768
+      },
+      "bytes": 12110,
+      "min_app_version": "0.7.0",
+      "license": "Mindspace Original Assets",
+      "sha256": "30caff45b08d8d9e22b214f23a1a5b74a972258edb81746137865cdc4e13c0d7",
+      "fallback": "color:#eadbc2"
+    }
+  ]
+}

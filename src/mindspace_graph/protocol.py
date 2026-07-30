@@ -14,6 +14,7 @@ TRAILING_MODEL_TOKEN = re.compile(
     r"(?:<\|(?:im_end|endoftext)\|>|</s>)\s*$",
     flags=re.IGNORECASE,
 )
+LEADING_VOICE_DIRECTIVE = re.compile(r"^\s*\[\[voice:[a-z_]+\]\]", flags=re.IGNORECASE)
 
 
 def _clean_response_text(value: str) -> str:
@@ -194,7 +195,14 @@ class ProtocolParser:
         if leading:
             return _clean_response_text(leading)
         value = (raw or "").strip()
-        if value and not value.startswith(("<", "{", "[")):
+        # A Mindspace reply may legitimately begin with the hidden TTS
+        # directive.  Do not mistake ``[[voice:warm]]`` for an untrusted JSON
+        # array: treating every '[' prefix as JSON made an otherwise visible
+        # reply fail protocol parsing and spend a useless repair call.
+        if value and (
+            not value.startswith(("<", "{", "["))
+            or LEADING_VOICE_DIRECTIVE.match(value) is not None
+        ):
             value = re.sub(r"</response>\s*$", "", value, flags=re.IGNORECASE).strip()
             return _clean_response_text(value)
         return None

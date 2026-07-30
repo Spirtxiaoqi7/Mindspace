@@ -3,7 +3,9 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { appPaths, ensureAppPaths, migrateLegacyLayout, mindspaceHome } = require("./app-paths.cjs");
+const {
+  appPaths, ensureAppPaths, migrateLegacyLayout, mindspaceHome, reconcileLegacyModelPaths,
+} = require("./app-paths.cjs");
 
 test("Mindspace uses one LocalAppData application root", (context) => {
   const local = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-local-"));
@@ -33,4 +35,17 @@ test("0.3.4 data and models migrate without copying virtual environments", (cont
   assert.equal(fs.existsSync(path.join(paths.data, "data", "session.json")), true);
   assert.equal(fs.existsSync(path.join(paths.models, "embedding", "model.bin")), true);
   assert.equal(fs.existsSync(path.join(paths.environment, ".venv")), false);
+});
+
+test("misrouted ASR final-pass models are adopted without another download", (context) => {
+  const local = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-model-path-repair-"));
+  context.after(() => fs.rmSync(local, { recursive: true, force: true }));
+  const paths = ensureAppPaths(appPaths({ getPath: () => local }, { LOCALAPPDATA: local }));
+  const misplaced = path.join(paths.home, "assets", "models", "asr", "Fun-ASR-Nano-2512");
+  fs.mkdirSync(misplaced, { recursive: true });
+  fs.writeFileSync(path.join(misplaced, "model.pt"), "existing-model");
+  const report = reconcileLegacyModelPaths(paths);
+  assert.equal(report.moved[0].id, "asr-final");
+  assert.equal(fs.existsSync(path.join(paths.models, "asr", "Fun-ASR-Nano-2512", "model.pt")), true);
+  assert.equal(fs.existsSync(misplaced), false);
 });

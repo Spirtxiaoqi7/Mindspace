@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Mindspace 0.7.0 美术预览审核</title>
+  <style>
+    :root{color:#312720;background:#f4eadf;font-family:"Microsoft YaHei",sans-serif}
+    *{box-sizing:border-box}body{margin:0;padding:36px;background:radial-gradient(circle at 82% 10%,#dceae1,transparent 34rem),#f7eee3}
+    header,main{width:min(1220px,100%);margin:auto}h1{font:600 clamp(38px,6vw,72px) Georgia,"Songti SC",serif;margin:8px 0}
+    header p{max-width:760px;color:#75685f;line-height:1.8}.eyebrow{color:#a55d4d;font-size:12px;font-weight:800;letter-spacing:.22em}
+    main{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-top:28px}.card{overflow:hidden;border:1px solid #d9c9b8;border-radius:20px;background:#fffaf2;box-shadow:0 16px 38px #725c4815}
+    .card img{display:block;width:100%;aspect-ratio:1/1;object-fit:contain;background:#f7f0e6}.card.scene{grid-column:span 2}.card.scene img,.card.frame img{aspect-ratio:16/9;object-fit:cover}.card div{padding:14px}.card b{display:block}.card small{color:#85766c}
+    @media(max-width:850px){main{grid-template-columns:repeat(2,1fr)}}@media(max-width:520px){body{padding:20px}main{grid-template-columns:1fr}.card.scene{grid-column:auto}}
+  </style>
+</head>
+<body>
+  <header><span class="eyebrow">VISUAL REVIEW · APPROVED</span><h1>共同篇章</h1><p>以下 12 项代表预览已于 2026-07-30 通过视觉审核，并据此扩产为正式资源库。此页继续保留为审核基线，不作为运行时资源入口。</p></header>
+  <main id="gallery"></main>
+  <script>
+    const items=[
+      ["icon-journal-preview","icon","icon-journal-preview.svg"],["heart-empty-preview","heart","heart-empty-preview.svg"],
+      ["heart-trace-preview","heart","heart-trace-preview.svg"],["heart-warm-preview","heart","heart-warm-preview.svg"],
+      ["heart-glow-preview","heart","heart-glow-preview.svg"],["scene-riverside-preview","scene","scene-riverside-preview.webp"],
+      ["scene-rainy-room-preview","scene","scene-rainy-room-preview.webp"],["frame-journal-preview","frame","frame-journal-preview.svg"],
+      ["frame-activity-preview","frame","frame-activity-preview.svg"],["state-journal-empty-preview","state","state-journal-empty-preview.webp"],
+      ["state-journal-generating-preview","state","state-journal-generating-preview.webp"],["state-journal-recover-preview","state","state-journal-recover-preview.webp"]
+    ];
+    const labels={icon:"日记图标",heart:"柔性心形",scene:"活动场景",frame:"手账边框",state:"状态插画"};
+    document.querySelector("#gallery").innerHTML=items.map(([id,category,path])=>`<article class="card ${category}"><img src="${path}" alt=""><div><b>${labels[category]||category}</b><small>${id}</small></div></article>`).join("");
+  </script>
+</body>
+</html>

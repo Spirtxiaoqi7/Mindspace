@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$StopAfterVenv
+)
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
@@ -37,14 +39,57 @@ if (-not (Test-Path -LiteralPath $GptPython)) {
     $PrivatePython = if ($env:UV_PYTHON_INSTALL_DIR) {
         Get-ChildItem -LiteralPath $env:UV_PYTHON_INSTALL_DIR -Filter python.exe -Recurse -File -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
     }
-    $ClearArguments = @()
-    if (Test-Path -LiteralPath $GptVenv) {
-        Write-Output 'GPT_SOVITS_VENV_RECOVERY=clear'
-        $ClearArguments = @('--clear')
+    $VenvParent = Split-Path -Parent $GptVenv
+    $VenvName = Split-Path -Leaf $GptVenv
+    $Stamp = "{0}-{1}" -f $PID, [DateTime]::UtcNow.ToString('yyyyMMddHHmmssfff')
+    $StagingVenv = Join-Path $VenvParent ".staging-$VenvName-$Stamp"
+    $IncompleteVenv = Join-Path $VenvParent ".incomplete-$VenvName-$Stamp"
+    $ResolvedParent = [IO.Path]::GetFullPath($VenvParent).TrimEnd('\')
+    foreach ($ManagedPath in $StagingVenv, $IncompleteVenv) {
+        $ResolvedManagedPath = [IO.Path]::GetFullPath($ManagedPath)
+        if (-not $ResolvedManagedPath.StartsWith("$ResolvedParent\", [StringComparison]::OrdinalIgnoreCase)) {
+            throw "GPT-SoVITS 临时环境路径越界：$ResolvedManagedPath"
+        }
     }
-    if ($PrivatePython) { & $UvExe venv --seed @ClearArguments $GptVenv --python $PrivatePython }
-    else { & $UvExe venv --seed @ClearArguments $GptVenv --python '3.11' }
-    if ($LASTEXITCODE -ne 0) { throw 'GPT-SoVITS 独立 Python 环境创建失败。' }
+    New-Item -ItemType Directory -Path $VenvParent -Force | Out-Null
+    try {
+        Write-Output "GPT_SOVITS_VENV_RECOVERY=staging:$StagingVenv"
+        if ($PrivatePython) { & $UvExe venv --seed $StagingVenv --python $PrivatePython }
+        else { & $UvExe venv --seed $StagingVenv --python '3.11' }
+        if ($LASTEXITCODE -ne 0) { throw 'GPT-SoVITS 独立 Python 临时环境创建失败。' }
+        $StagingPython = Join-Path $StagingVenv 'Scripts\python.exe'
+        if (-not (Test-Path -LiteralPath $StagingPython -PathType Leaf)) {
+            throw 'GPT-SoVITS 独立 Python 临时环境缺少解释器。'
+        }
+        & $StagingPython -I -c "import encodings, pathlib, sys; assert pathlib.Path(sys.prefix).resolve() == pathlib.Path(r'$($StagingVenv.Replace('\', '\\'))').resolve()"
+        if ($LASTEXITCODE -ne 0) { throw 'GPT-SoVITS 独立 Python 临时环境校验失败。' }
+
+        if (Test-Path -LiteralPath $GptVenv) {
+            Write-Output "GPT_SOVITS_VENV_RECOVERY=quarantine:$IncompleteVenv"
+            Move-Item -LiteralPath $GptVenv -Destination $IncompleteVenv
+        }
+        try {
+            Move-Item -LiteralPath $StagingVenv -Destination $GptVenv
+        }
+        catch {
+            if ((-not (Test-Path -LiteralPath $GptVenv)) -and (Test-Path -LiteralPath $IncompleteVenv)) {
+                Move-Item -LiteralPath $IncompleteVenv -Destination $GptVenv
+            }
+            throw
+        }
+        if (Test-Path -LiteralPath $IncompleteVenv) {
+            Remove-Item -LiteralPath $IncompleteVenv -Recurse -Force
+        }
+    }
+    finally {
+        if (Test-Path -LiteralPath $StagingVenv) {
+            Remove-Item -LiteralPath $StagingVenv -Recurse -Force
+        }
+    }
+}
+if ($StopAfterVenv) {
+    Write-Output "GPT_SOVITS_VENV_READY=$GptPython"
+    return
 }
 
 $SiteCode = 'import sysconfig; print(sysconfig.get_paths()["purelib"])'

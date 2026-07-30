@@ -561,7 +561,7 @@ class PlannerThenMalformedModel(PlannerModel):
         return DeterministicLanguageModel.generate(self, messages, config)
 
 
-def test_planner_does_not_consume_the_independent_protocol_repair_budget(tmp_path):
+def test_planner_and_generation_do_not_trigger_a_protocol_repair_call(tmp_path):
     deps = demo_dependencies()
     model = PlannerThenMalformedModel()
     deps.llm = model
@@ -575,13 +575,12 @@ def test_planner_does_not_consume_the_independent_protocol_repair_budget(tmp_pat
     result = build_graph(deps).invoke({"request": request}, config={"recursion_limit": 30})
 
     assert model.planner_calls == 1
-    assert model.repair_calls == 1
-    assert result["llm_call_count"] == 3
+    assert model.repair_calls == 0
+    assert result["llm_call_count"] == 2
     assert [item.kind for item in result["response"].model.call_summary] == [
         "planner",
         "generation",
-        "protocol_repair",
     ]
-    assert result["response"].status == "success"
+    assert result["response"].status == "error"
     assert result["response"].writeback_applied is False
-    assert result["response"].reply
+    assert result["response"].reply == ""

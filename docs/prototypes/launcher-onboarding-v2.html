@@ -1,0 +1,1786 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mindspace Launcher · 引导重构原型</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f7f3eb;
+      --paper-strong: #fffdf8;
+      --paper-soft: #f1ebe1;
+      --ink: #2f2925;
+      --muted: #746b63;
+      --faint: #9b9188;
+      --line: rgba(76, 61, 51, 0.12);
+      --accent: #b65f47;
+      --accent-deep: #914631;
+      --accent-soft: #f3dfd4;
+      --sage: #587e70;
+      --sage-soft: #dfeae4;
+      --gold: #9c743b;
+      --gold-soft: #eee3ce;
+      --violet: #6e668d;
+      --violet-soft: #e8e4f0;
+      --shadow: 0 24px 70px rgba(66, 51, 39, 0.10);
+      --soft-shadow: 0 8px 24px rgba(69, 52, 40, 0.07);
+      --radius-xl: 28px;
+      --radius-lg: 20px;
+      --radius-md: 15px;
+      --ease: 220ms cubic-bezier(.2, .8, .2, 1);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      min-width: 1080px;
+      min-height: 720px;
+      background: #ece7de;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 86% 8%, rgba(177, 201, 188, 0.26), transparent 31%),
+        radial-gradient(circle at 12% 92%, rgba(204, 156, 128, 0.16), transparent 28%),
+        var(--paper);
+      font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+      font-size: 14px;
+      letter-spacing: 0.01em;
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+    }
+
+    button:focus-visible,
+    [tabindex]:focus-visible {
+      outline: 3px solid rgba(182, 95, 71, 0.22);
+      outline-offset: 3px;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 236px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .rail {
+      position: sticky;
+      top: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      padding: 28px 22px 22px;
+      border-right: 1px solid var(--line);
+      background: rgba(255, 253, 248, 0.66);
+      backdrop-filter: blur(20px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 8px 28px;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 40px;
+      height: 40px;
+      place-items: center;
+      border-radius: 13px;
+      color: #fffaf4;
+      background: linear-gradient(145deg, #c8795f, #a84f38);
+      box-shadow: 0 10px 24px rgba(166, 79, 56, 0.22);
+      font: 700 24px/1 Georgia, serif;
+    }
+
+    .brand strong {
+      display: block;
+      font: 700 22px/1.05 Georgia, "SimSun", serif;
+      letter-spacing: -0.02em;
+    }
+
+    .brand small {
+      display: block;
+      margin-top: 5px;
+      color: var(--faint);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.22em;
+    }
+
+    .rail-label {
+      margin: 7px 10px 8px;
+      color: var(--faint);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.18em;
+    }
+
+    .nav {
+      display: grid;
+      gap: 5px;
+    }
+
+    .nav button {
+      display: grid;
+      grid-template-columns: 28px 1fr auto;
+      align-items: center;
+      gap: 9px;
+      width: 100%;
+      padding: 12px 13px;
+      border: 0;
+      border-radius: 13px;
+      color: var(--muted);
+      background: transparent;
+      text-align: left;
+      cursor: pointer;
+      transition: var(--ease);
+    }
+
+    .nav button:hover {
+      color: var(--ink);
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .nav button.active {
+      color: var(--accent-deep);
+      background: #fffaf4;
+      box-shadow: var(--soft-shadow);
+    }
+
+    .nav-icon {
+      display: grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .nav button.active .nav-icon {
+      border-color: transparent;
+      color: #fff;
+      background: var(--accent);
+    }
+
+    .nav b {
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .nav em {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--sage);
+    }
+
+    .rail-spacer {
+      flex: 1;
+    }
+
+    .rail-health {
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.58);
+    }
+
+    .rail-health > div {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .rail-health strong {
+      font-size: 12px;
+    }
+
+    .rail-health span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--gold);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .rail-health span::before {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      content: "";
+    }
+
+    .rail-health p {
+      margin: 9px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.65;
+    }
+
+    .rail-footer {
+      display: flex;
+      justify-content: space-between;
+      padding: 16px 5px 0;
+      color: var(--faint);
+      font-size: 10px;
+    }
+
+    .workspace {
+      min-width: 0;
+      padding: 26px 34px 118px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      max-width: 1280px;
+      margin: 0 auto 24px;
+    }
+
+    .topbar h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 730;
+      letter-spacing: -0.03em;
+    }
+
+    .topbar p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .ghost-button,
+    .icon-button {
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: rgba(255, 253, 248, 0.72);
+      cursor: pointer;
+      transition: var(--ease);
+    }
+
+    .ghost-button {
+      padding: 10px 14px;
+      border-radius: 12px;
+    }
+
+    .icon-button {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border-radius: 12px;
+      font-size: 17px;
+    }
+
+    .ghost-button:hover,
+    .icon-button:hover {
+      border-color: rgba(182, 95, 71, 0.22);
+      color: var(--accent-deep);
+      background: #fff;
+    }
+
+    .page {
+      display: none;
+      max-width: 1280px;
+      margin: 0 auto;
+      animation: page-in 260ms ease both;
+    }
+
+    .page.active {
+      display: block;
+    }
+
+    @keyframes page-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .readiness {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(310px, .75fr);
+      gap: 18px;
+      margin-bottom: 20px;
+    }
+
+    .welcome-card,
+    .summary-card,
+    .panel,
+    .engine-card {
+      border: 1px solid var(--line);
+      background: rgba(255, 253, 248, 0.82);
+      box-shadow: var(--soft-shadow);
+    }
+
+    .welcome-card {
+      position: relative;
+      min-height: 216px;
+      padding: 30px 34px;
+      overflow: hidden;
+      border-radius: var(--radius-xl);
+      background:
+        linear-gradient(108deg, rgba(255, 253, 248, 0.98) 0 63%, rgba(230, 239, 233, 0.86)),
+        var(--paper-strong);
+    }
+
+    .welcome-card::after {
+      position: absolute;
+      right: -70px;
+      bottom: -114px;
+      width: 290px;
+      height: 290px;
+      border: 1px solid rgba(88, 126, 112, 0.18);
+      border-radius: 50%;
+      box-shadow:
+        0 0 0 32px rgba(88, 126, 112, 0.06),
+        0 0 0 68px rgba(88, 126, 112, 0.035);
+      content: "";
+    }
+
+    .step-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--accent-deep);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.16em;
+    }
+
+    .step-kicker::before {
+      width: 24px;
+      height: 2px;
+      border-radius: 2px;
+      background: var(--accent);
+      content: "";
+    }
+
+    .welcome-card h2 {
+      max-width: 620px;
+      margin: 15px 0 10px;
+      font: 700 clamp(29px, 3vw, 40px)/1.18 Georgia, "SimSun", serif;
+      letter-spacing: -0.04em;
+    }
+
+    .welcome-card h2 em {
+      color: var(--accent);
+      font-style: normal;
+    }
+
+    .welcome-card p {
+      max-width: 620px;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.8;
+    }
+
+    .progress-steps {
+      display: flex;
+      gap: 9px;
+      margin-top: 23px;
+    }
+
+    .progress-step {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 11px;
+      border-radius: 999px;
+      color: var(--faint);
+      background: rgba(255, 255, 255, 0.64);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .progress-step i {
+      display: grid;
+      width: 17px;
+      height: 17px;
+      place-items: center;
+      border: 1px solid currentColor;
+      border-radius: 50%;
+      font-size: 9px;
+      font-style: normal;
+    }
+
+    .progress-step.done {
+      color: var(--sage);
+      background: var(--sage-soft);
+    }
+
+    .progress-step.current {
+      color: var(--accent-deep);
+      background: var(--accent-soft);
+    }
+
+    .summary-card {
+      display: flex;
+      flex-direction: column;
+      padding: 23px;
+      border-radius: var(--radius-xl);
+    }
+
+    .summary-card header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 15px;
+    }
+
+    .summary-card header span {
+      color: var(--faint);
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+    }
+
+    .summary-card header button {
+      padding: 0;
+      border: 0;
+      color: var(--accent-deep);
+      background: transparent;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .check-list {
+      display: grid;
+      gap: 9px;
+    }
+
+    .check-item {
+      display: grid;
+      grid-template-columns: 31px 1fr auto;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      border-radius: 12px;
+      background: rgba(246, 242, 234, 0.72);
+    }
+
+    .check-item > i {
+      display: grid;
+      width: 31px;
+      height: 31px;
+      place-items: center;
+      border-radius: 10px;
+      color: var(--sage);
+      background: var(--sage-soft);
+      font-style: normal;
+      font-weight: 800;
+    }
+
+    .check-item.pending > i {
+      color: var(--gold);
+      background: var(--gold-soft);
+    }
+
+    .check-item b {
+      display: block;
+      font-size: 12px;
+    }
+
+    .check-item small {
+      display: block;
+      margin-top: 3px;
+      color: var(--faint);
+      font-size: 10px;
+    }
+
+    .check-item > span {
+      color: var(--sage);
+      font-size: 10px;
+      font-weight: 750;
+    }
+
+    .check-item.pending > span {
+      color: var(--gold);
+    }
+
+    .summary-note {
+      margin: auto 2px 0;
+      padding-top: 13px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.65;
+    }
+
+    .section-heading {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 18px;
+      margin: 27px 2px 14px;
+    }
+
+    .section-heading h2 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: -0.02em;
+    }
+
+    .section-heading p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .section-heading > button {
+      border: 0;
+      color: var(--accent-deep);
+      background: transparent;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .engine-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 15px;
+    }
+
+    .engine-card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      min-height: 304px;
+      padding: 20px;
+      overflow: hidden;
+      border-radius: var(--radius-lg);
+      cursor: pointer;
+      transition: transform var(--ease), box-shadow var(--ease), border-color var(--ease);
+    }
+
+    .engine-card:hover {
+      transform: translateY(-3px);
+      border-color: rgba(182, 95, 71, 0.23);
+      box-shadow: 0 18px 44px rgba(69, 52, 40, 0.11);
+    }
+
+    .engine-card.selected {
+      border-color: rgba(182, 95, 71, 0.50);
+      box-shadow:
+        inset 0 0 0 1px rgba(182, 95, 71, 0.18),
+        0 18px 44px rgba(112, 69, 48, 0.12);
+    }
+
+    .engine-card::after {
+      position: absolute;
+      top: -42px;
+      right: -42px;
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      background: var(--engine-soft);
+      content: "";
+      opacity: 0.65;
+      pointer-events: none;
+    }
+
+    .engine-top {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .engine-icon {
+      display: grid;
+      width: 43px;
+      height: 43px;
+      place-items: center;
+      border-radius: 14px;
+      color: var(--engine);
+      background: var(--engine-soft);
+      font-size: 14px;
+      font-weight: 850;
+      letter-spacing: -0.04em;
+    }
+
+    .engine-badge {
+      padding: 5px 8px;
+      border-radius: 999px;
+      color: var(--engine);
+      background: var(--engine-soft);
+      font-size: 9px;
+      font-weight: 800;
+    }
+
+    .engine-card h3 {
+      margin: 17px 0 5px;
+      font-size: 17px;
+      letter-spacing: -0.02em;
+    }
+
+    .engine-card .engine-subtitle {
+      min-height: 37px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    .feature-list {
+      display: grid;
+      gap: 8px;
+      margin: 17px 0 18px;
+      padding: 0;
+      list-style: none;
+    }
+
+    .feature-list li {
+      display: grid;
+      grid-template-columns: 14px 1fr;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.45;
+    }
+
+    .feature-list li::before {
+      color: var(--engine);
+      font-weight: 900;
+      content: "✓";
+    }
+
+    .engine-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: auto;
+    }
+
+    .engine-meta span {
+      padding: 5px 7px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--faint);
+      background: rgba(247, 243, 235, 0.72);
+      font-size: 9px;
+      font-weight: 700;
+    }
+
+    .engine-select {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 15px;
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
+    }
+
+    .engine-select span {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .radio {
+      display: grid;
+      width: 17px;
+      height: 17px;
+      place-items: center;
+      border: 1px solid #b7ada4;
+      border-radius: 50%;
+      background: #fff;
+    }
+
+    .selected .radio {
+      border-color: var(--accent);
+    }
+
+    .selected .radio::after {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--accent);
+      content: "";
+    }
+
+    .engine-select b {
+      color: var(--engine);
+      font-size: 10px;
+    }
+
+    .qwen {
+      --engine: #8b5b3f;
+      --engine-soft: #f0e0d4;
+    }
+
+    .gpt {
+      --engine: #587e70;
+      --engine-soft: #dfeae4;
+    }
+
+    .cosy {
+      --engine: #6e668d;
+      --engine-soft: #e8e4f0;
+    }
+
+    .selection-detail {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 22px;
+      margin-top: 16px;
+      padding: 17px 19px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 253, 248, 0.70);
+    }
+
+    .selection-detail > div:first-child {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .selection-detail i {
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 11px;
+      color: var(--sage);
+      background: var(--sage-soft);
+      font-style: normal;
+      font-weight: 850;
+    }
+
+    .selection-detail strong {
+      display: block;
+      font-size: 12px;
+    }
+
+    .selection-detail small {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .selection-detail button {
+      padding: 9px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--muted);
+      background: #fff;
+      font-size: 10px;
+      cursor: pointer;
+    }
+
+    .cloud-fallback {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      margin-top: 12px;
+      padding: 12px 16px;
+      border: 1px dashed rgba(76, 61, 51, 0.17);
+      border-radius: 14px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.38);
+      font-size: 10px;
+    }
+
+    .cloud-fallback i {
+      display: grid;
+      width: 26px;
+      height: 26px;
+      place-items: center;
+      border-radius: 9px;
+      color: var(--gold);
+      background: var(--gold-soft);
+      font-style: normal;
+    }
+
+    .cloud-fallback b {
+      color: var(--ink);
+    }
+
+    .cloud-fallback button {
+      margin-left: auto;
+      padding: 0;
+      border: 0;
+      color: var(--accent-deep);
+      background: transparent;
+      font-size: 10px;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    .panel {
+      padding: 24px;
+      border-radius: var(--radius-xl);
+    }
+
+    .panel + .panel {
+      margin-top: 16px;
+    }
+
+    .panel h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .panel > p {
+      margin: 7px 0 22px;
+      color: var(--muted);
+      line-height: 1.7;
+    }
+
+    .compare-table {
+      width: 100%;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      border-spacing: 0;
+      background: rgba(255, 255, 255, 0.5);
+    }
+
+    .compare-table th,
+    .compare-table td {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      font-size: 11px;
+    }
+
+    .compare-table th {
+      color: var(--faint);
+      background: rgba(241, 235, 225, 0.65);
+      font-size: 9px;
+      letter-spacing: 0.1em;
+    }
+
+    .compare-table tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .compare-table td:first-child {
+      font-weight: 750;
+    }
+
+    .compare-table .best {
+      color: var(--sage);
+      font-weight: 800;
+    }
+
+    .service-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .service-row {
+      display: grid;
+      grid-template-columns: 38px 1fr 130px 92px;
+      align-items: center;
+      gap: 12px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.52);
+    }
+
+    .service-row > i {
+      display: grid;
+      width: 38px;
+      height: 38px;
+      place-items: center;
+      border-radius: 12px;
+      color: var(--sage);
+      background: var(--sage-soft);
+      font-style: normal;
+      font-weight: 850;
+    }
+
+    .service-row b,
+    .service-row small {
+      display: block;
+    }
+
+    .service-row small {
+      margin-top: 4px;
+      color: var(--faint);
+      font-size: 10px;
+    }
+
+    .service-state {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--sage);
+      font-size: 10px;
+      font-weight: 750;
+    }
+
+    .service-state::before {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+      content: "";
+    }
+
+    .service-state.waiting {
+      color: var(--gold);
+    }
+
+    .service-row button {
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      font-size: 10px;
+      cursor: pointer;
+    }
+
+    .diagnostic-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .diagnostic-card {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.5);
+    }
+
+    .diagnostic-card strong {
+      display: block;
+      font-size: 12px;
+    }
+
+    .diagnostic-card p {
+      min-height: 34px;
+      margin: 7px 0 14px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.65;
+    }
+
+    .diagnostic-card button {
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--accent-deep);
+      background: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .launch-dock {
+      position: fixed;
+      right: 30px;
+      bottom: 22px;
+      left: 266px;
+      z-index: 20;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 24px;
+      max-width: 1272px;
+      margin: 0 auto;
+      padding: 14px 15px 14px 20px;
+      border: 1px solid rgba(76, 61, 51, 0.15);
+      border-radius: 19px;
+      background: rgba(47, 41, 37, 0.93);
+      box-shadow: 0 18px 60px rgba(31, 25, 21, 0.26);
+      color: #fff;
+      backdrop-filter: blur(22px);
+    }
+
+    .dock-copy {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .dock-copy > i {
+      display: grid;
+      flex: 0 0 auto;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border-radius: 11px;
+      color: #e7c0af;
+      background: rgba(255, 255, 255, 0.08);
+      font-style: normal;
+      font-weight: 850;
+    }
+
+    .dock-copy strong,
+    .dock-copy small {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .dock-copy strong {
+      font-size: 12px;
+    }
+
+    .dock-copy small {
+      margin-top: 4px;
+      color: rgba(255, 255, 255, 0.62);
+      font-size: 10px;
+    }
+
+    .dock-actions {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .dock-actions .text-mode {
+      padding: 10px 12px;
+      border: 0;
+      color: rgba(255, 255, 255, 0.72);
+      background: transparent;
+      font-size: 10px;
+      cursor: pointer;
+    }
+
+    .launch-button {
+      min-width: 194px;
+      padding: 12px 18px;
+      border: 0;
+      border-radius: 12px;
+      color: #fff;
+      background: linear-gradient(135deg, #c9775d, #a64e38);
+      box-shadow: 0 8px 22px rgba(166, 78, 56, 0.32);
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+      transition: var(--ease);
+    }
+
+    .launch-button:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.04);
+    }
+
+    .launch-button.running {
+      color: #2c4940;
+      background: #dcebe4;
+      box-shadow: none;
+    }
+
+    .toast {
+      position: fixed;
+      top: 22px;
+      left: 50%;
+      z-index: 100;
+      max-width: 520px;
+      padding: 12px 17px;
+      border: 1px solid rgba(76, 61, 51, 0.12);
+      border-radius: 12px;
+      color: var(--ink);
+      background: rgba(255, 253, 248, 0.96);
+      box-shadow: var(--shadow);
+      opacity: 0;
+      pointer-events: none;
+      transform: translate(-50%, -12px);
+      transition: var(--ease);
+      font-size: 11px;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translate(-50%, 0);
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 80;
+      display: none;
+      place-items: center;
+      padding: 30px;
+      background: rgba(39, 32, 28, 0.42);
+      backdrop-filter: blur(7px);
+    }
+
+    .modal-backdrop.open {
+      display: grid;
+    }
+
+    .modal {
+      width: min(560px, 100%);
+      padding: 25px;
+      border: 1px solid rgba(255, 255, 255, 0.55);
+      border-radius: 22px;
+      background: var(--paper-strong);
+      box-shadow: 0 30px 90px rgba(30, 24, 20, 0.28);
+    }
+
+    .modal header {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+    }
+
+    .modal h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .modal header button {
+      width: 31px;
+      height: 31px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      cursor: pointer;
+    }
+
+    .modal > p {
+      margin: 9px 0 18px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.7;
+    }
+
+    .modal-list {
+      display: grid;
+      gap: 9px;
+    }
+
+    .modal-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 15px;
+      padding: 12px 13px;
+      border-radius: 12px;
+      background: var(--paper-soft);
+    }
+
+    .modal-row b,
+    .modal-row small {
+      display: block;
+    }
+
+    .modal-row small {
+      margin-top: 3px;
+      color: var(--faint);
+      font-size: 9px;
+    }
+
+    .modal-row span {
+      color: var(--sage);
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    @media (max-width: 1180px) {
+      .app {
+        grid-template-columns: 205px minmax(0, 1fr);
+      }
+
+      .rail {
+        padding-right: 15px;
+        padding-left: 15px;
+      }
+
+      .workspace {
+        padding-right: 24px;
+        padding-left: 24px;
+      }
+
+      .launch-dock {
+        left: 229px;
+      }
+
+      .engine-card {
+        padding: 17px;
+      }
+    }
+
+    @media (max-height: 800px) {
+      .rail {
+        padding-top: 21px;
+        padding-bottom: 16px;
+      }
+
+      .brand {
+        padding-bottom: 20px;
+      }
+
+      .workspace {
+        padding-top: 19px;
+      }
+
+      .topbar {
+        margin-bottom: 15px;
+      }
+
+      .readiness {
+        margin-bottom: 12px;
+      }
+
+      .welcome-card {
+        min-height: 188px;
+        padding: 21px 25px;
+      }
+
+      .welcome-card h2 {
+        margin: 10px 0 7px;
+        font-size: 31px;
+      }
+
+      .progress-steps {
+        margin-top: 14px;
+      }
+
+      .summary-card {
+        padding: 16px;
+      }
+
+      .summary-card header {
+        margin-bottom: 8px;
+      }
+
+      .check-list {
+        gap: 6px;
+      }
+
+      .check-item {
+        grid-template-columns: 27px 1fr auto;
+        padding: 7px 8px;
+      }
+
+      .check-item > i {
+        width: 27px;
+        height: 27px;
+      }
+
+      .summary-note {
+        display: none;
+      }
+
+      .section-heading {
+        margin-top: 16px;
+        margin-bottom: 9px;
+      }
+
+      .engine-card {
+        min-height: 254px;
+        padding: 15px;
+      }
+
+      .engine-icon {
+        width: 37px;
+        height: 37px;
+      }
+
+      .engine-card h3 {
+        margin-top: 12px;
+      }
+
+      .engine-card .engine-subtitle {
+        min-height: 32px;
+      }
+
+      .feature-list {
+        gap: 5px;
+        margin: 11px 0 12px;
+      }
+
+      .engine-select {
+        margin-top: 10px;
+        padding-top: 10px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="rail">
+      <div class="brand">
+        <span class="brand-mark">M</span>
+        <div>
+          <strong>Mindspace</strong>
+          <small>LOCAL COMPANION</small>
+        </div>
+      </div>
+
+      <div class="rail-label">开始</div>
+      <nav class="nav" aria-label="启动器导航">
+        <button class="active" data-page="start">
+          <span class="nav-icon">01</span><b>快速开始</b><em></em>
+        </button>
+        <button data-page="voice">
+          <span class="nav-icon">02</span><b>声音方案</b><span></span>
+        </button>
+        <button data-page="services">
+          <span class="nav-icon">03</span><b>服务管理</b><span></span>
+        </button>
+        <button data-page="diagnostics">
+          <span class="nav-icon">04</span><b>诊断与更新</b><span></span>
+        </button>
+      </nav>
+
+      <div class="rail-spacer"></div>
+
+      <section class="rail-health">
+        <div>
+          <strong>本机状态</strong>
+          <span>待确认</span>
+        </div>
+        <p>已按硬件门槛推荐 GPT-SoVITS。确认声音后即可启动。</p>
+      </section>
+      <div class="rail-footer">
+        <span>Launcher 0.5.48</span>
+        <span>稳定通道</span>
+      </div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div>
+          <h1 id="page-title">快速开始</h1>
+          <p id="page-subtitle">完成一次选择，以后打开即可直接进入。</p>
+        </div>
+        <div class="top-actions">
+          <button class="ghost-button" id="storage-button">A:\Mindspace · 250 GB 可用</button>
+          <button class="icon-button" id="settings-button" aria-label="打开高级设置">⋯</button>
+        </div>
+      </header>
+
+      <main>
+        <section class="page active" id="page-start">
+          <div class="readiness">
+            <article class="welcome-card">
+              <span class="step-kicker">首次引导 · 2 / 3</span>
+              <h2>只差一步：选择电脑<em>带得动的声音</em></h2>
+              <p>先看硬件门槛，再看声音效果。普通用户优先选择 GPT-SoVITS；只有追求高质量活人感并满足高配置时，才启用 Qwen3-TTS。</p>
+              <div class="progress-steps" aria-label="首次设置进度">
+                <span class="progress-step done"><i>✓</i>基础环境</span>
+                <span class="progress-step done"><i>✓</i>麦克风</span>
+                <span class="progress-step current"><i>3</i>选择声音</span>
+              </div>
+            </article>
+
+            <article class="summary-card">
+              <header>
+                <span>本机检查结果</span>
+                <button data-open-modal="checks">查看详情</button>
+              </header>
+              <div class="check-list">
+                <div class="check-item">
+                  <i>✓</i><div><b>基础环境</b><small>Core、Python 与本地记忆</small></div><span>已就绪</span>
+                </div>
+                <div class="check-item">
+                  <i>✓</i><div><b>实时聆听</b><small>FunASR · 麦克风已验证</small></div><span>可用</span>
+                </div>
+                <div class="check-item pending">
+                  <i>!</i><div><b>自然声音</b><small>已推荐 GPT-SoVITS V4</small></div><span>待确认</span>
+                </div>
+              </div>
+              <p class="summary-note">文字聊天不依赖本地语音。任何语音故障都不会锁住主应用。</p>
+            </article>
+          </div>
+
+          <div class="section-heading">
+            <div>
+              <h2>选择本地声音</h2>
+              <p>建议先按硬件门槛选；占用为本机 RTX 5060 Ti 16 GB 的稳定态实测增量。</p>
+            </div>
+            <button data-page-jump="voice">查看完整对比 →</button>
+          </div>
+
+          <div class="engine-grid" role="radiogroup" aria-label="TTS 引擎">
+            <article class="engine-card gpt selected" data-engine="gpt" role="radio" aria-checked="true" tabindex="0">
+              <div class="engine-top">
+                <span class="engine-icon">V4</span>
+                <span class="engine-badge">大众首选 · 已安装</span>
+              </div>
+              <h3>GPT-SoVITS V4</h3>
+              <p class="engine-subtitle">我想听很多熟悉的二次元角色声音，配置要求相对友好。</p>
+              <ul class="feature-list">
+                <li>48 套角色音色可按需选择和下载</li>
+                <li>建议 6–8 GB 显存、16 GB 内存起步</li>
+                <li>本机实测约 2.0 GB 显存 / 4.5 GB 进程内存</li>
+              </ul>
+              <div class="engine-meta">
+                <span>角色音色：多</span><span>占用：较低</span><span>Windows 本地</span>
+              </div>
+              <div class="engine-select">
+                <span><i class="radio"></i><b class="selection-label">当前选择</b></span>
+                <b>吟霖 V4 · 48 套可选</b>
+              </div>
+            </article>
+
+            <article class="engine-card cosy" data-engine="cosy" role="radio" aria-checked="false" tabindex="0">
+              <div class="engine-top">
+                <span class="engine-icon">C3</span>
+                <span class="engine-badge">声音克隆 · 需参考音频</span>
+              </div>
+              <h3>CosyVoice 3</h3>
+              <p class="engine-subtitle">我想克隆自己的专属声音，并愿意先准备干净参考音频。</p>
+              <ul class="feature-list">
+                <li>参考音频与文本一致后即可克隆</li>
+                <li>建议 6–8 GB 显存、16 GB 内存起步</li>
+                <li>本机实测约 3.7 GB 显存 / 4.8 GB 进程内存</li>
+              </ul>
+              <div class="engine-meta">
+                <span>声音克隆</span><span>占用：中等</span><span>Windows 本地</span>
+              </div>
+              <div class="engine-select">
+                <span><i class="radio"></i><b class="selection-label">选择此方案</b></span>
+                <b>尚未上传参考音频</b>
+              </div>
+            </article>
+
+            <article class="engine-card qwen" data-engine="qwen" role="radio" aria-checked="false" tabindex="0">
+              <div class="engine-top">
+                <span class="engine-icon">Q3</span>
+                <span class="engine-badge">高配置 · 高质量活人感</span>
+              </div>
+              <h3>Qwen3-TTS</h3>
+              <p class="engine-subtitle">我需要高质量活人感语音，并愿意承担 WSL2 与 vLLM 成本。</p>
+              <ul class="feature-list">
+                <li>基础门槛：16 GB 显存 + 32 GB 内存</li>
+                <li>笑声、换气、停顿和情绪表现更自然</li>
+                <li>实测约 9.1 GB 显存 / 10.8 GB WSL 工作集</li>
+              </ul>
+              <div class="engine-meta">
+                <span>活人感：高</span><span>占用：很高</span><span>WSL2 + vLLM</span>
+              </div>
+              <div class="engine-select">
+                <span><i class="radio"></i><b class="selection-label">选择此方案</b></span>
+                <b>Serena · 冷启动约 2 分钟</b>
+              </div>
+            </article>
+          </div>
+
+          <div class="selection-detail">
+            <div>
+              <i id="selection-icon">✓</i>
+              <div>
+                <strong id="selection-title">GPT-SoVITS V4 是当前更稳妥的选择</strong>
+                <small id="selection-description">6–8 GB 显存即可使用，并可按需下载多套二次元人物音色；启动时只加载当前音色。</small>
+              </div>
+            </div>
+            <button id="selection-configure">选择人物音色</button>
+          </div>
+
+          <div class="cloud-fallback">
+            <i>☁</i>
+            <span><b>电脑不适合本地合成？</b> SiliconFlow 是独立的云端备用方案，需要 API 密钥，不占本机显存。</span>
+            <button id="cloud-button">配置云端备用</button>
+          </div>
+        </section>
+
+        <section class="page" id="page-voice">
+          <article class="panel">
+            <h2>三套本地声音怎样选</h2>
+            <p>这里比较的是使用体验，不用先研究底层框架。选中方案后，启动器会显示缺什么、需要下载什么，以及是否会占用显存。</p>
+            <table class="compare-table">
+              <thead>
+                <tr><th>方案</th><th>更适合</th><th>表现力</th><th>角色还原</th><th>首次配置</th><th>运行条件</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>GPT-SoVITS V4</td><td>大量二次元角色音色</td><td>中</td><td class="best">强</td><td>选择并下载音色</td><td>6–8 GB 显存</td></tr>
+                <tr><td>CosyVoice 3</td><td>克隆自己的参考声音</td><td>较强</td><td class="best">自定义克隆</td><td>上传音频并校对</td><td>6–8 GB 显存</td></tr>
+                <tr><td>Qwen3-TTS</td><td>高质量活人感语音</td><td class="best">强</td><td>固定预置声线</td><td>接入 WSL2 / vLLM</td><td>16 GB 显存 + 32 GB 内存</td></tr>
+              </tbody>
+            </table>
+          </article>
+          <article class="panel">
+            <h2>选择规则</h2>
+            <p>同一时刻只允许一套本地 TTS 工作。切换时先安全释放旧引擎，再启动新引擎；如果退出失败，会中止切换而不是双开显存。</p>
+            <div class="diagnostic-grid">
+              <div class="diagnostic-card"><strong>我只想先用起来</strong><p>选择 GPT-SoVITS；硬件门槛更低，也能直接使用多套人物音色。</p><button data-engine-shortcut="gpt">使用大众方案</button></div>
+              <div class="diagnostic-card"><strong>我要高质量活人感</strong><p>配置达到 16 GB 显存和 32 GB 内存后，再启用 Qwen3-TTS。</p><button data-engine-shortcut="qwen">查看高配方案</button></div>
+              <div class="diagnostic-card"><strong>我要自己的声音</strong><p>选择 CosyVoice，按引导上传 3–10 秒干净参考音频并校对原文。</p><button data-engine-shortcut="cosy">配置参考音频</button></div>
+              <div class="diagnostic-card"><strong>我不想占显存</strong><p>配置 SiliconFlow API。它不属于三套本地引擎，联网时作为备用。</p><button id="cloud-button-2">配置云端备用</button></div>
+            </div>
+          </article>
+        </section>
+
+        <section class="page" id="page-services">
+          <article class="panel">
+            <h2>服务管理</h2>
+            <p>日常只需要“启动并进入”。这里保留逐项操作，供排障或开发时使用。</p>
+            <div class="service-list">
+              <div class="service-row"><i>M</i><div><b>Mindspace Core</b><small>对话、记忆、RAG 与设置</small></div><span class="service-state">已就绪</span><button>启动</button></div>
+              <div class="service-row"><i>耳</i><div><b>实时聆听</b><small>FunASR · 原生麦克风采集</small></div><span class="service-state">已就绪</span><button>启动</button></div>
+              <div class="service-row"><i id="service-tts-icon">V4</i><div><b id="service-tts-title">GPT-SoVITS V4</b><small id="service-tts-subtitle">Windows 本地流式 · 吟霖 V4</small></div><span class="service-state waiting">待启动</span><button>启动</button></div>
+            </div>
+          </article>
+          <article class="panel">
+            <h2>启动边界</h2>
+            <p>关闭主界面只截断当前输出，不销毁已经预热的语音服务。彻底退出 Mindspace 时，启动器才释放 ASR、TTS 与显存。</p>
+            <div class="diagnostic-grid">
+              <div class="diagnostic-card"><strong>关闭通话</strong><p>停止当前播放和订阅；ASR Worker 保持常驻，不重建麦克风。</p><button>查看会话状态</button></div>
+              <div class="diagnostic-card"><strong>停止全部</strong><p>按 TTS → ASR → Core 顺序停止，并明确显示未退出的进程。</p><button>停止全部服务</button></div>
+            </div>
+          </article>
+        </section>
+
+        <section class="page" id="page-diagnostics">
+          <article class="panel">
+            <h2>诊断与更新</h2>
+            <p>先给用户可理解的结果，再提供原始日志。任何失败都应该说明影响范围和下一步，而不是只显示错误码。</p>
+            <div class="diagnostic-grid">
+              <div class="diagnostic-card"><strong>快速自检</strong><p>检查 Core、麦克风首帧、当前 TTS 和播放设备，不生成正式对话。</p><button id="quick-check">开始自检</button></div>
+              <div class="diagnostic-card"><strong>复制诊断</strong><p>复制脱敏后的端口、端点、首帧耗时、队列深度和最近错误。</p><button id="copy-diagnostic">复制诊断摘要</button></div>
+              <div class="diagnostic-card"><strong>组件修复</strong><p>只补齐缺失或校验失败的文件，不重装已经通过的环境。</p><button>检查可修复项</button></div>
+              <div class="diagnostic-card"><strong>版本更新</strong><p>Launcher 0.5.48 · 稳定通道；用户 JSON、模型和角色卡不被覆盖。</p><button>检查更新</button></div>
+            </div>
+          </article>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <section class="launch-dock" aria-live="polite">
+    <div class="dock-copy">
+      <i id="dock-icon">V4</i>
+      <div>
+        <strong id="dock-title">已选择 GPT-SoVITS V4 · 准备启动 3 项服务</strong>
+        <small id="dock-detail">Core + 实时聆听 + GPT-SoVITS；只加载当前人物音色</small>
+      </div>
+    </div>
+    <div class="dock-actions">
+      <button class="text-mode" id="text-mode">仅文字模式进入</button>
+      <button class="launch-button" id="launch-button">启动并进入 Mindspace →</button>
+    </div>
+  </section>
+
+  <div class="toast" id="toast" role="status"></div>
+
+  <div class="modal-backdrop" id="modal-backdrop">
+    <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <header>
+        <h2 id="modal-title">本机检查详情</h2>
+        <button id="modal-close" aria-label="关闭">×</button>
+      </header>
+      <p id="modal-description">启动器只读取硬件和运行时状态，不会因为检查而下载大模型。</p>
+      <div class="modal-list" id="modal-list">
+        <div class="modal-row"><div><b>Windows 11 x64</b><small>系统版本支持</small></div><span>通过</span></div>
+        <div class="modal-row"><div><b>NVIDIA GPU 与驱动</b><small>支持本地 CUDA 推理</small></div><span>通过</span></div>
+        <div class="modal-row"><div><b>WSL2 · MindspaceVLLM</b><small>Qwen3 独立运行时已接入</small></div><span>通过</span></div>
+        <div class="modal-row"><div><b>应用数据目录</b><small>A:\Mindspace · 可写且空间充足</small></div><span>通过</span></div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const engineData = {
+      qwen: {
+        icon: "Q3",
+        title: "Qwen3-TTS",
+        selectionTitle: "Qwen3-TTS 只建议高配置用户启用",
+        description: "基础门槛为 16 GB 显存与 32 GB 内存；本机实测约占 9.1 GB 显存和 10.8 GB WSL 工作集。",
+        configure: "查看 Qwen3 配置",
+        serviceSubtitle: "WSL2 · vLLM-Omni · Serena",
+        dockDetail: "Core + 实时聆听 + Qwen3-TTS；本机冷启动与预热约 2 分钟"
+      },
+      gpt: {
+        icon: "V4",
+        title: "GPT-SoVITS V4",
+        selectionTitle: "GPT-SoVITS V4 是当前更稳妥的选择",
+        description: "6–8 GB 显存即可使用，并可按需下载多套二次元人物音色；启动时只加载当前音色。",
+        configure: "选择人物音色",
+        serviceSubtitle: "Windows 本地流式 · 吟霖 V4",
+        dockDetail: "Core + 实时聆听 + GPT-SoVITS；只加载当前人物音色"
+      },
+      cosy: {
+        icon: "C3",
+        title: "CosyVoice 3",
+        selectionTitle: "CosyVoice 3 还需要一段参考音频",
+        description: "运行时和模型已检测到；完成参考音频上传与文本校对后才能启动。",
+        configure: "配置参考音频",
+        serviceSubtitle: "本地自定义声音 · 待参考音频",
+        dockDetail: "Core + 实时聆听；完成参考音频配置后启动 CosyVoice"
+      }
+    };
+
+    const pageMeta = {
+      start: ["快速开始", "完成一次选择，以后打开即可直接进入。"],
+      voice: ["声音方案", "按体验目标选择，底层依赖由启动器处理。"],
+      services: ["服务管理", "逐项查看服务状态、启动边界和资源占用。"],
+      diagnostics: ["诊断与更新", "看得懂的错误、可操作的恢复和安全更新。"]
+    };
+
+    let selectedEngine = "gpt";
+    let toastTimer = 0;
+    let launchTimer = 0;
+
+    function showToast(message) {
+      const toast = document.getElementById("toast");
+      window.clearTimeout(toastTimer);
+      toast.textContent = message;
+      toast.classList.add("show");
+      toastTimer = window.setTimeout(() => toast.classList.remove("show"), 2400);
+    }
+
+    function switchPage(page) {
+      document.querySelectorAll(".page").forEach((node) => node.classList.toggle("active", node.id === `page-${page}`));
+      document.querySelectorAll(".nav button").forEach((node) => node.classList.toggle("active", node.dataset.page === page));
+      document.getElementById("page-title").textContent = pageMeta[page][0];
+      document.getElementById("page-subtitle").textContent = pageMeta[page][1];
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function selectEngine(engine) {
+      selectedEngine = engine;
+      const data = engineData[engine];
+      document.querySelectorAll(".engine-card").forEach((card) => {
+        const selected = card.dataset.engine === engine;
+        card.classList.toggle("selected", selected);
+        card.setAttribute("aria-checked", String(selected));
+        card.querySelector(".selection-label").textContent = selected ? "当前选择" : "选择此方案";
+      });
+
+      document.getElementById("selection-icon").textContent = data.icon === "C3" ? "!" : "✓";
+      document.getElementById("selection-title").textContent = data.selectionTitle;
+      document.getElementById("selection-description").textContent = data.description;
+      document.getElementById("selection-configure").textContent = data.configure;
+      document.getElementById("service-tts-icon").textContent = data.icon;
+      document.getElementById("service-tts-title").textContent = data.title;
+      document.getElementById("service-tts-subtitle").textContent = data.serviceSubtitle;
+      document.getElementById("dock-icon").textContent = data.icon;
+      document.getElementById("dock-title").textContent = `已选择 ${data.title} · 准备启动 3 项服务`;
+      document.getElementById("dock-detail").textContent = data.dockDetail;
+      document.getElementById("launch-button").textContent = engine === "cosy" ? "先完成声音配置 →" : "启动并进入 Mindspace →";
+      showToast(`已选择 ${data.title}；切换不会删除其他声音模型`);
+    }
+
+    document.querySelectorAll(".nav button").forEach((button) => {
+      button.addEventListener("click", () => switchPage(button.dataset.page));
+    });
+
+    document.querySelectorAll("[data-page-jump]").forEach((button) => {
+      button.addEventListener("click", () => switchPage(button.dataset.pageJump));
+    });
+
+    document.querySelectorAll(".engine-card").forEach((card) => {
+      const choose = () => selectEngine(card.dataset.engine);
+      card.addEventListener("click", choose);
+      card.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          choose();
+        }
+      });
+    });
+
+    document.querySelectorAll("[data-engine-shortcut]").forEach((button) => {
+      button.addEventListener("click", () => {
+        selectEngine(button.dataset.engineShortcut);
+        switchPage("start");
+      });
+    });
+
+    const modal = document.getElementById("modal-backdrop");
+    function openModal(title, description) {
+      document.getElementById("modal-title").textContent = title;
+      document.getElementById("modal-description").textContent = description;
+      modal.classList.add("open");
+    }
+    function closeModal() {
+      modal.classList.remove("open");
+    }
+
+    document.querySelectorAll("[data-open-modal]").forEach((button) => {
+      button.addEventListener("click", () => openModal("本机检查详情", "启动器只读取硬件和运行时状态，不会因为检查而下载大模型。"));
+    });
+    document.getElementById("selection-configure").addEventListener("click", () => {
+      const data = engineData[selectedEngine];
+      openModal(`${data.title} 配置`, `${data.description} 这里将承接真实启动器中的安装、音色和运行时配置。`);
+    });
+    document.getElementById("settings-button").addEventListener("click", () => openModal("高级设置", "代理、下载源、端口和调试选项放在这里，默认不打扰首次使用。"));
+    document.getElementById("storage-button").addEventListener("click", () => openModal("存储位置", "应用、模型和用户数据统一位于 A:\\Mindspace。迁移时保留回滚点，不覆盖用户 JSON。"));
+    document.getElementById("modal-close").addEventListener("click", closeModal);
+    modal.addEventListener("click", (event) => {
+      if (event.target === modal) closeModal();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeModal();
+    });
+
+    ["cloud-button", "cloud-button-2"].forEach((id) => {
+      document.getElementById(id).addEventListener("click", () => openModal("云端备用方案", "SiliconFlow 需要单独填写 API 地址和密钥。它不会和本地三套 TTS 同时启动。"));
+    });
+
+    document.getElementById("text-mode").addEventListener("click", () => showToast("将只启动 Core；ASR 与 TTS 保持关闭"));
+    document.getElementById("quick-check").addEventListener("click", () => showToast("自检完成：Core、麦克风首帧与当前播放设备均正常"));
+    document.getElementById("copy-diagnostic").addEventListener("click", () => showToast("已复制脱敏诊断摘要（原型演示）"));
+
+    document.getElementById("launch-button").addEventListener("click", () => {
+      if (selectedEngine === "cosy") {
+        openModal("先配置 CosyVoice 参考音频", "上传一段干净参考音频并校对原文后，启动按钮会自动解锁。");
+        return;
+      }
+      const button = document.getElementById("launch-button");
+      const title = document.getElementById("dock-title");
+      const detail = document.getElementById("dock-detail");
+      window.clearTimeout(launchTimer);
+      button.disabled = true;
+      button.classList.add("running");
+      button.textContent = "正在启动 1 / 3";
+      title.textContent = "正在启动 Mindspace Core";
+      detail.textContent = "主应用会先打开；语音服务在后台继续准备";
+      launchTimer = window.setTimeout(() => {
+        button.textContent = "正在启动 2 / 3";
+        title.textContent = "正在连接实时聆听";
+        detail.textContent = "麦克风首帧确认后才显示“正在监听”";
+      }, 850);
+      launchTimer = window.setTimeout(() => {
+        button.textContent = "正在启动 3 / 3";
+        title.textContent = `正在准备 ${engineData[selectedEngine].title}`;
+        detail.textContent = selectedEngine === "qwen" ? "模型在后台常驻预热，不阻塞文字聊天" : "只加载当前选择的本地声音";
+      }, 1700);
+      launchTimer = window.setTimeout(() => {
+        button.disabled = false;
+        button.textContent = "已进入 Mindspace ✓";
+        title.textContent = "Mindspace 已启动";
+        detail.textContent = `${engineData[selectedEngine].title} 正常运行；关闭主界面不会反复重载模型`;
+        showToast("所有所选服务已进入稳定状态");
+      }, 2700);
+    });
+  </script>
+</body>
+</html>

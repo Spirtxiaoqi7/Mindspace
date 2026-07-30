@@ -52,3 +52,31 @@ def test_private_structured_calls_fall_back_for_generic_compatible_servers():
     assert len(bodies) == 3
     assert "thinking" not in bodies[-1]
     client.close()
+
+
+def test_stream_retries_connect_handshake_before_first_token():
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectError(
+                "[SSL: WRONG_VERSION_NUMBER] wrong version number",
+                request=request,
+            )
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"content":"恢复"}}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    model = OpenAICompatibleLanguageModel(client=client)
+
+    assert model.generate([], ApiConfig(api_key="test")) == "恢复"
+    assert attempts == 2
+    client.close()

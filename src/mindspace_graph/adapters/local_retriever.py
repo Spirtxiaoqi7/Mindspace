@@ -22,6 +22,7 @@ from mindspace_graph.retrieval_fusion import (
     reciprocal_rank_fusion,
     tokenize,
 )
+from mindspace_graph.roleplay import chat_message_retrieval_eligible
 
 
 def _terms(text: str) -> set[str]:
@@ -63,6 +64,81 @@ class LocalKnowledgeRetriever:
         self._lock = RLock()
         if not path.exists():
             _atomic_json(path, [])
+
+    def prewarm(
+        self,
+        *,
+        session_id: str,
+        character_id: str,
+        messages: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Load the local encoder and admit existing index vectors off the hot path.
+
+        The method is deliberately query-free: warming must not pretend that a
+        user asked for a retrieval, and it must not update exposure counters.
+        Conversation persistence remains the sole writer for chat turns.
+        """
+
+        knowledge_records = self._load()
+        knowledge_texts = [
+            str(item.get("text") or "")
+            for item in knowledge_records
+            if str(item.get("text") or "") and not isinstance(item.get("embedding"), list)
+        ]
+        chat_texts = [
+            str(item.get("content") or "")
+            for item in messages
+            if chat_message_retrieval_eligible(item) and str(item.get("content") or "")
+        ]
+        memory_records = (
+            self.memory_store.list_active(character_id)
+            if self.memory_store is not None
+            else []
+        )
+        missing_memory: list[tuple[str, str]] = []
+        for record in memory_records:
+            episode = record.get("episode", {})
+            text = str(episode.get("text") or "")
+            if text and not isinstance(episode.get("embedding"), list):
+                missing_memory.append(
+                    (str(episode.get("episode_id") or record.get("episode_id") or ""), text)
+                )
+
+        # Deduplicate without changing order.  The same sentence may be present
+        # in a recent-session projection and in a structured-memory episode.
+        texts = list(
+            dict.fromkeys(
+                [
+                    *knowledge_texts,
+                    *chat_texts,
+                    *(text for _episode_id, text in missing_memory),
+                ]
+            )
+        )
+        vectors = self._embed_many(texts)
+        vector_by_text = dict(zip(texts, vectors, strict=True))
+        pending_embeddings = {
+            episode_id: vector_by_text[text]
+            for episode_id, text in missing_memory
+            if episode_id and vector_by_text.get(text) is not None
+        }
+        if pending_embeddings and self.memory_store is not None:
+            set_many = getattr(self.memory_store, "set_episode_embeddings", None)
+            if callable(set_many):
+                set_many(pending_embeddings)
+            else:
+                for episode_id, vector in pending_embeddings.items():
+                    self.memory_store.set_episode_embedding(episode_id, vector)
+        return {
+            "session_id": session_id,
+            "character_id": character_id,
+            "knowledge_records": len(knowledge_records),
+            "chat_messages": len(chat_texts),
+            "memory_records": len(memory_records),
+            "embedded_texts": sum(vector is not None for vector in vectors),
+            "embedding_available": self._model() is not None,
+            "embedding_error": self._embedding_error,
+        }
 
     def _load(self) -> list[dict]:
         stat = self.path.stat()
@@ -304,10 +380,12 @@ class LocalKnowledgeRetriever:
         session_id: str,
         k: int,
         *,
+        character_id: str = "",
         settings: RetrievalSettings | None = None,
         user_name: str = "",
         character_name: str = "",
         messages: list[dict[str, Any]] | None = None,
+        include_raw_chat: bool = True,
     ) -> list[RetrievedChunk]:
         settings = settings or RetrievalSettings()
         source_messages = (
@@ -315,12 +393,50 @@ class LocalKnowledgeRetriever:
             if messages is not None
             else self.sessions.load_session(session_id).get("messages", [])
         )
-        messages = [
-            item
-            for item in source_messages
-            if not item.get("hidden")
-        ]
-        memory_records = self.memory_store.list_active() if self.memory_store is not None else []
+        messages = (
+            [item for item in source_messages if chat_message_retrieval_eligible(item)]
+            if include_raw_chat
+            else []
+        )
+        if include_raw_chat and character_id:
+            # Historical dialogue is a RAG source, not prompt history.  Pull a
+            # small deterministic lexical candidate set from this character
+            # only, then embed it together with the current-round candidates
+            # in one batch.  This keeps long-term continuity without restoring
+            # the old all-history prompt or performing duplicate vector work.
+            query_terms = _terms(query)
+            historical: list[tuple[int, str, dict[str, Any]]] = []
+            for item in self.sessions.list_chunks():
+                if (
+                    str(item.get("character_id") or "") != character_id
+                    or str(item.get("session_id") or "") == session_id
+                ):
+                    continue
+                content = str(item.get("text") or "")
+                overlap = len(query_terms & _terms(content))
+                historical.append(
+                    (
+                        overlap,
+                        str(item.get("created_at") or ""),
+                        {
+                            "message_id": item.get("chunk_id"),
+                            "content": content,
+                            "role": item.get("role", "unknown"),
+                            "round": item.get("round", 1),
+                            "timestamp": item.get("created_at", ""),
+                            "session_id": item.get("session_id", ""),
+                            "character_id": character_id,
+                            "retrieval_class": "historical_dialogue",
+                        },
+                    )
+                )
+            historical.sort(key=lambda value: (value[0], value[1]), reverse=True)
+            messages = [*messages, *(item for _, _, item in historical[: max(k * 3, 12)])]
+        memory_records = (
+            self.memory_store.list_active(character_id)
+            if self.memory_store is not None
+            else []
+        )
         if not messages and not memory_records:
             return []
         message_texts = [str(item.get("content") or "") for item in messages]
@@ -344,22 +460,31 @@ class LocalKnowledgeRetriever:
         boosts: list[dict[str, float]] = []
         for index, (item, message_vector) in enumerate(zip(messages, message_vectors, strict=True)):
             content = str(item.get("content") or "")
+            item_session_id = str(item.get("session_id") or session_id)
             chunks.append(
                 RetrievedChunk(
-                    chunk_id=str(item.get("message_id") or f"{session_id}:{index}"),
+                    chunk_id=str(item.get("message_id") or f"{item_session_id}:{index}"),
                     text=content,
                     source="chat",
                     score=0,
-                    session_id=session_id,
+                    session_id=item_session_id,
                     round_num=int(item.get("round", 1)),
                     physical_time=item.get("timestamp", ""),
-                    metadata={"role": item.get("role", "unknown")},
+                    metadata={
+                        "role": item.get("role", "unknown"),
+                        "retrieval_class": item.get("retrieval_class", "user_dialogue"),
+                        "character_id": character_id,
+                    },
                 )
             )
             chunk_vectors.append(message_vector)
             boosts.append(
                 {
-                    "current_session": settings.chat_session_boost,
+                    "current_session": (
+                        settings.chat_session_boost
+                        if item_session_id == session_id
+                        else 0.0
+                    ),
                     "exact_phrase": settings.chat_exact_boost
                     if query.casefold() in content.casefold()
                     else 0.0,
@@ -389,6 +514,7 @@ class LocalKnowledgeRetriever:
                         metadata={
                             "memory_key": record["memory_key"],
                             "memory_family": record["family_key"],
+                            "character_id": record.get("character_id", ""),
                             "json_tags": record.get("json_tags", []),
                             "eligible_misses": int(record.get("eligible_misses", 0)),
                             "last_selected_round": int(record.get("last_selected_round", 0)),

@@ -22,12 +22,27 @@ from mindspace_graph.models import (
     RoleValidation,
 )
 from mindspace_graph.ports import Dependencies
+from mindspace_graph.roleplay import evaluate_roleplay_quality
 
 
 @dataclass
 class InMemoryRetriever:
     knowledge: list[RetrievedChunk] = field(default_factory=list)
     chat: list[RetrievedChunk] = field(default_factory=list)
+
+    def prewarm(
+        self,
+        *,
+        session_id: str,
+        character_id: str,
+        messages: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return {
+            "session_id": session_id,
+            "character_id": character_id,
+            "message_count": len(messages),
+            "provider": "in_memory",
+        }
 
     @staticmethod
     def _search(query: str, chunks: list[RetrievedChunk], k: int) -> list[RetrievedChunk]:
@@ -72,7 +87,7 @@ class InMemoryProfileRepository:
     )
     applied_plans: list[JsonUpdatePlan] = field(default_factory=list)
 
-    def load_bundle(self) -> ProfileBundle:
+    def load_bundle(self, character_id: str = "") -> ProfileBundle:
         return self.bundle.model_copy(deep=True)
 
     def apply_json_update(self, plan: JsonUpdatePlan, *, request: ChatRequest) -> JsonWriteReceipt:
@@ -122,6 +137,7 @@ class InMemorySessionRepository:
         timestamp = datetime.now(UTC).isoformat()
         user_message_id = uuid4().hex
         assistant_message_id = uuid4().hex
+        role_quality = evaluate_roleplay_quality(reply, request, messages)
         messages.extend(
             [
                 {
@@ -133,6 +149,9 @@ class InMemorySessionRepository:
                     "hidden": request.initiative,
                     "kind": "initiative_signal" if request.initiative else "message",
                     "initiative_trigger": request.initiative_trigger,
+                    "retrieval_class": (
+                        "initiative_signal" if request.initiative else "user_dialogue"
+                    ),
                 },
                 {
                     "message_id": assistant_message_id,
@@ -142,6 +161,12 @@ class InMemorySessionRepository:
                     "timestamp": timestamp,
                     "kind": "initiative_response" if request.initiative else "message",
                     "initiative_trigger": request.initiative_trigger,
+                    "retrieval_class": (
+                        "raw_initiative" if request.initiative else "raw_assistant"
+                    ),
+                    "role_quality": role_quality["quality"],
+                    "role_quality_reasons": role_quality["reasons"],
+                    "role_quality_correction": role_quality["correction"],
                 },
             ]
         )
@@ -284,6 +309,15 @@ class RegexRolePolicy:
                     suggestion="保持当前角色身份",
                     confidence=1,
                 )
+        quality = evaluate_roleplay_quality(response, request, history)
+        if quality["quality"] == "drift":
+            return RoleValidation(
+                is_valid=False,
+                layer="roleplay_quality",
+                message=";".join(quality["reasons"]),
+                suggestion=quality["correction"],
+                confidence=0.85,
+            )
         return RoleValidation(is_valid=True, layer="regex", message="passed", confidence=1)
 
 

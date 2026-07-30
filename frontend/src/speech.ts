@@ -1,6 +1,8 @@
 const SENTENCE_BOUNDARY = /(?:[。！？!?；;]+|…{2,}|\.{3,}|\n+)/g;
 const TRAILING_CLOSERS = new Set(["”", "’", "」", "』", "】", '"', "'"]);
 const SPOKEN_BOUNDARY = /[。！？!?；;，,：:…~～\s]$/;
+const LEADING_HESITATION_ONLY =
+  /^(?:嗯+|呃+|额+|呵+|哈+|唔+|呼+|唉+|哎+)[，,。.!！？?…~～\s]*$/;
 
 export function normalizeSpeechSegment(value: string): string {
   return value
@@ -11,10 +13,18 @@ export function normalizeSpeechSegment(value: string): string {
     .trim();
 }
 
+export function hasSpeakableContent(value: string): boolean {
+  return [...normalizeSpeechSegment(value)].some((character) =>
+    /[\p{L}\p{N}]/u.test(character),
+  );
+}
+
 export function stripLeadingTtsFiller(value: string): string {
-  return normalizeSpeechSegment(value)
-    .replace(/^嗯+(?=$|[\s，,。.!！？?…~～])[\s，,。.!！？?…~～]*/, "")
-    .trim();
+  const speech = normalizeSpeechSegment(value);
+  // Drop a filler only when it is the entire request.  When real speech
+  // follows, "嗯/嗯……" is useful spoken hesitation and removing it makes the
+  // first sentence sound edited rather than conversational.
+  return /^嗯+[，,。.!！？?…~～\s]*$/.test(speech) ? "" : speech;
 }
 
 function extractCompleteSentences(value: string) {
@@ -26,8 +36,13 @@ function extractCompleteSentences(value: string) {
     let end = match.index + match[0].length;
     while (end < value.length && TRAILING_CLOSERS.has(value[end])) end += 1;
     const sentence = normalizeSpeechSegment(value.slice(consumed, end));
-    if (sentence) sentences.push(sentence);
-    consumed = end;
+    // A streamed ellipsis or dash can arrive before the words that follow it.
+    // Keep punctuation-only boundaries in the buffer so they attach to the
+    // next speakable sentence instead of becoming an invalid TTS request.
+    if (hasSpeakableContent(sentence)) {
+      sentences.push(sentence);
+      consumed = end;
+    }
     SENTENCE_BOUNDARY.lastIndex = end;
     match = SENTENCE_BOUNDARY.exec(value);
   }
@@ -36,21 +51,27 @@ function extractCompleteSentences(value: string) {
 
 function extractFirstCompleteSentence(value: string) {
   SENTENCE_BOUNDARY.lastIndex = 0;
-  const match = SENTENCE_BOUNDARY.exec(value);
-  if (!match) return { sentence: "", remainder: value };
-  let end = match.index + match[0].length;
-  while (end < value.length && TRAILING_CLOSERS.has(value[end])) end += 1;
-  return {
-    sentence: normalizeSpeechSegment(value.slice(0, end)),
-    remainder: value.slice(end),
-  };
+  let match = SENTENCE_BOUNDARY.exec(value);
+  while (match) {
+    let end = match.index + match[0].length;
+    while (end < value.length && TRAILING_CLOSERS.has(value[end])) end += 1;
+    const sentence = normalizeSpeechSegment(value.slice(0, end));
+    // "嗯……" and "呵……" carry useful delivery information but are not a
+    // useful standalone TTS request.  Keep looking for the next boundary so
+    // the hesitation and the first spoken sentence share one acoustic phrase.
+    if (hasSpeakableContent(sentence) && !LEADING_HESITATION_ONLY.test(sentence)) {
+      return { sentence, remainder: value.slice(end) };
+    }
+    SENTENCE_BOUNDARY.lastIndex = end;
+    match = SENTENCE_BOUNDARY.exec(value);
+  }
+  return { sentence: "", remainder: value };
 }
 
 export class SpeechSegmenter {
   private buffer = "";
   private parentheses: Array<{ closer: string; spokenStart: number }> = [];
   private voiceBuffer = "";
-  private voiceParentheticalBuffer = "";
   private voiceParentheses: string[] = [];
   private firstVoiceSentenceEmitted = false;
 
@@ -58,7 +79,6 @@ export class SpeechSegmenter {
     this.buffer = "";
     this.parentheses = [];
     this.voiceBuffer = "";
-    this.voiceParentheticalBuffer = "";
     this.voiceParentheses = [];
     this.firstVoiceSentenceEmitted = false;
   }
@@ -96,7 +116,7 @@ export class SpeechSegmenter {
 
     const tail = normalizeSpeechSegment(this.buffer);
     this.reset();
-    return tail ? [...extracted.sentences, tail] : extracted.sentences;
+    return hasSpeakableContent(tail) ? [...extracted.sentences, tail] : extracted.sentences;
   }
 
   private feedVoice(chunk: string, flush: boolean): string[] {
@@ -104,36 +124,26 @@ export class SpeechSegmenter {
     const emitNormalBlock = () => {
       let block = normalizeSpeechSegment(this.voiceBuffer);
       this.voiceBuffer = "";
-      if (!block) return;
+      if (!hasSpeakableContent(block)) return;
       if (!SPOKEN_BOUNDARY.test(block)) block += "。";
       segments.push(block);
       this.firstVoiceSentenceEmitted = true;
     };
-    const emitParenthetical = () => {
-      let block = normalizeSpeechSegment(this.voiceParentheticalBuffer);
-      this.voiceParentheticalBuffer = "";
-      if (!block) return;
-      if (!SPOKEN_BOUNDARY.test(block)) block += "。";
-      segments.push(block);
-    };
-
     for (const character of chunk) {
       if (this.voiceParentheses.length) {
         const currentCloser = this.voiceParentheses[this.voiceParentheses.length - 1];
         if (character === currentCloser) {
           this.voiceParentheses.pop();
-          if (!this.voiceParentheses.length) emitParenthetical();
         } else if (character === "（" || character === "(") {
           this.voiceParentheses.push(character === "（" ? "）" : ")");
-        } else {
-          this.voiceParentheticalBuffer += character;
         }
         continue;
       }
 
       if (character === "（" || character === "(") {
-        // Ordinary prose after the first low-latency sentence is accumulated
-        // into one block and is cut only when a parenthetical block begins.
+        // Parenthetical content is stage prose, never spoken audio.  Use the
+        // boundary only to release already collected real dialogue, then
+        // discard everything until the matching closer (including nesting).
         emitNormalBlock();
         this.voiceParentheses.push(character === "（" ? "）" : ")");
         continue;
@@ -154,7 +164,6 @@ export class SpeechSegmenter {
     if (!flush) return segments;
     if (this.voiceParentheses.length) {
       this.voiceParentheses = [];
-      emitParenthetical();
     }
     emitNormalBlock();
     this.reset();

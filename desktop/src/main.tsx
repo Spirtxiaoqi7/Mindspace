@@ -22,12 +22,288 @@ const bundledReleaseHistory: ReleaseAnnouncement[] = [
 ];
 
 const sleep = (milliseconds: number) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+const launcherErrorMessage = (error: unknown, fallback = "操作失败") => {
+  const raw = String((error as Error)?.message || error || "").trim();
+  const cleaned = raw
+    .replace(/^Error invoking remote method '[^']+':\s*/i, "")
+    .replace(/^Error:\s*/i, "")
+    .replace(/^net::ERR_NAME_NOT_RESOLVED$/i, "下载域名无法解析");
+  if (/failed to get the python codec|no module named ['"]?encodings|python path configuration/i.test(cleaned)) {
+    return "Python 运行时不完整或与旧环境冲突；Mindspace 会自动重新校验并修复，请再次点击“一键安装”。";
+  }
+  return (cleaned || fallback).slice(0, 320);
+};
 const formatBytes = (value: number) => {
   if (!value) return "0 B";
   const units = ["B", "KiB", "MiB", "GiB"];
   const index = Math.min(units.length - 1, Math.floor(Math.log(value) / Math.log(1024)));
   return `${(value / 1024 ** index).toFixed(index > 1 ? 1 : 0)} ${units[index]}`;
 };
+
+const voiceOptions = [
+  {
+    id: "none",
+    title: "暂不启用声音",
+    badge: "零额外下载",
+    description: "文字对话、角色记忆与 RAG 均可正常使用，之后可以随时安装声音。",
+    requirement: "无需显卡",
+  },
+  {
+    id: "gpt-sovits",
+    title: "GPT-SoVITS",
+    badge: "普通用户推荐",
+    description: "适合二次元人物声线，选择多，实时生成时按正文增量开始朗读。",
+    requirement: "建议 6–8 GB 显存",
+  },
+  {
+    id: "cosyvoice",
+    title: "CosyVoice",
+    badge: "声音克隆",
+    description: "通过参考音频克隆声音，安装后还需要在应用内上传并校对参考音频。",
+    requirement: "建议 6–8 GB 显存",
+  },
+  {
+    id: "qwen3-vllm",
+    title: "Qwen3-TTS",
+    badge: "高质量活人感",
+    description: "整段生成并使用语气指令，声音表现更丰富，但本地运行成本最高。",
+    requirement: "16 GB 显存 · 32 GB 内存 · WSL2/vLLM",
+  },
+] as const;
+
+const dashboardVoiceOptions = [
+  ...voiceOptions,
+  {
+    id: "siliconflow",
+    title: "SiliconFlow",
+    badge: "云端 API",
+    description: "使用应用内配置的云端流式 TTS，不下载本地模型，也不占用本地显存。",
+    requirement: "需要 API 密钥与网络",
+  },
+] as const;
+
+function OnboardingWizard({
+  state,
+  runtime,
+  downloadSource,
+  notice,
+  onRefresh,
+  onClose,
+}: {
+  state: OnboardingSnapshot;
+  runtime: RuntimeSnapshot;
+  downloadSource: "china" | "official";
+  notice: string;
+  onRefresh: () => Promise<LauncherSnapshot>;
+  onClose: () => void;
+}) {
+  const [step, setStep] = useState<OnboardingSnapshot["step"]>(state.complete ? "voice" : state.step);
+  const [busy, setBusy] = useState("");
+  const [message, setMessage] = useState(notice);
+  const [llmState, setLlmState] = useState(state.llm);
+  const [llmPreset, setLlmPreset] = useState(() => {
+    if (state.llm.baseUrl.includes("siliconflow")) return "siliconflow";
+    if (state.llm.baseUrl.includes("deepseek")) return "deepseek";
+    return "custom";
+  });
+  const [apiKey, setApiKey] = useState("");
+  const steps: Array<{ id: OnboardingSnapshot["step"]; label: string; detail: string }> = [
+    { id: "voice", label: "声音配置", detail: "可选" },
+    { id: "install", label: "基础环境", detail: "一键安装" },
+    { id: "llm", label: "对话模型", detail: "API 配置" },
+    { id: "ready", label: "准备完成", detail: "开始使用" },
+  ];
+  const stepIndex = steps.findIndex((item) => item.id === step);
+  const qwenUnavailable = runtime.qwenPreflight?.eligible === false;
+
+  useEffect(() => {
+    setLlmState(state.llm);
+    if (!state.complete) setStep(state.step);
+  }, [state.complete, state.llm, state.step]);
+
+  async function selectVoice(preference: string) {
+    setBusy(`voice:${preference}`);
+    try {
+      const next = await window.launcher.onboarding("select-voice", { preference }) as OnboardingSnapshot;
+      setMessage(preference === "none" ? "已选择纯文字模式，不会下载声音组件" : "已记录声音选择；现在不会开始下载");
+      await onRefresh();
+      setStep(next.baseReady ? "llm" : "install");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function installBase() {
+    setBusy("install");
+    setMessage("正在安装基础环境；已完成项目会自动跳过，断网后可以继续");
+    try {
+      const next = await window.launcher.onboarding("install-base") as OnboardingSnapshot;
+      await onRefresh();
+      setMessage(next.voiceRequested && !next.voiceReady
+        ? "基础环境已就绪；声音组件已转入后台队列"
+        : "基础环境已就绪");
+      setStep("llm");
+    } catch (error) {
+      setMessage(launcherErrorMessage(error, "基础环境安装失败"));
+      await onRefresh();
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function saveSource(source: "china" | "official") {
+    setBusy("source");
+    try {
+      await window.launcher.source(source);
+      await onRefresh();
+      setMessage(source === "china" ? "后续下载国内优先，失败自动切换官方源" : "后续下载仅使用官方上游");
+    } catch (error) {
+      setMessage(launcherErrorMessage(error, "下载源切换失败"));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  function applyPreset(id: string) {
+    setLlmPreset(id);
+    const preset = state.presets.find((item) => item.id === id);
+    if (!preset || id === "custom") return;
+    setLlmState((current) => ({ ...current, baseUrl: preset.baseUrl, model: preset.model }));
+  }
+
+  async function verifyAndSaveLlm() {
+    setBusy("llm");
+    setMessage("正在验证模型连接，不会记录测试内容");
+    try {
+      const result = await window.launcher.onboarding("save-llm", {
+        baseUrl: llmState.baseUrl,
+        model: llmState.model,
+        apiKey,
+      }) as ActionResult & { onboarding?: OnboardingSnapshot };
+      setApiKey("");
+      await onRefresh();
+      setMessage(result.warning || "模型连接成功，配置已经保存");
+      setStep("ready");
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function finish() {
+    setBusy("finish");
+    try {
+      await window.launcher.onboarding("finish");
+      await onRefresh();
+      onClose();
+    } catch (error) {
+      setMessage((error as Error).message);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  function goBack() {
+    if (stepIndex <= 0) return;
+    setStep(steps[stepIndex - 1].id);
+    setMessage("已返回上一步；之前填写和保存的状态都已保留");
+  }
+
+  const selectedPreset = state.presets.find((item) => item.id === llmPreset);
+  const currentItem = runtime.items.find((item) => item.id === runtime.pipeline?.currentId);
+  return <div className="onboarding-shell">
+    <header className="onboarding-header">
+      <div className="brand"><span className="brand-mark">M</span><div><strong>Mindspace</strong><small>QUICK START</small></div></div>
+      {state.complete && <button className="quiet" onClick={onClose}>返回管理台</button>}
+    </header>
+    <main className="onboarding-main">
+      <aside className="onboarding-steps">
+        <span className="eyebrow">首次配置</span>
+        <h1>几步准备好<br />你的 Mindspace</h1>
+        <p>声音是可选能力。先保证文字对话可用，体积较大的语音组件可以在后台继续。</p>
+        <ol>{steps.map((item, index) => <li className={`${step === item.id ? "active" : ""} ${stepIndex > index ? "done" : ""}`} key={item.id}>
+          <button disabled={Boolean(busy) || index > stepIndex} onClick={() => { setStep(item.id); setMessage(index < stepIndex ? "已返回此前步骤，现有配置不会丢失" : message); }}>
+            <i>{index + 1 < 10 ? `0${index + 1}` : index + 1}</i>
+            <span><b>{item.label}</b><small>{item.detail}</small></span>
+          </button>
+        </li>)}</ol>
+      </aside>
+      <section className="onboarding-card">
+        {step === "voice" && <>
+          <span className="eyebrow">01 · OPTIONAL VOICE</span>
+          <h2>先决定要不要声音</h2>
+          <p className="onboarding-lead">不配置声音也可以正常文字对话。这里仅记录选择，不会立即下载或占用显存。</p>
+          <div className="voice-choice-grid">{voiceOptions.map((option) => {
+            const disabled = option.id === "qwen3-vllm" && qwenUnavailable;
+            return <button
+              className={`voice-choice ${state.voicePreference === option.id && state.voiceSelectionConfirmed ? "selected" : ""}`}
+              disabled={Boolean(busy) || disabled}
+              key={option.id}
+              onClick={() => void selectVoice(option.id)}
+            >
+              <span><b>{option.badge}</b><em>{option.requirement}</em></span>
+              <strong>{option.title}</strong>
+              <p>{option.description}</p>
+              {disabled && <small>{runtime.qwenPreflight?.message || "当前硬件不满足运行条件"}</small>}
+            </button>;
+          })}</div>
+        </>}
+        {step === "install" && <>
+          <span className="eyebrow">02 · BASE ENVIRONMENT</span>
+          <h2>一键准备基础环境</h2>
+          <p className="onboarding-lead">基础环境完成即可进入文字对话。选择过的声音会自动进入后台队列，不阻塞启动。</p>
+          <div className="installation-summary">
+            <div><span>基础环境 · 总进度</span><strong>{state.baseReady ? "已就绪" : runtime.pipeline?.currentName || "等待开始"}</strong><em>{(runtime.pipeline?.progress || 0).toFixed(0)}%</em></div>
+            <div className="onboarding-progress"><i style={{ width: `${runtime.pipeline?.progress || 0}%` }} /></div>
+            <small>{currentItem?.message || "PowerShell、MinGit、uv、Python、Core 与中文向量模型"}{currentItem?.sourceFallback ? " · 已自动回退" : ""}</small>
+          </div>
+          {state.voicePreference !== "none" && <div className="installation-summary optional">
+            <div><span>可选声音 · 后台</span><strong>{state.voice.currentName || state.voice.message}</strong><em>{state.voice.progress.toFixed(0)}%</em></div>
+            <div className="onboarding-progress"><i style={{ width: `${state.voice.progress}%` }} /></div>
+            <small>{state.voice.error || "基础环境优先，声音下载失败不会影响文字对话"}</small>
+          </div>}
+          <button className="primary onboarding-install" disabled={Boolean(busy) || state.baseReady} onClick={() => void installBase()}>
+            {busy === "install" ? "正在安装基础环境…" : state.baseReady ? "基础环境已就绪" : "一键安装"}
+          </button>
+          {state.baseReady && <button className="quiet onboarding-next" onClick={() => setStep("llm")}>继续配置对话模型 →</button>}
+          <details className="download-settings"><summary>下载设置</summary><label><span>下载源</span><select disabled={Boolean(busy) || Boolean(runtime.active)} value={downloadSource} onChange={(event) => void saveSource(event.target.value as "china" | "official")}><option value="china">国内优先（失败自动切官方）</option><option value="official">官方源（GitHub / PyPI）</option></select></label><small>当前域名会显示在进度说明中；切换只影响后续下载，已有断点缓存继续复用。</small></details>
+        </>}
+        {step === "llm" && <>
+          <span className="eyebrow">03 · CONVERSATION MODEL</span>
+          <h2>连接对话模型</h2>
+          <p className="onboarding-lead">Mindspace需要一个兼容的LLM接口生成回复。声音尚未完成也不影响这一步。</p>
+          <div className="llm-presets">{state.presets.map((preset) => <button className={llmPreset === preset.id ? "active" : ""} key={preset.id} onClick={() => applyPreset(preset.id)}>{preset.label}</button>)}</div>
+          <div className="onboarding-form">
+            <label><span>API 地址</span><input value={llmState.baseUrl} onChange={(event) => setLlmState((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.deepseek.com" /></label>
+            <label><span>模型</span><input value={llmState.model} onChange={(event) => setLlmState((current) => ({ ...current, model: event.target.value }))} placeholder="deepseek-v4-flash" /></label>
+            <label><span>API Key</span><input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={state.llm.credentialsConfigured ? "已配置；留空保持原密钥" : "粘贴 API Key"} /></label>
+          </div>
+          {selectedPreset?.keyUrl && <div className="official-links"><button onClick={() => void window.launcher.external(selectedPreset.keyUrl)}>打开官方 API Key 页面</button><button onClick={() => void window.launcher.external(selectedPreset.docsUrl)}>查看官方教程</button></div>}
+          <button className="primary onboarding-install" disabled={Boolean(busy) || !state.baseReady} onClick={() => void verifyAndSaveLlm()}>{busy === "llm" ? "正在测试连接…" : "测试并保存"}</button>
+          {!state.baseReady && <small className="onboarding-warning">基础环境完成后才能保存模型配置。</small>}
+        </>}
+        {step === "ready" && <>
+          <span className="eyebrow">04 · READY</span>
+          <h2>文字对话已经可以开始</h2>
+          <p className="onboarding-lead">基础环境和对话模型都已就绪。以后启动器会直接进入服务管理，不再重复显示本向导。</p>
+          <div className="ready-checks">
+            <article className={state.baseReady ? "ready" : ""}><i>✓</i><span><b>基础环境</b><small>{state.baseReady ? "已通过校验" : "尚未完成"}</small></span></article>
+            <article className={state.llmReady ? "ready" : ""}><i>✓</i><span><b>对话模型</b><small>{state.llmReady ? state.llm.model : "尚未配置"}</small></span></article>
+            <article className={state.voiceReady ? "ready" : ""}><i>{state.voiceReady ? "✓" : "↓"}</i><span><b>声音服务</b><small>{state.voicePreference === "none" ? "未启用，不影响使用" : state.voiceReady ? "已就绪" : "正在后台准备"}</small></span></article>
+          </div>
+          <button className="primary onboarding-install" disabled={Boolean(busy) || !state.complete} onClick={() => void finish()}>{busy === "finish" ? "正在进入…" : "进入服务管理"}</button>
+        </>}
+        <div className="onboarding-footer">
+          <button className="onboarding-back" disabled={Boolean(busy) || stepIndex <= 0} onClick={goBack}>← 返回上一步</button>
+          <div className="onboarding-status"><i />{message}</div>
+        </div>
+      </section>
+    </main>
+  </div>;
+}
 
 function App() {
   const [data, setData] = useState<LauncherSnapshot>();
@@ -54,6 +330,7 @@ function App() {
     const stored = raw === null ? Number.NaN : Number(raw);
     return Number.isFinite(stored) ? Math.max(1, Math.min(1.5, stored)) : 1.2;
   });
+  const [onboardingMode, setOnboardingMode] = useState<"auto" | "open" | "closed">("auto");
   const refresh = useCallback(async () => {
     const next = await window.launcher.snapshot();
     setData(next); setRuntime(next.runtime); setDownloadSource(next.runtime.downloadSource || "china"); setVoices(next.voices);
@@ -69,6 +346,14 @@ function App() {
     const updateTimer = window.setInterval(() => window.launcher.update("snapshot").then(setUpdate), 5000);
     return () => { window.clearInterval(timer); window.clearInterval(updateTimer); };
   }, [refresh]);
+
+  useEffect(() => {
+    if (onboardingMode === "auto" && data?.onboarding.showWizard) {
+      // Once a real first-run wizard starts, keep it mounted through the final
+      // ready screen even when base + LLM become complete mid-flow.
+      setOnboardingMode("open");
+    }
+  }, [data?.onboarding.showWizard, onboardingMode]);
 
   useEffect(() => {
     const interval = runtime.active ? 500 : 3500;
@@ -102,15 +387,44 @@ function App() {
     setAnnouncementOpen(true);
   }, [update]);
 
-  const onlineCount = useMemo(
-    () => Object.values(data?.services || {}).filter((item) => item.online).length,
-    [data],
-  );
-  const allOnline = onlineCount === 3;
+  const qwenSelected = data?.ttsProvider === "qwen3-vllm";
+  const selectedVoicePreference = dashboardVoiceOptions.some((option) => option.id === data?.ttsProvider)
+    ? data!.ttsProvider
+    : "none";
+  const selectedTtsService = qwenSelected ? "qwenTts" : "tts";
+  const qwenRuntime = runtime.items.find((item) => item.id === "qwen3-vllm-runtime");
+  const coreOnline = Boolean(data?.services.api?.online);
+  const asrOnline = Boolean(data?.services.asr?.online);
   const readyModels = data?.models.filter((item) => item.ready).length || 0;
   const baseIds = useMemo(() => new Set(["powershell", "git", "uv", "python", "core-venv", "embedding"]), []);
   const baseItems = useMemo(() => runtime.items.filter((item) => item.category === "base" || baseIds.has(item.id)), [baseIds, runtime.items]);
-  const capabilityItems = useMemo(() => runtime.items.filter((item) => item.category !== "base" && item.category !== "voice" && !baseIds.has(item.id)), [baseIds, runtime.items]);
+  const asrComponentIds = useMemo(() => ["asr-runtime", "asr", "vad", "punc"], []);
+  const asrItems = useMemo(
+    () => asrComponentIds
+      .map((id) => runtime.items.find((item) => item.id === id))
+      .filter((item): item is NonNullable<typeof item> => Boolean(item)),
+    [asrComponentIds, runtime.items],
+  );
+  const activeAsrItem = asrItems.find((item) => item.id === runtime.active || item.id === runtime.pipeline?.currentId);
+  const nextAsrItem = asrItems.find((item) => !item.ready);
+  const asrProgressItem = activeAsrItem || nextAsrItem;
+  const asrReadyCount = asrItems.filter((item) => item.ready).length;
+  const asrAllReady = asrItems.length > 0 && asrReadyCount === asrItems.length;
+  const asrInstalling = Boolean(activeAsrItem || (typeof busy === "string" && busy.startsWith("asr:")));
+  const asrInstallProgress = asrProgressItem?.ready
+    ? 100
+    : Math.max(0, Math.min(100, asrProgressItem?.progress || 0));
+  const asrInstallText = activeAsrItem
+    ? `${activeAsrItem.message || `正在准备 ${activeAsrItem.name}`} · ${asrInstallProgress.toFixed(0)}%`
+    : asrProgressItem?.error
+      ? `${asrProgressItem.name} 安装中断，可继续修复`
+      : asrProgressItem
+        ? `待准备 ${asrProgressItem.name} · ${asrReadyCount}/${asrItems.length} 项已就绪`
+        : "正在检查实时语音组件";
+  // Most voice-category entries are individual GPT-SoVITS voices and belong in
+  // the picker below. Qwen3 is a service runtime, so it must remain visible as
+  // a first-class capability with its WSL/vLLM diagnostics and repair action.
+  const capabilityItems = useMemo(() => runtime.items.filter((item) => item.category !== "base" && (item.category !== "voice" || item.id === "qwen3-vllm-runtime") && !baseIds.has(item.id)), [baseIds, runtime.items]);
   const failedItems = useMemo(() => runtime.items.filter((item) => item.status === "error" || Boolean(item.error)), [runtime.items]);
   const baseReady = baseItems.filter((item) => item.ready).length;
   const capabilityReady = capabilityItems.filter((item) => item.ready).length;
@@ -165,7 +479,8 @@ function App() {
         }
       }
       const result = await window.launcher.action(service, action);
-      setNotice(result.ok ? `${services[service as keyof typeof services].title} 操作已提交` : result.error || "操作失败");
+      const serviceTitle = service === "qwenTts" ? "Qwen3 实时语音" : services[service as keyof typeof services]?.title || service;
+      setNotice(result.ok ? `${serviceTitle} 操作已提交` : result.error || "操作失败");
       await sleep(700);
       await refresh();
     } catch (error) {
@@ -176,7 +491,6 @@ function App() {
 
   async function launchMindspace() {
     setBusy("launch");
-    let launchWarnings: string[] = [];
     if (!runtime.ready) {
       setNotice("正在按顺序准备应用私有环境，请保持网络连接…");
       try {
@@ -188,22 +502,30 @@ function App() {
         return;
       }
     }
-    if (!allOnline) {
-      setNotice("正在依次唤醒声音、聆听与核心服务…");
-      const result = await window.launcher.all("start");
+    if (!coreOnline) {
+      setNotice("正在启动 Mindspace Core；语音服务不会阻塞本次进入…");
+      const result = await window.launcher.action("api", "start");
       if (!result.ok) {
         setNotice(result.error || "启动失败，请查看日志");
         setBusy("");
         return;
       }
-      launchWarnings = result.warnings || [];
+      let ready = false;
       for (let attempt = 0; attempt < 40; attempt += 1) {
         const next = await refresh();
-        if (next.services.api?.online) break;
+        if (next.services.api?.online) {
+          ready = true;
+          break;
+        }
         await sleep(500);
       }
+      if (!ready) {
+        setNotice("Core 未在 20 秒内就绪，请展开 Mindspace Core 查看启动日志或执行修复");
+        setBusy("");
+        return;
+      }
     }
-    setNotice(launchWarnings.length ? `Mindspace 核心已就绪；${launchWarnings.join("；")}` : "Mindspace 已准备好");
+    setNotice(asrOnline ? "Mindspace 已准备好" : "Core 已就绪；本次启动未启用 VAD/ASR，将以纯文字模式进入");
     await window.launcher.open("app");
     setBusy("");
   }
@@ -236,12 +558,12 @@ function App() {
     } finally { setBusy(""); }
   }
 
-  async function runtimeAction(action: "install" | "install-all" | "cancel" | "retry" | "repair", id = "") {
+  async function runtimeAction(action: "install" | "install-all" | "cancel" | "retry" | "repair" | "remove", id = "") {
     try {
-      if (action !== "cancel") setNotice(action === "install-all" ? "正在初始化全部基础环境…" : "正在准备运行时组件…");
+      if (action !== "cancel") setNotice(action === "install-all" ? "正在初始化全部基础环境…" : action === "remove" ? "正在安全卸载组件…" : "正在准备运行时组件…");
       const next = await window.launcher.runtime(action, id);
       setRuntime(next); await refresh();
-      setNotice(action === "cancel" ? "安装已取消，下载进度已保留" : next.ready ? "零环境运行时已准备完成" : "组件操作完成");
+      setNotice(action === "cancel" ? "安装已取消，下载进度已保留" : action === "remove" ? "组件已卸载；用户数据与其他共享组件未受影响" : next.ready ? "零环境运行时已准备完成" : "组件操作完成");
     } catch (error) {
       setNotice((error as Error).message);
       setRuntime(await window.launcher.runtime("snapshot"));
@@ -261,6 +583,34 @@ function App() {
       setNotice((error as Error).message || "音色切换失败");
       setVoices(await window.launcher.voice("snapshot"));
     } finally { setBusy(""); }
+  }
+
+  async function switchVoiceProvider(preference: string) {
+    const option = dashboardVoiceOptions.find((item) => item.id === preference);
+    setBusy(`voice-provider:${preference}`);
+    setNotice(`正在切换声音方案到 ${option?.title || preference}；旧引擎会先安全退出…`);
+    try {
+      const result = await window.launcher.voice("provider", preference) as TtsVoiceSnapshot & {
+        ready?: boolean;
+        queued?: boolean;
+        started?: boolean;
+        onboarding?: OnboardingSnapshot;
+      };
+      setVoices(result);
+      const next = await refresh();
+      if (!result.ok && result.error) throw new Error(result.error);
+      if (preference === "none") setNotice("声音已关闭；文字对话不受影响");
+      else if (preference === "siliconflow") setNotice("已切换到 SiliconFlow；请在应用设置中维护 API 密钥和云端音色");
+      else if (result.queued || !result.ready) setNotice(`${option?.title || preference} 已设为当前，缺失组件正在后台续传下载`);
+      else if (result.started) setNotice(`${option?.title || preference} 已切换并启动；应用内状态会同步更新`);
+      else setNotice(`${option?.title || preference} 已切换；需要语音时点击对应服务“启动”`);
+      setData(next);
+    } catch (error) {
+      setNotice((error as Error).message || "声音方案切换失败；请根据当前状态重试");
+      await refresh();
+    } finally {
+      setBusy("");
+    }
   }
 
   async function installVoice(id: string) {
@@ -292,9 +642,9 @@ function App() {
       const next = await window.launcher.source(source);
       setRuntime(next);
       setDownloadSource(next.downloadSource || source);
-      setNotice(source === "china" ? "已切换到国内镜像；后续下载使用 ModelScope 与阿里云" : "已切换到官方源；后续模型与依赖下载使用 Hugging Face、PyPI 等上游地址");
+      setNotice(source === "china" ? "已切换到国内优先；不可用时自动切换官方源" : "已切换到官方源；后续使用 GitHub、Hugging Face 与 PyPI");
     } catch (error) {
-      setNotice((error as Error).message || "下载源切换失败");
+      setNotice(launcherErrorMessage(error, "下载源切换失败"));
     } finally { setBusy(""); }
   }
 
@@ -307,6 +657,20 @@ function App() {
       setNotice(next.storage?.message || "已取消存储位置变更");
     } catch (error) {
       setNotice((error as Error).message || "存储位置迁移失败，原目录未变更");
+    } finally { setBusy(""); }
+  }
+
+  async function migrateRecommendedStorage() {
+    if (!data?.storage?.recommended) return;
+    if (!window.confirm(`将环境、模型与用户数据迁移到安装盘：\n${data.storage.recommended}\n\n迁移完成后 Mindspace 会自动重启，原目录仅在新位置通过校验后清理。`)) return;
+    setBusy("storage");
+    setNotice("正在迁移到安装盘；请勿关闭 Mindspace…");
+    try {
+      const next = await window.launcher.migrateRecommendedStorage();
+      setData(next);
+      setNotice(next.storage?.message || "存储位置已对齐");
+    } catch (error) {
+      setNotice((error as Error).message || "迁移失败，原目录保持不变");
     } finally { setBusy(""); }
   }
 
@@ -342,25 +706,87 @@ function App() {
       <span className="component-check">{item.ready ? "✓" : running ? "↓" : item.error ? "!" : "○"}</span>
       <div className="component-copy">
         <strong>{item.name}{item.optional ? " · 可选" : ""}</strong>
-        <small>{item.description}{total ? ` · ${formatBytes(total)}` : ""}</small>
+        <small title={item.path}>{item.description}{item.installedBytes ? ` · 已占用 ${formatBytes(item.installedBytes)}` : total ? ` · ${formatBytes(total)}` : ""}</small>
         <div className="component-progress"><i style={{ width: `${item.ready ? 100 : item.progress || 0}%` }} /></div>
         <span>{detail}{running ? item.speedBps > 0 ? ` · ${formatBytes(item.speedBps)}/s · ${item.progress.toFixed(1)}%` : ` · ${item.progress.toFixed(1)}%` : ""}</span>
         {item.error && <span className="diagnostic-code">错误码 {item.errorCode || "UNKNOWN"} · 阶段 {item.errorStage || item.status}{item.operationId ? ` · 操作 ${item.operationId}` : ""}</span>}
       </div>
-      {running ? <button onClick={() => void runtimeAction("cancel", item.id)}>取消</button> : <button disabled={Boolean(runtime.active) || item.ready || item.hardwareAvailable === false} onClick={() => void runtimeAction(item.status === "error" || item.status === "cancelled" ? "retry" : "install", item.id)}>{item.ready ? "已部署" : item.status === "cancelled" || item.downloadedBytes ? "继续" : item.kind === "model" || item.downloadRequired ? "下载" : item.bundled ? "本地部署" : "安装"}</button>}
+      <div className="component-actions">
+        {running
+          ? <button onClick={() => void runtimeAction("cancel", item.id)}>取消</button>
+          : <button disabled={Boolean(runtime.active) || item.ready || item.hardwareAvailable === false} onClick={() => void runtimeAction(item.status === "error" || item.status === "cancelled" ? "retry" : "install", item.id)}>{item.ready ? "已部署" : item.hardwareAvailable === false ? item.preflightCode === "CHECKING" ? "检查中" : "条件不满足" : item.id === "qwen3-vllm-runtime" ? "接入本地环境" : item.status === "cancelled" || item.downloadedBytes ? "继续" : item.kind === "model" || item.downloadRequired ? "下载" : item.bundled ? "本地部署" : "安装"}</button>}
+        {item.ready && item.optional && <button className="remove" disabled={Boolean(runtime.active) || !item.removable} title={item.removable ? "卸载该组件并释放空间" : item.dependents?.length ? `正在被 ${item.dependents.join("、")} 使用` : "此组件当前不可卸载"} onClick={() => {
+          if (window.confirm(`卸载 ${item.name}？\n只会删除该组件文件，不会删除角色、会话或用户设置。`)) void runtimeAction("remove", item.id);
+        }}>{item.removable ? "卸载" : "被依赖"}</button>}
+      </div>
     </article>;
   })}</div>;
+
+  async function acknowledgeVoiceReady(restart: boolean) {
+    setBusy(restart ? "voice-ready:restart" : "voice-ready:ignore");
+    try {
+      const result = await window.launcher.onboarding("acknowledge-voice", { restart }) as ActionResult;
+      setNotice(restart ? "声音服务已按当前选择启动" : "声音已保留，下次启动时自动使用");
+      if (!result.ok) setNotice(result.error || "声音服务操作失败");
+      await refresh();
+    } catch (error) {
+      setNotice((error as Error).message || "声音服务操作失败");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  const showOnboarding = Boolean(data?.onboarding) && (
+    onboardingMode === "open"
+    || (onboardingMode === "auto" && data!.onboarding.showWizard)
+  );
+  const voiceReadyDialog = data?.onboarding.voiceNeedsNotice ? <div className="announcement-backdrop">
+    <section className="voice-ready-dialog" role="dialog" aria-modal="true" aria-labelledby="voice-ready-title">
+      <span className="eyebrow">VOICE READY</span>
+      <h2 id="voice-ready-title">声音组件已经准备好</h2>
+      <p>{data.onboarding.voicePreference === "cosyvoice"
+        ? "CosyVoice 引擎已安装。重启声音服务后，请在应用设置中上传并校对参考音频。"
+        : "可以立即重启声音服务并启用，也可以暂时忽略；文字对话不会受到影响。"}</p>
+      <div><button disabled={Boolean(busy)} onClick={() => void acknowledgeVoiceReady(false)}>暂时忽略</button><button className="primary" disabled={Boolean(busy)} onClick={() => void acknowledgeVoiceReady(true)}>{busy === "voice-ready:restart" ? "正在启动…" : "重启声音服务并启用"}</button></div>
+    </section>
+  </div> : null;
+
+  if (!data) {
+    return <div className="launcher-loading" role="status" aria-live="polite">
+      <div className="brand"><span className="brand-mark">M</span><div><strong>Mindspace</strong><small>LOCAL COMPANION</small></div></div>
+      <div className="launcher-loading-card">
+        <i className="spinner" />
+        <span className="eyebrow">STARTING LOCALLY</span>
+        <h1>正在确认本机状态</h1>
+        <p>这里只读取运行环境和已保存配置，不会启动或下载任何声音模型。</p>
+      </div>
+    </div>;
+  }
+
+  if (showOnboarding && data?.onboarding) {
+    return <>
+      <OnboardingWizard
+        state={data.onboarding}
+        runtime={runtime}
+        downloadSource={downloadSource}
+        notice={notice}
+        onRefresh={refresh}
+        onClose={() => setOnboardingMode("closed")}
+      />
+      {voiceReadyDialog}
+    </>;
+  }
 
   return <div className="app-shell">
     <header className="titlebar">
       <div className="brand"><span className="brand-mark">M</span><div><strong>Mindspace</strong><small>LOCAL COMPANION</small></div></div>
-      <nav><button className="active">概览</button><button onClick={() => { setAnnouncementView("history"); setAnnouncementOpen(true); }}>公告</button><button onClick={() => window.launcher.open("models")}>模型</button></nav>
+      <nav><button className="active">服务管理</button><button onClick={() => { setAnnouncementView("history"); setAnnouncementOpen(true); }}>更新</button><button onClick={() => window.launcher.open("models")}>模型</button></nav>
       <div className="font-controls" aria-label="启动器字体大小">
         <button aria-label="减小启动器字体" title="减小字体" disabled={launcherFontScale <= 1} onClick={() => setLauncherFontScale((value) => Math.max(1, Number((value - 0.1).toFixed(1))))}>A−</button>
         <span title="启动器字体比例">{Math.round(launcherFontScale * 100)}%</span>
         <button aria-label="放大启动器字体" title="放大字体" disabled={launcherFontScale >= 1.5} onClick={() => setLauncherFontScale((value) => Math.min(1.5, Number((value + 0.1).toFixed(1))))}>A+</button>
       </div>
-      <span className="title-status"><i className={runtime.ready && allOnline ? "online" : ""} />{!runtime.ready ? "环境待初始化" : allOnline ? "全部就绪" : `${onlineCount}/3 服务在线`}</span>
+      <span className="title-status"><i className={runtime.ready && coreOnline ? "online" : ""} />{!runtime.ready ? "环境待初始化" : coreOnline ? (asrOnline ? "Core 就绪 · 语音可用" : "Core 就绪 · 仅文字") : "Core 正在准备"}</span>
     </header>
 
     <main>
@@ -373,14 +799,14 @@ function App() {
           <span className="eyebrow">YOUR PRIVATE AI SPACE</span>
           <h1>一次点击，<br />唤醒你的 <em>Mindspace</em></h1>
           <p>记忆与识别在本机准备，语音合成可由云端 API 承接。启动器负责让服务安静地运转，并安全同步新版本。</p>
-          <div className="hero-actions"><button className="primary launch" disabled={Boolean(busy)} onClick={launchMindspace}>{busy === "launch" ? <><i className="spinner" />{runtime.ready ? "正在启动" : "正在初始化"}</> : !runtime.ready ? <>一键初始化并进入 <b>→</b></> : allOnline ? <>进入 Mindspace <b>↗</b></> : <>启动并进入 <b>→</b></>}</button><button className="quiet" onClick={() => window.launcher.open("root")}>打开应用目录</button></div>
+          <div className="hero-actions"><button className="primary launch" disabled={Boolean(busy)} onClick={launchMindspace}>{busy === "launch" ? <><i className="spinner" />{runtime.ready ? "正在启动 Core" : "正在初始化"}</> : !runtime.ready ? <>一键初始化并进入 <b>→</b></> : coreOnline ? <>进入 Mindspace <b>↗</b></> : <>启动 Core 并进入 <b>→</b></>}</button><button className="quiet" onClick={() => window.launcher.open("root")}>打开应用目录</button></div>
           <span className="notice-line"><i />{notice}</span>
         </div>
         <div className="hero-visual">
           <div className="aura aura-one" /><div className="aura aura-two" />
           <div className="portrait"><img src="./avatar-ai-default.webp" alt="Mindspace 角色头像" /></div>
           <span className="floating-chip chip-memory"><i>◇</i><b>记忆已连接</b><small>本地持久化</small></span>
-          <span className="floating-chip chip-voice"><i>≋</i><b>声音已准备</b><small>实时可打断</small></span>
+          <span className="floating-chip chip-voice"><i>≋</i><b>{asrOnline ? "语音已启用" : "本次仅文字"}</b><small>{asrOnline ? "实时聆听可用" : "VAD / ASR 未启动"}</small></span>
         </div>
       </section>
 
@@ -392,18 +818,64 @@ function App() {
       <section className="runtime-panel overview-panel">
         <div className="panel-heading"><div><span className="eyebrow">RUNTIME</span><h2>本地服务</h2></div><div className="panel-controls"><button className="refresh" disabled={Boolean(busy)} onClick={stopAll}>全部停止</button><button className="refresh" onClick={() => void refresh()}>↻ 刷新</button></div></div>
         <div className="service-grid service-strip">{Object.entries(services).map(([id, item]) => {
-          const online = data?.services[id]?.online || false;
-          const remoteTts = id === "tts" && !["cosyvoice", "gpt-sovits"].includes(data?.ttsProvider || "");
+          const isQwenTts = id === "tts" && qwenSelected;
+          // Snapshot keeps a stable `tts` key even when Qwen's backing worker
+          // is qwenTts. The backing service name is only used for IPC actions.
+          const serviceId = id === "tts" ? selectedTtsService : id;
+          const report = data?.services[id];
+          const online = report?.online || false;
+          const starting = Boolean(report?.starting);
+          const remoteTts = id === "tts" && data?.ttsProvider === "siliconflow";
+          const ttsDisabled = id === "tts" && data?.ttsProvider === "browser";
           const asrRuntime = runtime.items.find((candidate) => candidate.id === "asr-runtime");
-          const asrNeedsSetup = id === "asr" && !asrRuntime?.ready;
-          const asrUnavailable = id === "asr" && runtime.system.nvidia === false;
-          return <article className={`service-card ${online ? "online" : ""}`} key={id}>
+          const asrNeedsSetup = id === "asr" && !asrAllReady;
+          const selectedHardwareItem = id === "asr"
+            ? asrRuntime
+            : id === "tts"
+              ? data?.ttsProvider === "gpt-sovits"
+                ? runtime.items.find((candidate) => candidate.id === "gpt-sovits-runtime")
+                : data?.ttsProvider === "cosyvoice"
+                  ? runtime.items.find((candidate) => candidate.id === "tts-runtime")
+                  : qwenSelected ? qwenRuntime : undefined
+              : undefined;
+          const hardwareUnavailable = selectedHardwareItem?.hardwareAvailable === false;
+          const showAsrProgress = id === "asr" && !online && (!asrAllReady || asrInstalling);
+          return <article className={`service-card ${online && !ttsDisabled ? "online" : ""}${showAsrProgress ? " has-progress" : ""}`} key={id}>
             <span className={`service-icon ${item.tone}`}>{item.icon}</span>
-            <div><strong>{item.title}</strong><small>{remoteTts ? "SiliconFlow · 流式 API" : id === "tts" && data?.ttsProvider === "gpt-sovits" ? `${voices.items.find((voice) => voice.id === voices.current)?.label || "GPT-SoVITS"} · 本地流式` : item.subtitle}</small></div>
-            <span className="service-state"><i />{remoteTts ? "API 托管" : online ? "运行中" : "未启动"}</span>
-            <button disabled={Boolean(busy) || remoteTts || asrUnavailable} onClick={() => serviceAction(id, online ? "restart" : "start")}>{remoteTts ? "无需本地模型" : asrUnavailable ? "需要 NVIDIA" : online ? "重启" : asrNeedsSetup ? asrRuntime?.partial ? "继续修复并启动" : "安装并启动" : "启动"}</button>
+            <div><strong>{isQwenTts ? "Qwen3 实时语音" : item.title}</strong><small>{ttsDisabled ? "声音已关闭 · 仅文字对话" : remoteTts ? "SiliconFlow · 流式 API" : isQwenTts ? "vLLM-Omni · WSL2 · CustomVoice 固定 Serena" : id === "tts" && data?.ttsProvider === "gpt-sovits" ? `${voices.items.find((voice) => voice.id === voices.current)?.label || "GPT-SoVITS"} · 本地流式` : item.subtitle}</small></div>
+            <span className="service-state" title={hardwareUnavailable ? selectedHardwareItem?.unavailableReason : ""}><i />{ttsDisabled ? "已关闭" : remoteTts ? "API 托管" : hardwareUnavailable ? "硬件不满足" : isQwenTts && !qwenRuntime?.ready ? "运行时未接入" : isQwenTts && starting ? "正在加载模型" : online ? "运行中" : id === "asr" && asrInstalling ? "正在安装" : "未启动"}</span>
+            <button disabled={Boolean(busy) || ttsDisabled || remoteTts || hardwareUnavailable || (isQwenTts && !qwenRuntime?.ready)} title={hardwareUnavailable ? selectedHardwareItem?.unavailableReason : ""} onClick={() => serviceAction(serviceId, starting ? "stop" : online ? "restart" : "start")}>{ttsDisabled ? "无需启动" : remoteTts ? "无需本地模型" : hardwareUnavailable ? selectedHardwareItem?.preflightCode === "RAM_INSUFFICIENT" ? "内存不足" : selectedHardwareItem?.preflightCode === "VRAM_INSUFFICIENT" ? "显存不足" : "硬件不满足" : isQwenTts && !qwenRuntime?.ready ? "请先接入" : isQwenTts && starting ? "停止加载" : online ? "重启" : id === "asr" && asrInstalling ? `${asrInstallProgress.toFixed(0)}%` : asrNeedsSetup ? asrRuntime?.partial || asrProgressItem?.partial || asrProgressItem?.error ? "继续修复并启动" : "安装并启动" : "启动"}</button>
+            {showAsrProgress && <div className="service-install-progress" role="status" aria-live="polite">
+              <span>{asrInstallText}</span>
+              <div><i style={{ width: `${asrInstallProgress}%` }} /></div>
+            </div>}
           </article>;
         })}</div>
+        <div className="voice-provider-switcher">
+          <div><strong>声音方案</strong><small>启动器与应用内共用同一配置；切换时先释放旧引擎，再启动新引擎。</small></div>
+          <div>{dashboardVoiceOptions.map((option) => {
+            const hardwareItem = option.id === "qwen3-vllm"
+              ? qwenRuntime
+              : option.id === "gpt-sovits"
+                ? runtime.items.find((item) => item.id === "gpt-sovits-runtime")
+                : option.id === "cosyvoice"
+                  ? runtime.items.find((item) => item.id === "tts-runtime")
+                  : undefined;
+            const unavailable = Boolean(hardwareItem?.hardwareAvailable === false);
+            const selected = selectedVoicePreference === option.id;
+            return <button
+              className={selected ? "selected" : ""}
+              disabled={Boolean(busy) || unavailable}
+              key={option.id}
+              title={unavailable ? hardwareItem?.unavailableReason || "当前设备不满足本地声音条件" : option.description}
+              onClick={() => void switchVoiceProvider(option.id)}
+            >
+              <b>{option.title}</b>
+              <small>{selected ? data?.services.tts?.online ? "使用中" : "已选择" : option.badge}</small>
+            </button>;
+          })}</div>
+        </div>
+        {qwenSelected && <div className="qwen-runtime-summary"><strong>Qwen3 本地运行时</strong><span>WSL2：MindspaceVLLM · 引擎：vLLM-Omni · 模型：Qwen3-TTS 1.7B CustomVoice · Serena 声线锁定</span><small>{data?.services.tts?.starting ? `正在加载模型与预热 · 已等待 ${Math.max(1, Math.round(Number(data.services.tts.detail.elapsed_ms || 0) / 1000))} 秒 · 可点击“停止加载”释放显存` : qwenRuntime?.ready ? `运行时已校验${runtime.qwenPreflight?.vramMiB ? ` · 显存 ${Math.round(runtime.qwenPreflight.vramMiB / 1024)} GB` : ""}` : qwenRuntime?.unavailableReason || runtime.qwenPreflight?.message || "正在检测 WSL2 与本地模型"}</small></div>}
       </section>
 
       <section className={`accordion-panel ${expanded.base ? "expanded" : ""} ${failedItems.some((item) => baseIds.has(item.id)) ? "has-error" : ""}`}>
@@ -411,7 +883,7 @@ function App() {
         {expanded.base && <div className="accordion-body">
           <div className="environment-actions"><button className="component-all" disabled={Boolean(runtime.active) || runtime.ready} onClick={() => void runtimeAction("install-all")}>{runtime.ready ? "基础环境已就绪" : runtime.active ? `正在安装 ${runtime.pipeline?.currentName || "组件"}` : "按顺序初始化基础环境"}</button></div>
           <p className="component-note">顺序执行系统预检 → PowerShell → MinGit → uv → Python → 核心环境 → 中文向量模型。安装包已携带的工具直接本地部署，已通过校验的步骤自动跳过。</p>
-          <div className="runtime-preflight"><span className={runtime.system.supported ? "ready" : "failed"}>系统 {runtime.system.windowsRelease || "检测中"} · {runtime.system.supported ? "Win10/11 x64" : "不受支持"}</span><span className={runtime.system.writable ? "ready" : "failed"}>目录{runtime.system.writable ? "可写" : "不可写"}</span><span>{formatBytes(runtime.system.freeBytes || 0)} 可用空间</span></div>
+          <div className="runtime-preflight"><span className={runtime.system.supported ? "ready" : "failed"}>系统 {runtime.system.windowsRelease || "检测中"} · {runtime.system.supported ? "Win10/11 x64" : "不受支持"}</span><span className={runtime.system.writable ? "ready" : "failed"}>目录{runtime.system.writable ? "可写" : "不可写"}</span><span>{formatBytes(runtime.system.freeBytes || 0)} 可用空间</span><span className={(runtime.system.memoryTotalBytes || 0) >= 16 * 1024 ** 3 ? "ready" : "optional"}>内存 {formatBytes(runtime.system.memoryTotalBytes || 0)}</span>{runtime.system.nvidia && <span className={(runtime.system.vramTotalMiB || 0) >= 6 * 1024 ? "ready" : "optional"}>显存 {formatBytes((runtime.system.vramTotalMiB || 0) * 1024 ** 2)}</span>}</div>
           {renderComponents(baseItems)}
         </div>}
       </section>
@@ -420,7 +892,7 @@ function App() {
         <button className="accordion-heading" aria-expanded={Boolean(expanded.capabilities)} onClick={() => togglePanel("capabilities")}><span className="accordion-icon">02</span><span><b>语音与模型能力</b><small>{!data ? "正在检测模型与语音能力" : `RAG ${readyModels}/${data.models.length || 5} · 本地能力 ${capabilityReady}/${capabilityItems.length} · 当前 ${voices.items.find((voice) => voice.id === voices.current)?.label || data.ttsProvider || "云端 TTS"}`}</small></span><strong>{runtime.system.nvidia === undefined ? "检测中" : runtime.system.nvidia ? "NVIDIA 可用" : "本地语音可选"}</strong><em>{expanded.capabilities ? "收起" : "展开"}</em></button>
         {expanded.capabilities && <div className="accordion-body">
           <div className="model-pills">{data?.models.map((model) => <span className={model.ready ? "ready" : "missing"} key={model.id}><i>{model.optional ? "○" : model.ready ? "✓" : "!"}</i>{model.name}</span>)}</div>
-          <p className="component-note">ASR、CosyVoice 与 GPT-SoVITS 为硬件可选能力，不阻塞文字聊天和云端 TTS。V4 公共模型及 CUDA 运行时只部署一次；人物音色在下方按需单独下载。</p>
+          <p className="component-note">ASR、CosyVoice 与 GPT-SoVITS 为硬件可选能力，不阻塞文字聊天和云端 TTS。启动器会按 RAM/显存门槛禁用不适合本机的服务；已安装的可选包可在这里卸载释放空间。</p>
           {renderComponents(capabilityItems)}
           <div className="voice-subsection">
             <div className="panel-heading"><h3>人物音色</h3><span className="voice-current">已下载 {installedVoices}/{voices.items.length} · {voices.provider === "gpt-sovits" ? `当前 ${voices.items.find((voice) => voice.id === voices.current)?.label || voices.current}` : "当前使用其他 TTS"}</span></div>
@@ -429,7 +901,19 @@ function App() {
               <label><span>人物音色</span><select value={chosenVoice?.id || ""} onChange={(event) => setVoiceChoice(event.target.value)} disabled={!franchiseVoices.length}>{franchiseVoices.map((voice) => <option key={voice.id} value={voice.id}>{voice.character} · {voice.family === "v4" ? "V4" : "V2ProPlus"} · {voice.releaseYear}</option>)}</select></label>
               {chosenVoice && <article className={`voice-selection ${chosenVoice.ready ? "ready" : ""} ${voices.provider === "gpt-sovits" && voices.current === chosenVoice.id ? "selected" : ""}`}>
                 <div><span>{chosenVoice.franchise} · 归档内部已核验</span><strong>{chosenVoice.label}</strong><small>{chosenVoice.ready ? "人物音色已安装" : `${formatBytes(chosenVoice.estimatedBytes)} · 仅下载这一人物`} · {chosenVoice.engine}</small><div className={`voice-download-progress ${chosenVoice.ready ? "complete" : ""}`} aria-label={`${chosenVoice.label} 下载进度 ${chosenVoiceProgress.toFixed(0)}%`}><i style={{ width: `${chosenVoiceProgress}%` }} /></div><small className="voice-progress-label">{chosenVoiceProgressText}</small>{chosenVoice.error && <em>{chosenVoice.error}</em>}</div>
-                <div className="voice-actions"><button className="voice-source" onClick={() => void window.launcher.external(chosenVoice.sourceUrl)}>来源</button>{chosenVoiceInstalling ? <button onClick={() => void runtimeAction("cancel", runtime.active || chosenVoice.componentId)}>取消 {chosenVoiceProgress.toFixed(0)}%</button> : !chosenVoice.ready ? <button disabled={Boolean(busy) || Boolean(runtime.active) || runtime.system.nvidia === false} onClick={() => void installVoice(chosenVoice.id)}>单独下载</button> : <button disabled={Boolean(busy) || Boolean(runtime.active) || (voices.provider === "gpt-sovits" && voices.current === chosenVoice.id)} onClick={() => void selectVoice(chosenVoice.id)}>{voices.provider === "gpt-sovits" && voices.current === chosenVoice.id ? "使用中" : "设为当前"}</button>}</div>
+                <div className="voice-actions">
+                  <button className="voice-source" onClick={() => void window.launcher.external(chosenVoice.sourceUrl)}>来源</button>
+                  {chosenVoiceInstalling
+                    ? <button onClick={() => void runtimeAction("cancel", runtime.active || chosenVoice.componentId)}>取消 {chosenVoiceProgress.toFixed(0)}%</button>
+                    : !chosenVoice.ready
+                      ? <button disabled={Boolean(busy) || Boolean(runtime.active) || runtime.items.find((item) => item.id === chosenVoice.componentId)?.hardwareAvailable === false} onClick={() => void installVoice(chosenVoice.id)}>单独下载</button>
+                      : <>
+                        <button disabled={Boolean(busy) || Boolean(runtime.active) || (voices.provider === "gpt-sovits" && voices.current === chosenVoice.id)} onClick={() => void selectVoice(chosenVoice.id)}>{voices.provider === "gpt-sovits" && voices.current === chosenVoice.id ? "使用中" : "设为当前"}</button>
+                        <button className="remove" disabled={Boolean(busy) || Boolean(runtime.active) || (voices.provider === "gpt-sovits" && voices.current === chosenVoice.id)} title={voices.provider === "gpt-sovits" && voices.current === chosenVoice.id ? "请先切换到其他声音方案" : "只卸载这一人物音色"} onClick={() => {
+                          if (window.confirm(`卸载 ${chosenVoice.label}？\n公共模型和其他人物音色会保留。`)) void runtimeAction("remove", chosenVoice.componentId);
+                        }}>卸载音色</button>
+                      </>}
+                </div>
               </article>}
             </div>
           </div>
@@ -437,8 +921,8 @@ function App() {
       </section>
 
       <section className={`accordion-panel ${expanded.downloads ? "expanded" : ""}`}>
-        <button className="accordion-heading" aria-expanded={Boolean(expanded.downloads)} onClick={() => togglePanel("downloads")}><span className="accordion-icon">03</span><span><b>下载与存储</b><small>{downloadSource === "china" ? "国内镜像" : "官方境外源"} · {data?.home || "正在检测目录"}</small></span><strong>{runtime.system.freeBytes ? `${formatBytes(runtime.system.freeBytes)} 可用` : "检测中"}</strong><em>{expanded.downloads ? "收起" : "展开"}</em></button>
-        {expanded.downloads && <div className="accordion-body settings-grid"><div><label className="source-picker"><span>下载源</span><select value={downloadSource} disabled={Boolean(runtime.active) || busy === "download-source"} onChange={(event) => void saveDownloadSource(event.target.value as "china" | "official")}><option value="china">国内镜像（推荐）</option><option value="official">官方境外源</option></select></label><p className="component-note">切换只影响后续下载；已下载文件和断点缓存继续复用。</p></div><div><div className="proxy-row"><input value={proxy} onChange={(event) => setProxy(event.target.value)} placeholder="代理地址；留空跟随 Windows" /><button onClick={saveProxy}>保存代理</button></div><button className="component-all" disabled={Boolean(busy) || Boolean(runtime.active)} onClick={selectStorage}>{data?.storage?.active ? `迁移中 ${data.storage.progress}%` : "更改统一存储位置"}</button></div></div>}
+        <button className="accordion-heading" aria-expanded={Boolean(expanded.downloads)} onClick={() => togglePanel("downloads")}><span className="accordion-icon">03</span><span><b>下载与存储</b><small>{downloadSource === "china" ? "国内优先 · 自动回退" : "官方源"} · {data?.home || "正在检测目录"}</small></span><strong>{runtime.system.freeBytes ? `${formatBytes(runtime.system.freeBytes)} 可用` : "检测中"}</strong><em>{expanded.downloads ? "收起" : "展开"}</em></button>
+        {expanded.downloads && <div className="accordion-body settings-grid"><div><label className="source-picker"><span>下载源</span><select value={downloadSource} disabled={Boolean(runtime.active) || busy === "download-source"} onChange={(event) => void saveDownloadSource(event.target.value as "china" | "official")}><option value="china">国内优先（失败自动切官方）</option><option value="official">官方源（GitHub / PyPI）</option></select></label><p className="component-note">下载时显示实际域名；切换只影响后续下载，已下载文件和断点缓存继续复用。</p><p className={`storage-alignment ${data?.storage?.aligned || data?.storage?.userSelected ? "ready" : "recommended"}`}>{data?.storage?.message || "正在检查安装盘与数据目录"}</p></div><div><div className="proxy-row"><input value={proxy} onChange={(event) => setProxy(event.target.value)} placeholder="代理地址；留空跟随 Windows" /><button onClick={saveProxy}>保存代理</button></div><div className="storage-actions">{data?.storage?.migrationRecommended && <button className="component-all primary" disabled={Boolean(busy) || Boolean(runtime.active)} onClick={migrateRecommendedStorage}>迁移到安装盘</button>}<button className="component-all" disabled={Boolean(busy) || Boolean(runtime.active)} onClick={selectStorage}>{data?.storage?.active ? `迁移中 ${data.storage.progress}%` : "自定义统一存储位置"}</button></div></div></div>}
       </section>
 
       <section className={`accordion-panel ${expanded.maintenance ? "expanded" : ""}`}>
@@ -447,7 +931,7 @@ function App() {
           <div className="update-row official"><span className="official-source"><i />Mindspace 官方签名更新源</span><select value={updateChannel} onChange={(event) => setUpdateChannel(event.target.value)}><option value="stable">稳定通道</option><option value="beta">测试通道</option></select><button onClick={() => updateAction("configure")} disabled={Boolean(busy)}>切换通道</button><button onClick={() => updateAction("check")} disabled={Boolean(busy)}>检查更新</button></div>
           {(update?.status === "downloading" || update?.progress) ? <div className="progress"><i style={{ width: `${update.progress}%` }} /></div> : null}
           <div className="update-status"><span>{update?.error || update?.message || "日常更新优先下载轻量 Core 包；环境和用户数据保持不变。"}{update?.status === "downloading" ? ` · ${formatBytes(update.speedBps)}/s · ${formatBytes(update.downloadedBytes)}/${formatBytes(update.totalBytes)}` : ""}</span><div>{update?.status === "available" && <button onClick={() => updateAction("download")} disabled={Boolean(busy)}>下载 v{update.latestVersion}</button>}{update?.status === "downloading" && <button onClick={() => updateAction("pause")}>暂停</button>}{update?.status === "paused" && <button onClick={() => updateAction("download")}>继续</button>}{update?.downloaded && <button className="primary" onClick={() => updateAction("install")} disabled={Boolean(busy)}>安装并重启</button>}{["paused", "error"].includes(update?.status || "") && <button onClick={() => updateAction("discard")}>清除下载</button>}{update?.rollbackAvailable && <button onClick={() => updateAction("rollback")} disabled={Boolean(busy)}>回滚上一版</button>}</div></div>
-          <div className="tool-actions"><button onClick={() => maintenance("verify", "完整验收")} disabled={Boolean(busy)}><i>✓</i><span>完整验收<small>环境、模型与服务</small></span></button><button onClick={() => maintenance("repair", "依赖修复")} disabled={Boolean(busy)}><i>↻</i><span>依赖修复<small>只补齐未通过项目</small></span></button><button onClick={() => window.launcher.open("logs")}><i>≡</i><span>运行日志<small>查看原始记录</small></span></button><button onClick={() => void exportDiagnostics()} disabled={Boolean(busy)}><i>⇩</i><span>诊断报告<small>脱敏状态与日志</small></span></button></div>
+          <div className="tool-actions"><button onClick={() => maintenance("verify", "完整验收")} disabled={Boolean(busy)}><i>✓</i><span>完整验收<small>环境、模型与服务</small></span></button><button onClick={() => maintenance("repair", "依赖修复")} disabled={Boolean(busy)}><i>↻</i><span>依赖修复<small>只补齐未通过项目</small></span></button><button onClick={() => window.launcher.open("logs")}><i>≡</i><span>运行日志<small>查看原始记录</small></span></button><button onClick={() => void exportDiagnostics()} disabled={Boolean(busy)}><i>⇩</i><span>诊断报告<small>脱敏状态与日志</small></span></button><button onClick={() => setOnboardingMode("open")} disabled={Boolean(busy)}><i>⚙</i><span>重新配置<small>声音、环境与模型</small></span></button></div>
         </div>}
       </section>
     </main>
@@ -466,6 +950,7 @@ function App() {
         </div> : <div className="announcement-history">{releaseHistory.map((entry) => <article key={entry.version}><div><strong>v{entry.version}</strong><time>{entry.published_at}</time></div><section><h3>{entry.title}</h3><ul>{entry.summary.map((item) => <li key={item}>{item}</li>)}</ul></section></article>)}</div>}
       </section>
     </div>}
+    {voiceReadyDialog}
   </div>;
 }
 

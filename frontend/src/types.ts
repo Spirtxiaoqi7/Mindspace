@@ -10,6 +10,7 @@ export interface Message {
   status?: "complete" | "streaming" | "cancelled" | "interrupted" | "error";
   kind?: "message" | "initiative_signal" | "initiative_response";
   initiative_trigger?: InitiativeTrigger;
+  voice_cue?: string;
   hidden?: boolean;
 }
 
@@ -24,6 +25,11 @@ export interface VoiceInteractionContext {
 export interface SessionSummary {
   session_id: string;
   title: string;
+  character_id?: string;
+  mode?: "draw" | "custom";
+  character_name?: string;
+  character_avatar?: AvatarEntry;
+  character_source?: CharacterSource;
   updated_at: string;
   message_count: number;
 }
@@ -31,7 +37,148 @@ export interface SessionSummary {
 export interface SessionDocument {
   session_id: string;
   title: string;
+  character_id?: string;
+  mode?: "draw" | "custom";
+  character?: CharacterSummary;
   messages: Message[];
+}
+
+export type CharacterSource = "draw" | "custom" | "imported" | "migrated";
+
+export interface CharacterSummary {
+  character_id: string;
+  schema_version: string;
+  revision: number;
+  source: CharacterSource;
+  status: "active" | "archived";
+  display_name: string;
+  gender: "男" | "女";
+  user_alias: string;
+  relationship_label: string;
+  avatar: AvatarEntry;
+  created_at: string;
+  updated_at: string;
+  last_used_at: string;
+  session_count?: number;
+  latest_session_id?: string;
+  chapters?: SharedChapterSummary;
+}
+
+export interface CharacterRecord extends CharacterSummary {
+  system_prompt: string;
+  ai_profile: Record<string, unknown>;
+  runtime_state: Record<string, unknown>;
+}
+
+export type HeartState = "empty" | "trace" | "warm" | "glow" | "keepsake";
+
+export interface SharedChapterSummary {
+  character_id?: string;
+  journal_count: number;
+  moment_count: number;
+  candidate_moment_count: number;
+  activity_count: number;
+  heart_state: HeartState;
+  next_heart_at?: number | null;
+}
+
+export interface JournalEntry {
+  entry_id: string;
+  character_id: string;
+  revision: number;
+  title: string;
+  content: string;
+  status: "draft" | "saved" | "archived";
+  source: "user_written" | "assistant_draft" | "activity_summary" | "template";
+  session_id: string;
+  activity_session_id: string;
+  cover_asset_id: string;
+  source_round_start?: number | null;
+  source_round_end?: number | null;
+  source_message_count?: number;
+  visibility: "narrative_only";
+  eligible_for_json_evidence: false;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RelationshipMoment {
+  moment_id: string;
+  character_id: string;
+  revision: number;
+  title: string;
+  summary: string;
+  event_type: string;
+  status: "candidate" | "saved" | "archived";
+  source: string;
+  art_asset_id: string;
+  evidence_refs: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ActivityDefinition {
+  activity_id: "mutual_questions" | "story_choices";
+  title: string;
+  description: string;
+  icon_asset_id: string;
+  cover_asset_id: string;
+  initial_phase: string;
+  questions?: string[];
+  nodes?: Record<string, {
+    text: string;
+    choices: Array<{ choice_id: string; label: string; next: string }>;
+  }>;
+}
+
+export interface ActivitySession {
+  activity_session_id: string;
+  activity_id: ActivityDefinition["activity_id"];
+  character_id: string;
+  session_id: string;
+  revision: number;
+  phase: string;
+  status: "active" | "completed" | "interrupted";
+  state: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SceneDefinition {
+  scene_id: string;
+  title: string;
+  description: string;
+  location: string;
+  asset_id: string;
+}
+
+export interface ConversationScene {
+  session_id: string;
+  character_id: string;
+  revision: number;
+  scene: SceneDefinition | null;
+  inherited_from_character: boolean;
+  updated_at: string;
+}
+
+export interface CharacterDraft {
+  draft_id: string;
+  revision: number;
+  status: string;
+  input: {
+    ai_name: string;
+    ai_gender: "男" | "女";
+    core_traits: string[];
+    flaw: string;
+    relationship: string;
+    user_name: string;
+    user_alias: string;
+  };
+  profile: Record<string, unknown>;
+  avatar: AvatarEntry | Record<string, never>;
+  generation_mode: "llm" | "local_template";
+  model_call_count: number;
+  warnings: string[];
 }
 
 export interface StreamEnvelope<T = Record<string, unknown>> {
@@ -117,6 +264,7 @@ export interface AvatarConfig {
 
 export type VoicePhase =
   | "idle"
+  | "preparing"
   | "connecting"
   | "listening"
   | "user-speaking"
@@ -224,6 +372,7 @@ export interface ProfileCardData {
   identity: Record<string, unknown>;
   personality: Record<string, unknown>;
   relationship: Record<string, unknown>;
+  roleplay?: Record<string, unknown>;
   revision: number;
   updated_at: string;
 }

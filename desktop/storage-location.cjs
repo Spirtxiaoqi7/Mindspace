@@ -15,9 +15,62 @@ function locationFile(app) {
   return path.join(app.getPath("userData"), "storage-location.json");
 }
 
-function defaultHome(app, environment = process.env) {
+function legacyLocalHome(app, environment = process.env) {
   const local = environment.LOCALAPPDATA || app.getPath("userData");
   return path.resolve(local, "Mindspace");
+}
+
+function installAlignedHome(app) {
+  if (!app?.isPackaged) return "";
+  let executable = "";
+  try { executable = app.getPath("exe"); } catch {}
+  if (!executable || !path.isAbsolute(executable)) return "";
+  const installDirectory = path.dirname(path.resolve(executable));
+  const parent = path.dirname(installDirectory);
+  const candidate = path.resolve(parent, "MindspaceData");
+  if (
+    candidate.toLowerCase() === installDirectory.toLowerCase()
+    || candidate.toLowerCase().startsWith(`${installDirectory}${path.sep}`.toLowerCase())
+    || candidate.toLowerCase() === path.parse(candidate).root.toLowerCase()
+  ) return "";
+  try {
+    fs.accessSync(parent, fs.constants.W_OK);
+    return candidate;
+  } catch {
+    return "";
+  }
+}
+
+function homeHasUserPayload(home) {
+  const roots = [
+    path.join(home, "application", "core"),
+    path.join(home, "environment"),
+    path.join(home, "models"),
+    path.join(home, "data"),
+  ];
+  const stack = roots.filter((item) => fs.existsSync(item));
+  let inspected = 0;
+  while (stack.length && inspected < 512) {
+    const current = stack.pop();
+    let entries = [];
+    try { entries = fs.readdirSync(current, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      inspected += 1;
+      if (entry.isFile()) return true;
+      if (entry.isDirectory()) stack.push(path.join(current, entry.name));
+      if (inspected >= 512) break;
+    }
+  }
+  return false;
+}
+
+function defaultHome(app, environment = process.env) {
+  const legacy = legacyLocalHome(app, environment);
+  const aligned = installAlignedHome(app);
+  // Existing installations without an explicit location file used LocalAppData.
+  // Preserve that data and offer a transactional migration in the launcher.
+  if (homeHasUserPayload(legacy)) return legacy;
+  return aligned || legacy;
 }
 
 function readHomeLocation(app, environment = process.env) {
@@ -40,6 +93,30 @@ function writeHomeLocation(app, home) {
   }, null, 2)}\n`);
   fs.renameSync(temporary, target);
   return target;
+}
+
+function inspectStorageAlignment(app, environment = process.env, currentHome = readHomeLocation(app, environment)) {
+  const current = path.resolve(currentHome);
+  const recommended = installAlignedHome(app);
+  const explicitEnvironment = Boolean(environment.MINDSPACE_HOME);
+  const stored = fs.existsSync(locationFile(app));
+  const aligned = Boolean(recommended && current.toLowerCase() === recommended.toLowerCase());
+  const userSelected = explicitEnvironment || stored;
+  return {
+    mode: explicitEnvironment ? "environment" : stored ? "user-selected" : aligned ? "install-aligned" : "legacy-localappdata",
+    current,
+    recommended,
+    aligned,
+    userSelected,
+    migrationRecommended: Boolean(recommended && !aligned && !userSelected),
+    message: aligned
+      ? "大型模型、私有环境与用户数据已跟随安装盘"
+      : userSelected
+        ? "正在使用用户指定的统一存储目录"
+        : recommended
+          ? `检测到旧版 C 盘目录；可安全迁移到 ${recommended}`
+          : "安装目录不可写，已使用本机用户数据目录",
+  };
 }
 
 function assertStorageTarget(sourceHome, targetHome) {
@@ -174,6 +251,7 @@ async function cleanupMigratedSource(paths) {
 
 module.exports = {
   MOVABLE_PATHS, assertStorageTarget, cleanupMigratedSource, defaultHome,
+  homeHasUserPayload, inspectStorageAlignment, installAlignedHome, legacyLocalHome,
   locationFile, migrateStorage, readHomeLocation, replacePrefix, rewriteMovedPaths,
   writeHomeLocation,
 };

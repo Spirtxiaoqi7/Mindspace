@@ -21,6 +21,11 @@ class ApiConfig(BaseModel):
 
 class RetrievalSettings(BaseModel):
     rag_enabled: bool = True
+    # This is a server-owned runtime gate.  ConversationService overwrites both
+    # fields before the graph starts, so a client cannot force a cold retriever
+    # onto the foreground path.
+    ready: bool = True
+    deferred_reason: str = Field(default="", max_length=100)
     knowledge_enabled: bool = True
     chat_enabled: bool = True
     structured_memory_enabled: bool = True
@@ -113,12 +118,45 @@ class VoiceInteractionContext(BaseModel):
         return value.strip()
 
 
+class ActivityPromptContext(BaseModel):
+    """Server-resolved activity state; clients may send only its session id."""
+
+    activity_session_id: str = Field(min_length=1, max_length=100)
+    activity_id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=1_000)
+    phase: str = Field(default="", max_length=100)
+    status: Literal["active", "completed", "interrupted"] = "active"
+    state: dict[str, Any] = Field(default_factory=dict)
+    rules: list[str] = Field(default_factory=list, max_length=12)
+    visibility: Literal["ephemeral_activity_session"] = "ephemeral_activity_session"
+    eligible_for_json_evidence: Literal[False] = False
+
+
+class ScenePromptContext(BaseModel):
+    """Server-resolved visual scene for the current conversation."""
+
+    scene_id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=120)
+    location: str = Field(min_length=1, max_length=240)
+    asset_id: str = Field(min_length=1, max_length=120)
+    visibility: Literal["ephemeral_conversation_scene"] = "ephemeral_conversation_scene"
+    eligible_for_json_evidence: Literal[False] = False
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10_000)
     session_id: str = Field(default_factory=lambda: str(uuid4()))
+    character_id: str = Field(default="", max_length=64)
+    session_mode: Literal["draw", "custom"] = "custom"
     round: int = Field(default=1, ge=1)
     mode: Literal["primary", "regenerate"] = "primary"
     interaction_mode: Literal["text", "voice"] = "text"
+    voice_tts_provider: Literal[
+        "browser", "mock", "cosyvoice", "siliconflow", "gpt-sovits", "qwen3-vllm"
+    ] = "browser"
+    adult_mode: bool = False
+    r18_style_id: str = Field(default="high_intensity", min_length=1, max_length=64)
     initiative: bool = False
     initiative_trigger: Literal[
         "none", "manual", "idle_continuation", "continuous_companionship"
@@ -131,7 +169,14 @@ class ChatRequest(BaseModel):
     server_received_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     voice_delivery: VoiceDeliveryState | None = None
     voice_context: VoiceInteractionContext | None = None
-    voice_emotion_tokens: list[str] = Field(default_factory=list, max_length=8)
+    activity_session_id: str = Field(default="", max_length=100)
+    # Always overwritten by ConversationService from the authoritative activity
+    # repository. It is present on the request model only so downstream nodes
+    # receive a typed, immutable snapshot for this run.
+    activity_context: ActivityPromptContext | None = None
+    # Resolved only from the server-side session binding. The client cannot
+    # inject an arbitrary scene sentence into the model input.
+    scene_context: ScenePromptContext | None = None
     input_evidence: InputEvidence | None = None
     user_name: str = "用户"
     user_persona: str = ""
@@ -257,6 +302,9 @@ class RoleAuditResult(BaseModel):
     confidence: float = Field(default=0, ge=0, le=1)
     evidence: list[str] = Field(default_factory=list, max_length=5)
     next_turn_instruction: str = Field(default="", max_length=500)
+    recent_event_summary: str = Field(default="", max_length=600)
+    event_progression: str = Field(default="", max_length=600)
+    open_threads: list[str] = Field(default_factory=list, max_length=5)
 
 
 class JsonUpdateValidation(BaseModel):
