@@ -202,6 +202,17 @@ class NodeFactory:
                 include_raw_chat=allow_raw_chat_retrieval(request),
             )
             chunks = [item for item in chunks if item.score >= settings.similarity_threshold]
+            if self.deps.activities is not None:
+                narratives = self.deps.activities.search_narratives(
+                    request.character_id,
+                    query,
+                    limit=min(3, settings.memory_family_limit),
+                )
+                chunks.extend(
+                    item
+                    for item in narratives
+                    if item.score >= settings.similarity_threshold
+                )
         if not settings.structured_memory_enabled:
             chunks = [item for item in chunks if item.source != "memory"]
         return {"chat_chunks": chunks, "trace": ["retrieve_chat"]}

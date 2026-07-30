@@ -14,6 +14,7 @@ import {
   ModeLobby,
 } from "./CharacterExperience";
 import type { AppView } from "./CharacterExperience";
+import { ActivitiesPage, JournalPage, MomentsPage } from "./SharedChapters";
 import type {
   AvatarConfig,
   AvatarEntry,
@@ -533,6 +534,7 @@ function App() {
   const [avatars, setAvatars] = useState<AvatarConfig>(DEFAULT_AVATARS);
   const [characters, setCharacters] = useState<CharacterSummary[]>([]);
   const [activeCharacterId, setActiveCharacterId] = useState("");
+  const [activeActivitySessionId, setActiveActivitySessionId] = useState("");
   const [appView, setAppView] = useState<AppView>("modes");
   const [characterPickerOpen, setCharacterPickerOpen] = useState(false);
   const [characterPickerScope, setCharacterPickerScope] = useState<"all" | "custom">("all");
@@ -854,9 +856,15 @@ function App() {
         ? "/draw"
         : view === "characters"
           ? "/characters"
-          : `/chat/${sessionId}`;
+          : view === "journal"
+            ? `/characters/${activeCharacterId}/journal`
+            : view === "moments"
+              ? `/characters/${activeCharacterId}/moments`
+              : view === "activities"
+                ? "/activities"
+                : `/chat/${sessionId}`;
     window.history.replaceState(null, "", `#${path}`);
-  }, [sessionId]);
+  }, [activeCharacterId, sessionId]);
 
   const openSession = useCallback(async (id: string) => {
     cancelIdleContinuation();
@@ -869,6 +877,7 @@ function App() {
     setSessionId(id);
     localStorage.setItem("mindspace.session", id);
     setActiveCharacterId(value.character_id || value.character?.character_id || "");
+    setActiveActivitySessionId("");
     const loadedMessages = value.messages || [];
     const sameSession = id === sessionId;
     const recovering = readActiveRun()?.session_id === id;
@@ -1834,6 +1843,7 @@ function App() {
     // 防止前端状态或请求重放改变真正使用的 provider 凭据。
     const payload = {
       message: content, session_id: sessionId, character_id: activeCharacterId,
+      activity_session_id: activeActivitySessionId,
       session_mode: activeCharacter?.source === "draw" ? "draw" : "custom",
       round: targetRound, mode, interaction_mode: voiceOpenRef.current ? "voice" : "text", adult_mode: adultMode, r18_style_id: r18StyleId, initiative, initiative_trigger: initiativeTrigger,
       initiative_sequence: initiativeSequence, initiative_sequence_limit: initiativeSequenceLimit,
@@ -1893,7 +1903,7 @@ function App() {
     } finally {
       abortRef.current = null;
     }
-  }, [activeCharacter, activeCharacterId, adultMode, cancelIdleContinuation, cancelRun, captureVoiceInterruption, clearPendingResponseDelta, generating, handleStreamEvent, input, llmReady, notify, r18StyleId, round, sessionId, setVoiceInputLocked, settings, stopAudio]);
+  }, [activeActivitySessionId, activeCharacter, activeCharacterId, adultMode, cancelIdleContinuation, cancelRun, captureVoiceInterruption, clearPendingResponseDelta, generating, handleStreamEvent, input, llmReady, notify, r18StyleId, round, sessionId, setVoiceInputLocked, settings, stopAudio]);
 
   useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
 
@@ -2853,6 +2863,7 @@ function App() {
     setSessionId(id);
     localStorage.setItem("mindspace.session", id);
     setActiveCharacterId(character.character_id);
+    setActiveActivitySessionId("");
     setMessages([]); setRound(1); setEvents([]); setRetrieval([]); setSidebarOpen(false);
     setCharacterPickerOpen(false);
     setAppView("chat");
@@ -3010,6 +3021,40 @@ function App() {
     />;
   }
 
+  if (activeCharacter && appView === "journal") {
+    return <JournalPage
+      character={activeCharacter}
+      sessionId={sessionId}
+      onBack={() => navigate("chat")}
+      onChanged={loadCharacters}
+      notify={notify}
+    />;
+  }
+
+  if (activeCharacter && appView === "moments") {
+    return <MomentsPage
+      character={activeCharacter}
+      onBack={() => navigate("chat")}
+      onChanged={loadCharacters}
+      notify={notify}
+    />;
+  }
+
+  if (activeCharacter && appView === "activities") {
+    return <ActivitiesPage
+      character={activeCharacter}
+      sessionId={sessionId}
+      onBack={() => navigate("chat")}
+      onChanged={loadCharacters}
+      onContinueChat={(activitySessionId) => {
+        setActiveActivitySessionId(activitySessionId);
+        navigate("chat");
+        notify("活动现场已接入本轮对话；界面动作仍由服务端推进");
+      }}
+      notify={notify}
+    />;
+  }
+
   return <div className={`app-shell ${inspectorOpen ? "inspector-visible" : "inspector-hidden"}`}>
     <aside className={`sidebar ${sidebarOpen ? "mobile-open" : ""}`}>
       <div className="brand-row"><button className="brand-mark" onClick={() => navigate("modes")} title="返回模式大厅">M</button><div><strong>Mindspace</strong><small>LANGGRAPH STUDIO</small></div><button className="icon-button mobile-only" onClick={() => setSidebarOpen(false)} aria-label="关闭会话栏">×</button></div>
@@ -3024,12 +3069,12 @@ function App() {
     </aside>
 
     <main className="workspace">
-      <header className="topbar"><button className="mobile-only mobile-menu" onClick={() => setSidebarOpen(true)} aria-label="打开会话栏">☰</button><div className="title-block"><h1>{title}</h1><span>{characterName} · {generating ? "正在运行编排" : `第 ${round} 轮 · 已就绪`}</span></div><div className="top-actions"><button className="text-action" onClick={() => navigate("modes")}>模式大厅</button>{activeCharacter?.source === "draw" ? <button className="text-action" onClick={() => navigate("draw")}>重新抽卡</button> : <button className="text-action" onClick={() => navigate("draw")}>前往灵感抽卡</button>}<span className={`model-chip ${llmReady ? "" : "warning"}`} title={llmReady ? "真实 LLM API 已配置" : "LLM API 尚未配置"}><i />{llmReady ? str(settings?.llm.model || "LLM") : "LLM 未配置"}</span><button onClick={exportSession} title="导出会话" aria-label="导出会话">⇩</button><button className="text-action" onClick={showFlow} title="查看 LangGraph 节点执行过程">执行详情</button><button onClick={() => openModal("settings")} title="产品设置" aria-label="产品设置">⚙</button></div></header>
+      <header className="topbar"><button className="mobile-only mobile-menu" onClick={() => setSidebarOpen(true)} aria-label="打开会话栏">☰</button><div className="title-block"><h1>{title}</h1><span>{characterName} · {generating ? "正在运行编排" : `第 ${round} 轮 · 已就绪`}</span></div><div className="top-actions"><button className="chapter-heart-entry" onClick={() => navigate("moments")} title="打开共同篇章"><img src={`/assets/archive/icons/heart-${activeCharacter?.chapters?.heart_state === "trace" ? "trace" : activeCharacter?.chapters?.heart_state === "warm" ? "warm" : activeCharacter?.chapters?.heart_state === "glow" || activeCharacter?.chapters?.heart_state === "keepsake" ? "glow" : "empty"}.svg`} alt="" /><span>共同篇章</span><b>{activeCharacter?.chapters?.moment_count || 0}</b></button><button className="text-action" onClick={() => navigate("modes")}>模式大厅</button>{activeCharacter?.source === "draw" ? <button className="text-action" onClick={() => navigate("draw")}>重新抽卡</button> : <button className="text-action" onClick={() => navigate("draw")}>前往灵感抽卡</button>}<span className={`model-chip ${llmReady ? "" : "warning"}`} title={llmReady ? "真实 LLM API 已配置" : "LLM API 尚未配置"}><i />{llmReady ? str(settings?.llm.model || "LLM") : "LLM 未配置"}</span><button onClick={exportSession} title="导出会话" aria-label="导出会话">⇩</button><button className="text-action" onClick={showFlow} title="查看 LangGraph 节点执行过程">执行详情</button><button onClick={() => openModal("settings")} title="产品设置" aria-label="产品设置">⚙</button></div></header>
       <section className="conversation">
         {!messages.length && <div className="welcome-panel"><span className="eyebrow">PRIVATE · LOCAL · STATEFUL</span><h2>让每一次对话<br />都成为连续的记忆</h2><p>双源检索、角色一致性、状态写回与实时语音，都由可观察的 LangGraph 流程调度。</p><div className="prompt-grid">{["解释当前 LangGraph 节点如何调度", "总结知识库中最重要的三点", "检查当前角色和状态档案", "设计一个低延迟语音对话流程"].map((value) => <button key={value} onClick={() => void sendMessage(value)}><span>↗</span>{value}</button>)}</div></div>}
         <MessageList messages={messages} avatars={effectiveAvatars} userName={userName} characterName={characterName} onProfile={setProfileCardRole} onCopy={(text) => { void navigator.clipboard.writeText(text); notify("已复制回复"); }} onSpeak={speakMessage} onRegenerate={(value, targetRound) => void sendMessage(value, "regenerate", targetRound)} onInitiative={(targetRound) => void sendMessage("", "regenerate", targetRound, true)} onDelete={(messageId) => void deleteReply(messageId)} />
       </section>
-      <section className="composer-wrap">{generating && <div className="run-strip"><span><i /> 正在流式执行 · {runId.slice(0, 8)}</span><button onClick={() => void cancelRun()}>停止生成</button></div>}<div className="composer"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} placeholder="输入消息，或开启实时语音…" rows={1} /><div className="composer-row"><div><button className="voice-entry" onClick={openVoiceEntry}>● 实时语音</button><button className={`adult-entry${adultMode ? " active" : ""}`} aria-pressed={adultMode} onClick={toggleAdultMode} title="开启或关闭 NSFW 模式">NSFW</button><select className="r18-style-select" value={r18StyleId} disabled={!adultMode} aria-label="R18 风格包" onChange={(event) => { const next = event.target.value; setR18StyleId(next); localStorage.setItem(R18_STYLE_STORAGE_KEY, next); }}><option value="high_intensity">高强度推进</option><option value="immersive_narrative">叙事沉浸</option><option value="dialogue_led">台词主导</option></select><button className="initiative-entry" disabled={generating} onClick={() => void sendMessage("", "primary", round, true)} title="不输入文字，让角色根据当前关系主动说点什么">✦ 让 AI 说点什么</button><button onClick={() => openModal("knowledge")}>＋ 知识</button><button onClick={showContext}>本轮引用 <b>{retrieval.length}</b></button></div><button className="send" onClick={() => generating ? void cancelRun() : void sendMessage()} disabled={!generating && !input.trim()} aria-label={generating ? "停止生成" : "发送消息"}>{generating ? "■" : "↑"}</button></div></div><div className="composer-meta"><span>Enter 发送 · Shift+Enter 换行 · Esc 打断</span><button onClick={() => void clearCurrent()}>清空当前上下文</button></div></section>
+      <section className="composer-wrap">{generating && <div className="run-strip"><span><i /> 正在流式执行 · {runId.slice(0, 8)}</span><button onClick={() => void cancelRun()}>停止生成</button></div>}{activeActivitySessionId && <div className="activity-context-strip"><span>活动现场已接入本轮 Prompt</span><button onClick={() => navigate("activities")}>查看活动</button><button onClick={() => setActiveActivitySessionId("")}>退出活动上下文</button></div>}<div className="composer"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} placeholder="输入消息，或开启实时语音…" rows={1} /><div className="composer-row"><div><button className="voice-entry" onClick={openVoiceEntry}>● 实时语音</button><button className={`adult-entry${adultMode ? " active" : ""}`} aria-pressed={adultMode} onClick={toggleAdultMode} title="开启或关闭 NSFW 模式">NSFW</button><select className="r18-style-select" value={r18StyleId} disabled={!adultMode} aria-label="R18 风格包" onChange={(event) => { const next = event.target.value; setR18StyleId(next); localStorage.setItem(R18_STYLE_STORAGE_KEY, next); }}><option value="high_intensity">高强度推进</option><option value="immersive_narrative">叙事沉浸</option><option value="dialogue_led">台词主导</option></select><button className="initiative-entry" disabled={generating} onClick={() => void sendMessage("", "primary", round, true)} title="不输入文字，让角色根据当前关系主动说点什么">✦ 让 AI 说点什么</button><button className="chapter-composer-entry" onClick={() => navigate("activities")}><img src="/assets/archive/icons/chapter-activity.svg" alt="" />陪伴活动</button><button className="chapter-composer-entry" onClick={() => navigate("journal")}><img src="/assets/archive/icons/chapter-journal.svg" alt="" />角色日记</button><button className="chapter-composer-entry" onClick={() => navigate("moments")}><img src="/assets/archive/icons/chapter-moments.svg" alt="" />共同片段</button><button onClick={() => openModal("knowledge")}>＋ 知识</button><button onClick={showContext}>本轮引用 <b>{retrieval.length}</b></button></div><button className="send" onClick={() => generating ? void cancelRun() : void sendMessage()} disabled={!generating && !input.trim()} aria-label={generating ? "停止生成" : "发送消息"}>{generating ? "■" : "↑"}</button></div></div><div className="composer-meta"><span>Enter 发送 · Shift+Enter 换行 · Esc 打断</span><button onClick={() => void clearCurrent()}>清空当前上下文</button></div></section>
     </main>
 
     <Inspector open={inspectorOpen} tab={inspectorTab} onTab={setInspectorTab} onClose={() => setInspectorOpen(false)} events={events} retrieval={retrieval} runId={inspectionRunId} />

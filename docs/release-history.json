@@ -1,5 +1,19 @@
 [
   {
+    "version": "0.7.0",
+    "published_at": null,
+    "status": "candidate_art_expanded_beta_pending",
+    "title": "共同篇章与二次元典藏手账",
+    "summary": [
+      "按 character_id 隔离角色日记、共同片段与活动会话",
+      "场景同行、默契问答和片刻故事由服务端 revision 与幂等 action 推进",
+      "日记仅由用户点击生成且最多一次模型调用，失败使用本地可编辑草稿",
+      "叙事内容固定为 narrative_only，不能作为人物档案写回证据",
+      "12 项视觉预览已通过，扩产并替换为 171 项正式二次元典藏手账资源",
+      "Core 与 Web 升至 0.7.0，Launcher 保持 0.5.52；尚未发布热更新"
+    ]
+  },
+  {
     "version": "0.6.0",
     "published_at": "2026-07-30",
     "title": "多角色架构与灵感抽卡",

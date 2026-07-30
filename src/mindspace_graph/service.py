@@ -9,6 +9,7 @@ from collections import deque
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -18,6 +19,7 @@ from mindspace_graph.adapters.json_audit import JsonlAudit
 from mindspace_graph.adapters.local_retriever import LocalKnowledgeRetriever
 from mindspace_graph.adapters.openai_compatible import OpenAICompatibleLanguageModel
 from mindspace_graph.adapters.structured_memory import StructuredMemoryStore
+from mindspace_graph.art_catalog import ArtCatalogService
 from mindspace_graph.asr_vocabulary import ASRVocabularyStore
 from mindspace_graph.cancellation import CancellationRegistry, GenerationCancelled
 from mindspace_graph.capabilities import ReadOnlyCapabilityService
@@ -28,13 +30,14 @@ from mindspace_graph.emotion_disabled import DisabledEmotionCoordinator
 from mindspace_graph.entity_registry import EntityRegistry
 from mindspace_graph.graph import build_graph
 from mindspace_graph.memory_service import StructuredMemoryService
-from mindspace_graph.models import ApiConfig, ChatRequest, ChatResponse
+from mindspace_graph.models import ActivityPromptContext, ApiConfig, ChatRequest, ChatResponse
 from mindspace_graph.ports import Dependencies
 from mindspace_graph.product_config import ProductConfigStore
 from mindspace_graph.product_database import ProductDatabase
 from mindspace_graph.prompt_inspection import PromptInspectionStore
 from mindspace_graph.role_audit import RoleAuditService
 from mindspace_graph.settings import AppSettings
+from mindspace_graph.shared_chapters import SharedChapterService
 
 NODE_LABELS = {
     "validate_request": "校验请求",
@@ -122,6 +125,8 @@ class ProductContainer:
     emotion: DisabledEmotionCoordinator
     prompt_inspector: PromptInspectionStore
     characters: CharacterRepository
+    chapters: SharedChapterService
+    art_catalog: ArtCatalogService
 
 
 class ConversationService:
@@ -236,6 +241,16 @@ class ConversationService:
         user_identity = profiles.user_profile.get("identity", {})
         ai_identity = profiles.ai_profile.get("identity", {})
         characters.touch(character_id)
+        activity_context = None
+        if request.activity_session_id:
+            activities = self.dependencies.activities
+            if activities is None:
+                raise RuntimeError("activity service is unavailable")
+            activity_context = ActivityPromptContext.model_validate(
+                activities.prompt_context(
+                    request.activity_session_id, character_id=character_id
+                )
+            )
         api = ApiConfig(
             api_key=self.settings.llm_api_key,
             base_url=self.settings.llm_base_url,
@@ -253,6 +268,7 @@ class ConversationService:
                 "user_name": str(user_identity.get("preferred_name") or request.user_name),
                 "character_name": str(ai_identity.get("name") or request.character_name),
                 "system_prompt": str(character.get("system_prompt") or ""),
+                "activity_context": activity_context,
             }
         )
 
@@ -619,6 +635,24 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
         if settings.llm_mode == "openai"
         else DeterministicLanguageModel()
     )
+    chapters = SharedChapterService(
+        database,
+        characters=characters,
+        sessions=sessions,
+        audit=audit,
+        llm_provider=lambda: dependencies.llm,
+        api_provider=lambda: ApiConfig(
+            api_key=settings.llm_api_key,
+            base_url=settings.llm_base_url,
+            model=settings.llm_model,
+            temperature=0.65,
+            max_tokens=1_000,
+        ),
+    )
+    art_catalog = ArtCatalogService(
+        Path(__file__).resolve().parent / "web" / "archive" / "manifest.json",
+        settings.runtime_dir / "data" / "assets" / "packs",
+    )
     dependencies = Dependencies(
         retriever=knowledge,
         profiles=profiles,
@@ -636,6 +670,7 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
         emotion=emotion,
         prompt_inspector=prompt_inspector,
         characters=characters,
+        activities=chapters,
         tts_provider=lambda: settings.tts_provider,
     )
     conversation = ConversationService(settings, dependencies, cancellation)
@@ -660,4 +695,6 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
         emotion=emotion,
         prompt_inspector=prompt_inspector,
         characters=characters,
+        chapters=chapters,
+        art_catalog=art_catalog,
     )

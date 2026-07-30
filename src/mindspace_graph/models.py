@@ -113,6 +113,21 @@ class VoiceInteractionContext(BaseModel):
         return value.strip()
 
 
+class ActivityPromptContext(BaseModel):
+    """Server-resolved activity state; clients may send only its session id."""
+
+    activity_session_id: str = Field(min_length=1, max_length=100)
+    activity_id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=1, max_length=120)
+    description: str = Field(default="", max_length=1_000)
+    phase: str = Field(default="", max_length=100)
+    status: Literal["active", "completed", "interrupted"] = "active"
+    state: dict[str, Any] = Field(default_factory=dict)
+    rules: list[str] = Field(default_factory=list, max_length=12)
+    visibility: Literal["ephemeral_activity_session"] = "ephemeral_activity_session"
+    eligible_for_json_evidence: Literal[False] = False
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10_000)
     session_id: str = Field(default_factory=lambda: str(uuid4()))
@@ -138,6 +153,11 @@ class ChatRequest(BaseModel):
     server_received_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     voice_delivery: VoiceDeliveryState | None = None
     voice_context: VoiceInteractionContext | None = None
+    activity_session_id: str = Field(default="", max_length=100)
+    # Always overwritten by ConversationService from the authoritative activity
+    # repository. It is present on the request model only so downstream nodes
+    # receive a typed, immutable snapshot for this run.
+    activity_context: ActivityPromptContext | None = None
     input_evidence: InputEvidence | None = None
     user_name: str = "用户"
     user_persona: str = ""

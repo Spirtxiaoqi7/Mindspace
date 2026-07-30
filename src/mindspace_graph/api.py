@@ -9,10 +9,10 @@ import json
 import re
 import shutil
 import zipfile
-from urllib.parse import quote
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Literal
+from urllib.parse import quote
 from uuid import uuid4
 
 import httpx
@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 from mindspace_graph.adapters.file_storage import _atomic_json
+from mindspace_graph.art_catalog import ArtPackPaused
 from mindspace_graph.audio import AudioProviderUnavailable, AudioService
 from mindspace_graph.characters import (
     CORE_TRAITS,
@@ -46,6 +47,14 @@ from mindspace_graph.memory_registry import DEFAULT_MEMORY_REGISTRY
 from mindspace_graph.models import ChatRequest
 from mindspace_graph.service import ProductContainer, build_container
 from mindspace_graph.settings import AppSettings
+from mindspace_graph.shared_chapters import (
+    ActivityAction,
+    ActivityStart,
+    JournalCreate,
+    JournalUpdate,
+    MomentCreate,
+    MomentUpdate,
+)
 from mindspace_graph.streaming_asr import (
     ASRSessionOptions,
     FunASRStreamSession,
@@ -129,6 +138,11 @@ class CharacterRestoreRequest(BaseModel):
 class SessionCreateRequest(BaseModel):
     session_id: str = Field(default_factory=lambda: str(uuid4()), min_length=1, max_length=100)
     character_id: str = Field(min_length=1, max_length=64)
+
+
+class JournalGenerateRequest(BaseModel):
+    session_id: str = Field(default="", max_length=100)
+    activity_session_id: str = Field(default="", max_length=100)
 
 
 def _character_summary(record: dict[str, Any]) -> dict[str, Any]:
@@ -291,6 +305,7 @@ def create_app(
         await container.conversation.aclose()
         await audio.aclose()
         await shared_http.aclose()
+        container.art_catalog.close()
 
     app = FastAPI(
         title=settings.app_name,
@@ -308,12 +323,19 @@ def create_app(
     avatar_config_path = avatar_root / "config.json"
     character_root = settings.runtime_dir / "data" / "characters"
     character_root.mkdir(parents=True, exist_ok=True)
+    art_pack_root = settings.runtime_dir / "data" / "assets" / "packs"
+    art_pack_root.mkdir(parents=True, exist_ok=True)
     app.mount("/assets", StaticFiles(directory=web_root), name="assets")
     app.mount("/api/v1/avatar/files", StaticFiles(directory=avatar_root), name="avatars")
     app.mount(
         "/api/v1/character/files",
         StaticFiles(directory=character_root),
         name="character-files",
+    )
+    app.mount(
+        "/api/v1/art/files",
+        StaticFiles(directory=art_pack_root),
+        name="art-pack-files",
     )
 
     @app.get("/", include_in_schema=False)
@@ -469,8 +491,194 @@ def create_app(
             character_id = str(record["character_id"])
             summary["session_count"] = session_count.get(character_id, 0)
             summary["latest_session_id"] = latest_session.get(character_id, "")
+            summary["chapters"] = (
+                container.chapters.summary(character_id)
+                if record.get("status") == "active"
+                else {
+                    "journal_count": 0,
+                    "moment_count": 0,
+                    "candidate_moment_count": 0,
+                    "activity_count": 0,
+                    "heart_state": "empty",
+                }
+            )
             items.append(summary)
         return {"items": items, "count": len(items)}
+
+    @app.get("/api/v1/art/catalog")
+    async def art_catalog():
+        return container.art_catalog.catalog()
+
+    @app.get("/api/v1/art/packs")
+    async def art_packs():
+        return {"items": container.art_catalog.packs()}
+
+    @app.post("/api/v1/art/packs/{pack_id}/install")
+    async def install_art_pack(pack_id: str):
+        try:
+            result = await asyncio.to_thread(container.art_catalog.install, pack_id)
+            return {"success": True, "pack": result}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ArtPackPaused as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.post("/api/v1/art/packs/{pack_id}/pause")
+    async def pause_art_pack(pack_id: str):
+        try:
+            return {"success": True, "pack": container.art_catalog.pause(pack_id)}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/v1/art/packs/{pack_id}/resume")
+    async def resume_art_pack(pack_id: str):
+        try:
+            result = await asyncio.to_thread(container.art_catalog.install, pack_id)
+            return {"success": True, "pack": result}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ArtPackPaused as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except (OSError, RuntimeError) as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.get("/api/v1/characters/{character_id}/chapters/summary")
+    async def shared_chapter_summary(character_id: str):
+        try:
+            return container.chapters.summary(character_id)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/v1/characters/{character_id}/journal")
+    async def list_journal(
+        character_id: str, include_archived: bool = Query(default=False)
+    ):
+        try:
+            items = container.chapters.list_journals(
+                character_id, include_archived=include_archived
+            )
+            return {"items": items, "count": len(items)}
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/v1/characters/{character_id}/journal")
+    async def create_journal(character_id: str, payload: JournalCreate):
+        try:
+            return container.chapters.create_journal(character_id, payload)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.post("/api/v1/characters/{character_id}/journal/generate")
+    async def generate_journal(character_id: str, payload: JournalGenerateRequest):
+        try:
+            return await asyncio.to_thread(
+                container.chapters.generate_journal,
+                character_id,
+                session_id=payload.session_id,
+                activity_session_id=payload.activity_session_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.put("/api/v1/characters/{character_id}/journal/{entry_id}")
+    async def update_journal(
+        character_id: str, entry_id: str, payload: JournalUpdate
+    ):
+        try:
+            return container.chapters.update_journal(character_id, entry_id, payload)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.delete("/api/v1/characters/{character_id}/journal/{entry_id}")
+    async def delete_journal(character_id: str, entry_id: str):
+        if not container.chapters.delete_journal(character_id, entry_id):
+            raise HTTPException(status_code=404, detail="journal entry not found")
+        return {"success": True}
+
+    @app.get("/api/v1/characters/{character_id}/moments")
+    async def list_moments(
+        character_id: str, include_archived: bool = Query(default=False)
+    ):
+        try:
+            items = container.chapters.list_moments(
+                character_id, include_archived=include_archived
+            )
+            return {"items": items, "count": len(items)}
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/v1/characters/{character_id}/moments")
+    async def create_moment(character_id: str, payload: MomentCreate):
+        try:
+            return container.chapters.create_moment(character_id, payload)
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.put("/api/v1/characters/{character_id}/moments/{moment_id}")
+    async def update_moment(
+        character_id: str, moment_id: str, payload: MomentUpdate
+    ):
+        try:
+            return container.chapters.update_moment(character_id, moment_id, payload)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/v1/activities")
+    async def list_activities():
+        return {"items": container.chapters.activities()}
+
+    @app.get("/api/v1/characters/{character_id}/activity-sessions")
+    async def list_activity_sessions(
+        character_id: str, include_finished: bool = Query(default=True)
+    ):
+        try:
+            items = container.chapters.list_activity_sessions(
+                character_id, include_finished=include_finished
+            )
+            return {"items": items, "count": len(items)}
+        except (KeyError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/v1/activities/{activity_id}/sessions")
+    async def start_activity(activity_id: str, payload: ActivityStart):
+        try:
+            return container.chapters.start_activity(activity_id, payload)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/v1/activity-sessions/{activity_session_id}")
+    async def get_activity_session(activity_session_id: str):
+        try:
+            return container.chapters.get_activity_session(activity_session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/v1/activity-sessions/{activity_session_id}/actions")
+    async def apply_activity_action(
+        activity_session_id: str, payload: ActivityAction
+    ):
+        try:
+            return container.chapters.apply_activity_action(
+                activity_session_id, payload
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/v1/characters/{character_id}")
     async def get_character(character_id: str):

@@ -6,7 +6,14 @@ import type {
   CharacterSummary,
 } from "./types";
 
-type AppView = "modes" | "draw" | "characters" | "chat";
+type AppView =
+  | "modes"
+  | "draw"
+  | "characters"
+  | "chat"
+  | "journal"
+  | "moments"
+  | "activities";
 
 interface CharacterOption {
   id: string;
@@ -474,6 +481,7 @@ export function CharacterLibrary({
   const [history, setHistory] = useState<Array<{ version_id: string; revision: number; updated_at: string }>>([]);
   const [error, setError] = useState("");
   const importRef = useRef<HTMLInputElement | null>(null);
+  const selectedSummary = characters.find((item) => item.character_id === selectedId);
 
   useEffect(() => {
     if (!selectedId) {
@@ -546,7 +554,7 @@ export function CharacterLibrary({
       <nav className="card-shelf">
         {characters.map((character) => <button key={character.character_id} className={selectedId === character.character_id ? "active" : ""} onClick={() => setSelectedId(character.character_id)}>
           <img src={characterAvatar(character)} alt="" />
-          <span><strong>{character.display_name}</strong><small>{character.relationship_label || "未定义关系"} · {character.session_count || 0} 个会话</small></span>
+          <span><strong>{character.display_name}</strong><small>{character.relationship_label || "未定义关系"} · {character.session_count || 0} 个会话</small><small>日记 {character.chapters?.journal_count || 0} · 片段 {character.chapters?.moment_count || 0} · 活动 {character.chapters?.activity_count || 0}</small></span>
           <i>{character.status === "archived" ? "已归档" : character.source === "draw" ? "灵感" : "自定义"}</i>
         </button>)}
         {!characters.length && <div className="library-empty"><b>还没有收藏角色</b><p>先抽取第一张卡，或导入 `.mindspace-card`。</p><button onClick={onDraw}>开始抽卡</button></div>}
@@ -555,7 +563,7 @@ export function CharacterLibrary({
         {record ? <>
           <div className="library-hero">
             <img src={characterAvatar(record)} alt="" />
-            <div><span>{record.gender} · {record.relationship_label}</span><h2>{record.display_name}</h2><p>{text(asRecord(record.ai_profile.identity).self_description)}</p><small>修订 {record.revision} · 更新于 {new Date(record.updated_at).toLocaleString()}</small></div>
+            <div><span>{record.gender} · {record.relationship_label}</span><h2>{record.display_name}</h2><p>{text(asRecord(record.ai_profile.identity).self_description)}</p><small>修订 {record.revision} · 更新于 {new Date(record.updated_at).toLocaleString()}</small><small className="chapter-counts">日记 {selectedSummary?.chapters?.journal_count || 0} · 共同片段 {selectedSummary?.chapters?.moment_count || 0} · 已完成活动 {selectedSummary?.chapters?.activity_count || 0}</small></div>
           </div>
           <div className="library-actions">
             <button className="primary" onClick={() => onChat(record)}>开始新对话</button>
