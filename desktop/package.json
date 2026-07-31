@@ -78,6 +78,14 @@
         "to": "runtime/bundled/uv"
       },
       {
+        "from": "bootstrap/runtime-bundle/powershell",
+        "to": "runtime/bundled/powershell"
+      },
+      {
+        "from": "bootstrap/runtime-bundle/git",
+        "to": "runtime/bundled/git"
+      },
+      {
         "from": "bootstrap/runtime-bundle/python",
         "to": "runtime/bundled/python"
       }
