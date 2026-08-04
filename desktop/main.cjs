@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, net, session, shell, Tray } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, net, screen, session, shell, Tray } = require("electron");
 const { spawn, spawnSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -34,6 +34,7 @@ const {
 } = require("./service-policy.cjs");
 const { appPaths, ensureAppPaths, migrateLegacyLayout, reconcileLegacyModelPaths } = require("./app-paths.cjs");
 const { cleanupMigratedSource, inspectStorageAlignment, migrateStorage } = require("./storage-location.cjs");
+const { normalizeCompanionConfig, companionBoundsForDisplay } = require("./companion-policy.cjs");
 const {
   bundledArchive,
   bundledVersion,
@@ -65,10 +66,15 @@ const startGenerations = new Map();
 const serviceLaunchTimes = new Map();
 const desiredServices = new Set();
 const serviceRecovery = new Map();
-const captureArg = process.argv.find((argument) => argument.startsWith("--capture="));
+const captureDashboardArg = process.argv.find((argument) => argument.startsWith("--capture-dashboard="));
+const captureArg = process.argv.find((argument) => argument.startsWith("--capture=")) || captureDashboardArg;
+const dashboardPreviewArg = process.argv.includes("--dashboard-preview");
+const captureCompanionArg = process.argv.find((argument) => argument.startsWith("--capture-companion="));
+const captureCompanionBlankArg = process.argv.find((argument) => argument.startsWith("--capture-companion-blank="));
 const captureAnnouncement = process.argv.includes("--capture-announcement");
 let launcherWindow;
 let productWindow;
+let companionWindow;
 let tray;
 let quitting = false;
 let updateManager;
@@ -90,6 +96,13 @@ let observedTtsProvider = "";
 let ttsProviderReconcileTask = null;
 let shutdownTask = null;
 let finalExit = false;
+let companionLoadError = "";
+let companionBoundsTimer = null;
+const COMPANION_RELEASE = Object.freeze({
+  available: false,
+  targetVersion: "1.0",
+  message: "Live2D 桌宠将在 V1.0 正式版开放",
+});
 
 function readJson(file, fallback = null) {
   try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return fallback; }
@@ -116,6 +129,132 @@ function readLauncherConfig() {
 function writeLauncherConfig(value) {
   fs.mkdirSync(currentLayout().data, { recursive: true });
   fs.writeFileSync(path.join(currentLayout().data, "launcher.json"), JSON.stringify(value, null, 2));
+}
+
+function companionConfig() {
+  return normalizeCompanionConfig(readLauncherConfig().companion);
+}
+
+function writeCompanionConfig(patch = {}) {
+  const launcherConfig = readLauncherConfig();
+  const companion = normalizeCompanionConfig({ ...launcherConfig.companion, ...patch });
+  writeLauncherConfig({ ...launcherConfig, companion });
+  return companion;
+}
+
+function companionResourcePaths() {
+  const renderer = path.join(__dirname, "assets", "companion-renderer", "index.html");
+  const modelRoot = path.join(__dirname, "assets", "companion-renderer", "Resources", "mindspace-companion-v24");
+  const model = path.join(modelRoot, "mindspace-companion-v24.model3.json");
+  return { renderer, modelRoot, model };
+}
+
+function companionResourceStatus() {
+  const resources = companionResourcePaths();
+  if (!fs.existsSync(resources.renderer)) return { ready: false, error: "缺少桌宠渲染入口" };
+  if (!fs.existsSync(resources.model)) return { ready: false, error: "缺少 Live2D model3.json" };
+  try {
+    const manifest = JSON.parse(fs.readFileSync(resources.model, "utf8"));
+    const references = [
+      manifest.FileReferences?.Moc,
+      manifest.FileReferences?.Physics,
+      manifest.FileReferences?.DisplayInfo,
+      ...(manifest.FileReferences?.Textures || []),
+    ].filter(Boolean);
+    for (const reference of references) {
+      const target = path.resolve(resources.modelRoot, String(reference));
+      if (!target.startsWith(`${resources.modelRoot}${path.sep}`) || !fs.existsSync(target)) {
+        return { ready: false, error: `桌宠资源缺失或越界：${reference}` };
+      }
+    }
+    return { ready: true, error: "" };
+  } catch (error) {
+    return { ready: false, error: `桌宠资源清单无效：${String(error.message || error)}` };
+  }
+}
+
+function companionSnapshot() {
+  const config = companionConfig();
+  return {
+    ...config,
+    enabled: false,
+    clickThrough: false,
+    available: COMPANION_RELEASE.available,
+    targetVersion: COMPANION_RELEASE.targetVersion,
+    ready: false,
+    visible: false,
+    previewVisible: Boolean(launcherWindow && !launcherWindow.isDestroyed() && launcherWindow.isVisible()),
+    error: COMPANION_RELEASE.message,
+    sdkVersion: "",
+    modelVersion: "",
+  };
+}
+
+function scheduleCompanionBoundsSave() {
+  if (!companionWindow || companionWindow.isDestroyed()) return;
+  clearTimeout(companionBoundsTimer);
+  companionBoundsTimer = setTimeout(() => {
+    if (!companionWindow || companionWindow.isDestroyed()) return;
+    writeCompanionConfig(companionWindow.getBounds());
+  }, 250);
+}
+
+function createCompanionWindow({ blank = false } = {}) {
+  if (companionWindow && !companionWindow.isDestroyed()) return companionWindow;
+  const config = companionConfig();
+  const remembered = config.x === null || config.y === null
+    ? screen.getPrimaryDisplay()
+    : screen.getDisplayMatching({ x: config.x, y: config.y, width: config.width, height: config.height });
+  const bounds = companionBoundsForDisplay(config, remembered.workArea);
+  companionWindow = new BrowserWindow({
+    ...bounds,
+    minWidth: 260,
+    minHeight: 360,
+    maxWidth: 720,
+    maxHeight: 1000,
+    show: false,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    resizable: true,
+    title: "Mindspace Companion",
+    webPreferences: { contextIsolation: true, nodeIntegration: false, backgroundThrottling: true },
+  });
+  companionWindow.setAlwaysOnTop(true, "floating");
+  companionWindow.setIgnoreMouseEvents(config.clickThrough, { forward: true });
+  companionWindow.on("move", scheduleCompanionBoundsSave);
+  companionWindow.on("resize", scheduleCompanionBoundsSave);
+  companionWindow.on("closed", () => { companionWindow = undefined; });
+  companionWindow.webContents.on("did-fail-load", (_event, code, description) => {
+    companionLoadError = `Live2D 加载失败：${code} ${description}`;
+    companionWindow?.hide();
+  });
+  if (blank) companionWindow.loadURL("about:blank");
+  else companionWindow.loadFile(companionResourcePaths().renderer);
+  return companionWindow;
+}
+
+function syncCompanionVisibility() {
+  if (captureArg || quitting) return companionSnapshot();
+  const snapshot = companionSnapshot();
+  if (!snapshot.enabled || !snapshot.ready) {
+    companionWindow?.hide();
+    return companionSnapshot();
+  }
+  const win = createCompanionWindow();
+  win.setIgnoreMouseEvents(snapshot.clickThrough, { forward: true });
+  win.showInactive();
+  return companionSnapshot();
+}
+
+function companionAction(action) {
+  if (action !== "snapshot") {
+    return { ...companionSnapshot(), ok: false, error: COMPANION_RELEASE.message };
+  }
+  return { ...companionSnapshot(), ok: true };
 }
 
 function downloadSource() {
@@ -1810,14 +1949,16 @@ function runMaintenance(action) {
 function createWindow() {
   const win = new BrowserWindow({
     width: 1180, height: 760, minWidth: 920, minHeight: 620,
-    show: !captureArg,
+    show: !captureArg || Boolean(captureDashboardArg),
     backgroundColor: "#0b0d11", titleBarStyle: "hidden", titleBarOverlay: { color: "#0b0d11", symbolColor: "#bbc4d0", height: 40 },
     webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
   });
   launcherWindow = win;
   win.loadFile(
     path.join(__dirname, "dist", "index.html"),
-    captureAnnouncement ? { query: { announcement: "history" } } : undefined,
+    captureAnnouncement
+      ? { query: { announcement: "history" } }
+      : captureDashboardArg || dashboardPreviewArg ? { query: { dashboard: "1" } } : undefined,
   );
   win.on("close", (event) => {
     if (!quitting && !captureArg) {
@@ -1825,10 +1966,13 @@ function createWindow() {
       win.hide();
     }
   });
+  win.on("show", syncCompanionVisibility);
+  win.on("hide", syncCompanionVisibility);
+  win.on("closed", () => { launcherWindow = undefined; });
   if (captureArg) {
     win.webContents.once("did-finish-load", () => {
       setTimeout(async () => {
-        const output = captureArg.slice("--capture=".length);
+        const output = captureArg.slice((captureDashboardArg ? "--capture-dashboard=" : "--capture=").length);
         const image = await win.webContents.capturePage();
         fs.writeFileSync(output, image.toPNG());
         app.quit();
@@ -1904,6 +2048,7 @@ async function openProductWindow() {
     show: false,
     backgroundColor: "#f7efe4",
     title: "Mindspace",
+    autoHideMenuBar: true,
     icon: path.join(__dirname, "assets", "mindspace-icon.ico"),
     webPreferences: {
       contextIsolation: true,
@@ -1911,6 +2056,7 @@ async function openProductWindow() {
       backgroundThrottling: false,
     },
   });
+  productWindow.setMenuBarVisibility(false);
   // The product is served only by the loopback Core. Resolve microphone checks
   // synchronously for that exact origin so Chromium never stalls a trusted
   // audio request behind an implicit permission round-trip.
@@ -1934,6 +2080,7 @@ function createTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: "打开 Mindspace", click: () => { void openProductWindow(); } },
     { label: "服务控制中心", click: () => { launcherWindow?.show(); launcherWindow?.focus(); } },
+    { label: "Live2D 桌宠（V1.0 开放）", enabled: false },
     { type: "separator" },
     { label: "停止本机服务", click: () => allServices("stop") },
     { label: "退出", click: () => { quitting = true; app.quit(); } },
@@ -1965,6 +2112,8 @@ async function migrateToStorageTarget(target) {
 }
 
 ipcMain.handle("launcher:snapshot", snapshot);
+ipcMain.handle("companion:snapshot", () => companionSnapshot());
+ipcMain.handle("companion:action", (_event, { action = "snapshot" } = {}) => companionAction(String(action)));
 ipcMain.handle("launcher:service", async (_, { service, action }) => {
   const name = service === "tts" ? ttsServiceName() : service;
   if (action === "start") return startService(name);
@@ -2146,10 +2295,37 @@ ipcMain.handle("runtime:proxy", async (_, { proxy = "" } = {}) => {
   return { ok: true, proxy: value };
 });
 
-const singleInstance = captureArg ? true : app.requestSingleInstanceLock();
+const singleInstance = captureArg || captureCompanionArg || captureCompanionBlankArg ? true : app.requestSingleInstanceLock();
 if (!singleInstance) app.quit();
 if (!captureArg) app.on("second-instance", () => { launcherWindow?.show(); launcherWindow?.focus(); });
 app.whenReady().then(async () => {
+  if (captureCompanionArg || captureCompanionBlankArg) {
+    const outputArgument = captureCompanionArg || captureCompanionBlankArg;
+    const outputPrefix = captureCompanionArg ? "--capture-companion=" : "--capture-companion-blank=";
+    const win = createCompanionWindow({ blank: Boolean(captureCompanionBlankArg) });
+    if (captureCompanionArg) win.showInactive();
+    win.webContents.once("did-finish-load", () => {
+      if (captureCompanionArg) {
+        void win.webContents.executeJavaScript(`new Promise((resolve) => {
+          let frames = 0;
+          const started = performance.now();
+          const tick = (now) => {
+            frames += 1;
+            if (now - started >= 5000) resolve(Number((frames * 1000 / (now - started)).toFixed(2)));
+            else requestAnimationFrame(tick);
+          };
+          requestAnimationFrame(tick);
+        })`).then((fps) => console.log(`[companion-qa] average-fps=${fps}`));
+      }
+      setTimeout(async () => {
+        const output = outputArgument.slice(outputPrefix.length);
+        const image = await win.webContents.capturePage();
+        fs.writeFileSync(output, image.toPNG());
+        app.quit();
+      }, Math.max(800, Math.min(30_000, Number(process.env.MINDSPACE_CAPTURE_DELAY_MS) || 2_500)));
+    });
+    return;
+  }
   currentLayout();
   modelPathCheck = reconcileLegacyModelPaths(currentLayout());
   await cleanupMigratedSource(currentLayout());
@@ -2175,13 +2351,15 @@ app.whenReady().then(async () => {
   if (!captureArg) createTray();
   // Text chat is the baseline product. Start Core immediately and leave ASR,
   // VAD and TTS opt-in so missing voice components cannot block entry.
-  setTimeout(() => { void startDefaultCore(); }, 250).unref();
+  if (!dashboardPreviewArg) setTimeout(() => { void startDefaultCore(); }, 250).unref();
 });
 app.on("before-quit", (event) => {
   if (finalExit) return;
   event.preventDefault();
   if (shutdownTask) return;
   quitting = true;
+  clearTimeout(companionBoundsTimer);
+  if (companionWindow && !companionWindow.isDestroyed()) companionWindow.destroy();
   shutdownTask = (async () => {
     try {
       await allServices("stop");

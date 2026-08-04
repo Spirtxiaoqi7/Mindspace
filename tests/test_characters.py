@@ -8,9 +8,16 @@ from copy import deepcopy
 import pytest
 from fastapi.testclient import TestClient
 
-from mindspace_graph.api import create_app
 from mindspace_graph.adapters.file_storage import DEFAULT_PROFILES
-from mindspace_graph.characters import CharacterRepository, MIGRATION_KEY
+from mindspace_graph.api import create_app
+from mindspace_graph.characters import (
+    MIGRATION_KEY,
+    CharacterDraftInput,
+    CharacterRepository,
+    character_generation_messages,
+    local_profile_from_draft,
+    parse_generated_profile,
+)
 from mindspace_graph.product_database import ProductDatabase
 from mindspace_graph.settings import AppSettings
 
@@ -34,6 +41,94 @@ def draft_payload(name: str = "林澈") -> dict:
         "user_name": "测试用户",
         "user_alias": "用户",
     }
+
+
+def draft_input(name: str = "林澈") -> CharacterDraftInput:
+    return CharacterDraftInput.model_validate(draft_payload(name))
+
+
+def test_character_generation_requests_compact_fields_not_full_profile():
+    selected = draft_input()
+    fallback = local_profile_from_draft(selected)
+
+    messages = character_generation_messages(selected, fallback)
+    payload = json.loads(messages[-1]["content"])
+
+    assert "target_json" not in payload
+    assert set(payload["target_fields"]) == {
+        "summary",
+        "personality",
+        "speech_style",
+        "likes",
+        "dislikes",
+        "values",
+        "habits",
+        "initiative_sources",
+        "preferred_interactions",
+        "conflict_style",
+        "repair_style",
+        "relationship_tone",
+        "greeting",
+    }
+    assert len(messages[-1]["content"]) < 2_500
+
+
+def test_compact_character_json_merges_into_server_owned_profile():
+    selected = draft_input()
+    fallback = local_profile_from_draft(selected)
+    raw = json.dumps(
+        {
+            "summary": "会表达自己意见的长期陪伴者",
+            "personality": "温柔但不迁就，坦率且偶尔固执",
+            "speech_style": ["自然口语", "偶尔反问"],
+            "likes": ["雨夜", "旧书"],
+            "dislikes": ["敷衍"],
+            "values": ["真诚", "独立"],
+            "habits": ["思考时会停顿"],
+            "initiative_sources": ["未完成的话题"],
+            "preferred_interactions": ["直接交流"],
+            "conflict_style": "先说清分歧",
+            "repair_style": "承认具体问题",
+            "relationship_tone": "平等且连续",
+            "greeting": "我在，今天从哪里继续？",
+        },
+        ensure_ascii=False,
+    )
+
+    profile, warnings = parse_generated_profile(raw, fallback)
+
+    assert warnings == []
+    assert profile["identity"]["name"] == "林澈"
+    assert profile["identity"]["gender"] == "女"
+    assert profile["identity"]["relationship_to_user"] == "朋友"
+    assert "温柔但不迁就" in profile["identity"]["self_description"]
+    assert profile["roleplay"]["selfhood"]["likes"] == ["雨夜", "旧书"]
+    assert profile["roleplay"]["examples"]["casual"] == [
+        "我在，今天从哪里继续？"
+    ]
+
+
+def test_truncated_or_labeled_character_output_recovers_fields_independently():
+    selected = draft_input()
+    fallback = local_profile_from_draft(selected)
+    raw = (
+        '性格：外柔内刚，遇到分歧会直接说明\n'
+        'like: 雨夜、旧书\n'
+        '说话风格：自然口语、句子简洁\n'
+        '开场白：我在。你想先聊哪件事？\n'
+        'dislikes: ["敷衍", "冷处理"'
+    )
+
+    profile, warnings = parse_generated_profile(raw, fallback)
+
+    assert warnings
+    assert "外柔内刚" in profile["identity"]["self_description"]
+    assert profile["roleplay"]["selfhood"]["likes"] == ["雨夜", "旧书"]
+    assert profile["personality"]["speech_style"] == ["自然口语", "句子简洁"]
+    assert profile["roleplay"]["examples"]["casual"] == [
+        "我在。你想先聊哪件事？"
+    ]
+    assert profile["roleplay"]["selfhood"]["dislikes"] == ["敷衍", "冷处理"]
 
 
 def test_legacy_profile_migration_is_idempotent_and_binds_sessions(tmp_path):

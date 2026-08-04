@@ -197,15 +197,34 @@ def local_profile_from_draft(value: CharacterDraftInput) -> dict[str, Any]:
 def character_generation_messages(
     value: CharacterDraftInput, fallback_profile: dict[str, Any]
 ) -> list[dict[str, str]]:
-    """One-shot JSON-only instruction for the user-triggered assisted editor."""
+    """Request only compact creative fields; the server owns the full profile schema."""
+
+    del fallback_profile
+    target_fields = {
+        "summary": "80字内角色自述",
+        "personality": "80字内性格表现",
+        "speech_style": ["最多3项"],
+        "likes": ["最多4项"],
+        "dislikes": ["最多4项"],
+        "values": ["最多3项"],
+        "habits": ["最多3项"],
+        "initiative_sources": ["最多3项"],
+        "preferred_interactions": ["最多3项"],
+        "conflict_style": "80字内",
+        "repair_style": "80字内",
+        "relationship_tone": "80字内",
+        "greeting": "120字内自然开场白",
+    }
 
     return [
         {
             "role": "system",
             "content": (
-                "你是 Mindspace 人物卡编辑器。只返回一个 JSON 对象，不要 Markdown、解释或代码围栏。"
-                "必须完整保留给定 JSON 的键与类型，只填充内容；schema_version/profile_type/revision "
-                "保持不变。性别、姓名、关系和用户称呼是用户明确选择，不得更改。"
+                "你是 Mindspace 人物卡编辑器。只返回一个紧凑 json 对象，"
+                "不要 Markdown、解释或代码围栏。"
+                "只使用 target_fields 中的键，不得新增嵌套结构。"
+                "姓名、性别、核心性格、缺陷、关系和用户称呼"
+                "是用户明确选择，不得修改或重新输出。数组必须简短，禁止长篇故事。"
                 "角色需要有鲜明人格、合理缺陷、独立观点和自然口语，不能把缺陷消解成完美优点。"
                 "不要编造双方已经共同经历过的事件。"
             ),
@@ -215,7 +234,22 @@ def character_generation_messages(
             "content": json.dumps(
                 {
                     "confirmed_input": value.model_dump(mode="json"),
-                    "target_json": fallback_profile,
+                    "target_fields": target_fields,
+                    "json_example": {
+                        "summary": "一位有明确偏好、会表达不同意见的陪伴者",
+                        "personality": "温柔但不迁就，独立且偶尔固执",
+                        "speech_style": ["自然口语", "句子简洁"],
+                        "likes": ["雨夜", "旧书"],
+                        "dislikes": ["敷衍"],
+                        "values": ["真诚", "独立"],
+                        "habits": ["思考时会停顿"],
+                        "initiative_sources": ["未完成的话题"],
+                        "preferred_interactions": ["直接交流"],
+                        "conflict_style": "先说明分歧，不冷处理",
+                        "repair_style": "承认具体问题并继续对话",
+                        "relationship_tone": "熟悉、平等、有连续感",
+                        "greeting": "我在。你今天想从哪件事开始？",
+                    },
                 },
                 ensure_ascii=False,
             ),
@@ -223,20 +257,227 @@ def character_generation_messages(
     ]
 
 
-def parse_generated_profile(raw: str, fallback: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    warnings: list[str] = []
-    cleaned = raw.strip()
+COMPACT_FIELD_ALIASES: dict[str, tuple[str, ...]] = {
+    "summary": ("summary", "self_description", "角色自述", "角色简介", "简介"),
+    "personality": ("personality", "性格", "角色性格", "气质"),
+    "speech_style": ("speech_style", "说话风格", "表达方式", "语气"),
+    "likes": ("likes", "like", "喜欢", "喜好", "偏好"),
+    "dislikes": ("dislikes", "dislike", "不喜欢", "厌恶"),
+    "values": ("values", "价值观", "原则"),
+    "habits": ("habits", "habit", "习惯"),
+    "initiative_sources": ("initiative_sources", "主动来源", "主动话题", "主动性"),
+    "preferred_interactions": (
+        "preferred_interactions",
+        "互动偏好",
+        "喜欢的互动",
+    ),
+    "conflict_style": ("conflict_style", "冲突方式", "生气时", "矛盾处理"),
+    "repair_style": ("repair_style", "修复方式", "和好方式"),
+    "relationship_tone": ("relationship_tone", "关系氛围", "相处方式"),
+    "greeting": ("greeting", "开场白", "问候", "第一句话"),
+}
+
+COMPACT_TEXT_LIMITS = {
+    "summary": 120,
+    "personality": 120,
+    "conflict_style": 100,
+    "repair_style": 100,
+    "relationship_tone": 100,
+    "greeting": 160,
+}
+
+COMPACT_LIST_LIMITS = {
+    "speech_style": (3, 40),
+    "likes": (4, 40),
+    "dislikes": (4, 40),
+    "values": (3, 40),
+    "habits": (3, 50),
+    "initiative_sources": (3, 60),
+    "preferred_interactions": (3, 60),
+}
+
+
+def _strip_generation_fence(raw: str) -> str:
+    cleaned = str(raw or "").strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\s*```$", "", cleaned)
+    return cleaned.strip()
+
+
+def _lookup_alias(document: dict[str, Any], aliases: tuple[str, ...]) -> Any:
+    folded = {str(key).strip().casefold(): value for key, value in document.items()}
+    for alias in aliases:
+        if alias.casefold() in folded:
+            return folded[alias.casefold()]
+    return None
+
+
+def _next_known_label(text: str) -> int:
+    aliases = sorted(
+        {alias for values in COMPACT_FIELD_ALIASES.values() for alias in values},
+        key=len,
+        reverse=True,
+    )
+    joined_aliases = "|".join(re.escape(item) for item in aliases)
+    pattern = re.compile(
+        rf"(?im)(?:^|[,;，；\n])\s*[\"']?(?:{joined_aliases})[\"']?\s*[:：]"
+    )
+    match = pattern.search(text)
+    return match.start() if match else len(text)
+
+
+def _extract_labeled_value(raw: str, aliases: tuple[str, ...]) -> Any:
+    alias_pattern = "|".join(
+        re.escape(item) for item in sorted(aliases, key=len, reverse=True)
+    )
+    match = re.search(
+        rf"(?im)(?<![\w\u4e00-\u9fff])[\"']?(?:{alias_pattern})[\"']?\s*[:：]\s*",
+        raw,
+    )
+    if match is None:
+        return None
+    tail = raw[match.end() :].lstrip()
     try:
-        parsed = json.loads(cleaned)
-        if not isinstance(parsed, dict):
-            raise ValueError("模型返回值不是 JSON 对象")
-        candidate = deepcopy(fallback)
-        for key, item in parsed.items():
-            if key in candidate:
-                candidate[key] = item
+        value, _end = json.JSONDecoder().raw_decode(tail)
+        return value
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    candidate = tail[: _next_known_label(tail)].splitlines()[0].strip()
+    return candidate.strip(" \t\r\n,，;；{}[]\"'")
+
+
+def _clean_text(value: Any, limit: int) -> str:
+    if isinstance(value, list):
+        value = "、".join(str(item) for item in value)
+    cleaned = re.sub(r"\s+", " ", str(value or "")).strip(" ,，;；\"'")
+    return cleaned[:limit]
+
+
+def _clean_list(value: Any, *, count: int, item_limit: int) -> list[str]:
+    values = value if isinstance(value, list) else re.split(
+        r"[、,，;；|\n]+", str(value or "").strip(" []{}\"'")
+    )
+    return _dedupe_text(
+        [_clean_text(item, item_limit) for item in values],
+        limit=count,
+    )
+
+
+def _compact_generated_fields(raw: str) -> tuple[dict[str, Any], bool, str]:
+    cleaned = _strip_generation_fence(raw)
+    parsed: dict[str, Any] = {}
+    complete_json = False
+    parse_error = ""
+    try:
+        value = json.loads(cleaned)
+        if isinstance(value, dict):
+            parsed = value
+            complete_json = True
+        else:
+            parse_error = "模型返回值不是 JSON 对象"
+    except json.JSONDecodeError as exc:
+        parse_error = str(exc)
+
+    fields: dict[str, Any] = {}
+    for field, aliases in COMPACT_FIELD_ALIASES.items():
+        value = _lookup_alias(parsed, aliases) if parsed else None
+        if value is None:
+            value = _extract_labeled_value(cleaned, aliases)
+        if value is None:
+            continue
+        if field in COMPACT_TEXT_LIMITS:
+            normalized = _clean_text(value, COMPACT_TEXT_LIMITS[field])
+        else:
+            count, item_limit = COMPACT_LIST_LIMITS[field]
+            normalized = _clean_list(value, count=count, item_limit=item_limit)
+        if normalized:
+            fields[field] = normalized
+    return fields, complete_json, parse_error
+
+
+def _append_unique(current: list[str], generated: list[str], *, limit: int) -> list[str]:
+    return _dedupe_text([*current, *generated], limit=limit)
+
+
+def _apply_compact_fields(fallback: dict[str, Any], fields: dict[str, Any]) -> dict[str, Any]:
+    candidate = deepcopy(fallback)
+    summary = str(fields.get("summary") or "")
+    personality = str(fields.get("personality") or "")
+    if summary and personality and personality not in summary:
+        candidate["identity"]["self_description"] = f"{summary}；{personality}"[:240]
+    elif summary or personality:
+        candidate["identity"]["self_description"] = (summary or personality)[:240]
+    if fields.get("speech_style"):
+        candidate["personality"]["speech_style"] = fields["speech_style"]
+        candidate["roleplay"]["voice"]["cadence"] = "、".join(fields["speech_style"])
+    selfhood = candidate["roleplay"]["selfhood"]
+    for key in ("likes", "dislikes", "values", "habits"):
+        if fields.get(key):
+            selfhood[key] = fields[key]
+    if fields.get("initiative_sources"):
+        candidate["roleplay"]["agency"]["initiative_sources"] = fields[
+            "initiative_sources"
+        ]
+    if fields.get("preferred_interactions"):
+        candidate["relationship_rules"]["preferred_interactions"] = _append_unique(
+            candidate["relationship_rules"]["preferred_interactions"],
+            fields["preferred_interactions"],
+            limit=6,
+        )
+    if fields.get("conflict_style"):
+        candidate["relationship_rules"]["conflict_behavior"] = [
+            fields["conflict_style"]
+        ]
+    if fields.get("repair_style"):
+        candidate["relationship_rules"]["repair_behavior"] = [fields["repair_style"]]
+    if fields.get("relationship_tone"):
+        candidate["continuity"]["persistent_attitudes"] = [
+            fields["relationship_tone"]
+        ]
+    if fields.get("greeting"):
+        candidate["roleplay"]["examples"]["casual"] = [fields["greeting"]]
+    return candidate
+
+
+def parse_generated_profile(raw: str, fallback: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    warnings: list[str] = []
+    cleaned = _strip_generation_fence(raw)
+    try:
+        legacy = json.loads(cleaned)
+    except json.JSONDecodeError:
+        legacy = None
+    if isinstance(legacy, dict) and isinstance(legacy.get("identity"), dict):
+        try:
+            candidate = deepcopy(fallback)
+            for key, item in legacy.items():
+                if key in candidate:
+                    candidate[key] = item
+            candidate["identity"]["name"] = fallback["identity"]["name"]
+            candidate["identity"]["gender"] = fallback["identity"]["gender"]
+            candidate["identity"]["relationship_to_user"] = fallback["identity"][
+                "relationship_to_user"
+            ]
+            candidate["schema_version"] = fallback["schema_version"]
+            candidate["profile_type"] = "ai"
+            candidate["revision"] = 0
+            candidate.pop("updated_at", None)
+            return DEFAULT_PROFILE_SCHEMA.validate_document("ai_profile", candidate), warnings
+        except (TypeError, ValueError, KeyError) as exc:
+            warnings.append(f"旧版完整人物卡无法通过校验，继续逐字段恢复：{exc}")
+
+    fields, complete_json, parse_error = _compact_generated_fields(cleaned)
+    if not fields:
+        detail = parse_error or "没有识别到已知字段"
+        warnings.append(f"AI 返回未包含可用人物字段，已使用本地模板：{detail}")
+        return deepcopy(fallback), warnings
+    if not complete_json:
+        warnings.append(
+            f"AI 返回不完整，已恢复 {len(fields)} 个字段，其余使用本地模板"
+            + (f"：{parse_error}" if parse_error else "")
+        )
+    try:
+        candidate = _apply_compact_fields(fallback, fields)
         candidate["identity"]["name"] = fallback["identity"]["name"]
         candidate["identity"]["gender"] = fallback["identity"]["gender"]
         candidate["identity"]["relationship_to_user"] = fallback["identity"][
@@ -247,8 +488,8 @@ def parse_generated_profile(raw: str, fallback: dict[str, Any]) -> tuple[dict[st
         candidate["revision"] = 0
         candidate.pop("updated_at", None)
         return DEFAULT_PROFILE_SCHEMA.validate_document("ai_profile", candidate), warnings
-    except (json.JSONDecodeError, TypeError, ValueError, KeyError) as exc:
-        warnings.append(f"AI 返回无法通过人物卡校验，已使用本地模板：{exc}")
+    except (TypeError, ValueError, KeyError) as exc:
+        warnings.append(f"恢复字段无法通过人物卡校验，已使用本地模板：{exc}")
         return deepcopy(fallback), warnings
 
 
@@ -772,7 +1013,14 @@ class CharacterRepository:
 
     def save_draft(self, draft_id: str, updates: dict[str, Any]) -> dict[str, Any]:
         draft = self.get_draft(draft_id)
-        for key in ("input", "profile", "avatar", "generation_mode", "model_call_count", "warnings"):
+        for key in (
+            "input",
+            "profile",
+            "avatar",
+            "generation_mode",
+            "model_call_count",
+            "warnings",
+        ):
             if key in updates:
                 draft[key] = deepcopy(updates[key])
         draft["revision"] = int(draft.get("revision", 0)) + 1
@@ -824,23 +1072,36 @@ async def generate_draft_once(
     if settings.llm_mode == "openai" and str(settings.llm_api_key or "").strip():
         call_count = 1
         try:
-            raw = await asyncio.wait_for(
-                asyncio.to_thread(
+            config = ApiConfig(
+                api_key=settings.llm_api_key,
+                base_url=settings.llm_base_url,
+                model=settings.llm_model,
+                temperature=0.2,
+                max_tokens=1400,
+            )
+            structured_generate = getattr(llm, "generate_structured", None)
+            if callable(structured_generate):
+                generation_call = asyncio.to_thread(
+                    structured_generate,
+                    character_generation_messages(selected, fallback),
+                    config,
+                    request_kind="character_generate",
+                    max_tokens=1400,
+                    timeout_seconds=30.0,
+                )
+            else:
+                generation_call = asyncio.to_thread(
                     llm.generate,
                     character_generation_messages(selected, fallback),
-                    ApiConfig(
-                        api_key=settings.llm_api_key,
-                        base_url=settings.llm_base_url,
-                        model=settings.llm_model,
-                        temperature=0.7,
-                        max_tokens=3000,
-                    ),
-                ),
-                timeout=30.0,
+                    config,
+                )
+            raw = await asyncio.wait_for(
+                generation_call,
+                timeout=35.0,
             )
             profile, parse_warnings = parse_generated_profile(raw, fallback)
             warnings.extend(parse_warnings)
-            mode = "llm" if not parse_warnings else "local_template"
+            mode = "llm" if profile != fallback else "local_template"
         except Exception as exc:  # noqa: BLE001 - product fallback must remain available
             warnings.append(f"AI 生成人物卡失败，已使用本地模板：{exc}")
     else:

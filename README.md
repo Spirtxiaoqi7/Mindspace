@@ -6,8 +6,8 @@
 
 **A local-first Windows AI companion with persistent memory, inspectable context, role consistency and optional real-time voice.**
 
-[![Core / Web](https://img.shields.io/badge/Core%20%2F%20Web-0.7.4-C26C4A?style=flat-square)](CHANGELOG.md#074---2026-07-30)
-[![Launcher](https://img.shields.io/badge/Launcher-0.5.54-6C9D8F?style=flat-square)](docs/LAUNCHER_ONBOARDING.md)
+[![Core / Web](https://img.shields.io/badge/Core%20%2F%20Web-0.8.0-C26C4A?style=flat-square)](CHANGELOG.md#080---2026-08-04)
+[![Launcher](https://img.shields.io/badge/Launcher-0.8.0-6C9D8F?style=flat-square)](docs/LAUNCHER_ONBOARDING.md)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-5B718A?style=flat-square)](https://douyinqijun.cn/download/)
 [![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-8B6F67?style=flat-square)](docs/PRODUCT_ARCHITECTURE.md)
 [![Local first](https://img.shields.io/badge/Data-local--first-BE7657?style=flat-square)](#本地优先不等于完全离线)
@@ -214,7 +214,7 @@ Qwen3-TTS 不是普通用户默认选项。Launcher 只有在 GPU、显存、内
 
 ## 版本发展线
 
-Mindspace 当前机器可读更新源记录了从 `0.4.4` 到 `0.7.4` 的 **63 个版本节点**。仓库不会为了补齐
+Mindspace 当前机器可读更新源记录了从 `0.4.4` 到 `0.8.0` 的 **64 个版本节点**。仓库不会为了补齐
 数字而虚构没有记录的 `0.4.0–0.4.3`。
 
 | 阶段 | 主要变化 |
@@ -223,12 +223,19 @@ Mindspace 当前机器可读更新源记录了从 `0.4.4` 到 `0.7.4` 的 **63 �
 | 0.5.x | 角色优先、Prompt 减负、RAG、档案写回、语音调度、三套 TTS 与 Launcher 成熟化 |
 | 0.6.0 | 模式大厅、灵感抽卡、多角色卡册、角色级会话与记忆隔离 |
 | 0.7.x | 共同篇章、场景、美术资源、交互回归、组件包管理与安装盘存储 |
+| 0.8.x | 桌面交互收敛、人物与 API 入口整合、接口容错、快速启动与品牌视觉统一 |
 
 <details>
 <summary><strong>展开完整 63 个版本节点</strong></summary>
 
 <!-- release-history:start -->
-> 自动同步自 [docs/release-history.json](docs/release-history.json)，当前共 **63** 个版本节点。
+> 自动同步自 [docs/release-history.json](docs/release-history.json)，当前共 **64** 个版本节点。
+
+#### 0.8.x
+
+| 版本 | 日期 | 主题 | 状态 |
+| --- | --- | --- | --- |
+| [0.8.0](CHANGELOG.md#080---2026-08-04) | 2026-08-04 | 桌面交互整合与本地启动提速 | local_package |
 
 #### 0.7.x
 

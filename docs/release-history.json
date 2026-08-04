@@ -1,5 +1,21 @@
 [
   {
+    "version": "0.8.0",
+    "published_at": "2026-08-04",
+    "status": "local_package",
+    "title": "桌面交互整合与本地启动提速",
+    "summary": [
+      "统一主页、人物、记忆、场景和设置入口，保留最近会话并收敛重复窗口行为",
+      "移除共同篇章与低优先级卡册入口，恢复会话删除、人物档案与 API 配置入口",
+      "重绘启动器、主页、抽卡和聊天视觉层，并以聊天气泡品牌图标替换单字母 M 标识",
+      "修复 OpenAI 兼容接口空回复与抽卡字段解析的容错路径",
+      "Core 默认快速启动，完整环境核验改为按需执行",
+      "Live2D 桌宠仅保留 V1.0 预告入口，不随 0.8.0 打包 SDK、模型、渲染器或下载项",
+      "PowerShell、MinGit、uv 与私有 Python 继续离线内嵌",
+      "Core、Web 与 Launcher 统一升至 0.8.0"
+    ]
+  },
+  {
     "version": "0.7.4",
     "published_at": "2026-07-30",
     "status": "local_regression_validated",
