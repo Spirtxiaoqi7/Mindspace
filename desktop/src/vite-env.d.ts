@@ -20,10 +20,16 @@ interface Window {
     diagnostics(): Promise<ActionResult>;
     source(source: "china" | "official"): Promise<RuntimeSnapshot>;
     proxy(proxy?: string): Promise<ActionResult & { proxy?: string }>;
+    companion(action?: "snapshot" | "toggle-enabled" | "enable" | "disable" | "toggle-click-through" | "show" | "reset-position"): Promise<CompanionSnapshot>;
   };
 }
 
 interface ActionResult { ok: boolean; error?: string; warning?: string; warnings?: string[]; pid?: number; log?: string; path?: string }
+interface CompanionSnapshot {
+  ok?: boolean; enabled: boolean; clickThrough: boolean; ready: boolean; visible: boolean; previewVisible: boolean;
+  available?: boolean; targetVersion?: string;
+  width: number; height: number; x: number | null; y: number | null; error: string; sdkVersion: string; modelVersion: string;
+}
 interface ServiceReport { online: boolean; starting?: boolean; detail: Record<string, unknown> }
 interface ModelReport { id: string; name: string; path: string; ready: boolean; optional?: boolean }
 interface ComponentReport {

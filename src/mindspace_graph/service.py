@@ -572,8 +572,12 @@ class ConversationService:
         await self._publish_stream(run, events.sequence, accepted)
         final: ChatResponse | None = None
         run_finished = False
-        server_request = self._server_request(request)
         try:
+            # Resolve server-owned character/provider state inside the guarded
+            # section.  Archived or missing characters must become a terminal
+            # run.error event instead of leaving subscribers after run.accepted
+            # with a permanently running durable record.
+            server_request = self._server_request(request)
             async for part in self.graph.astream(
                 {"request": server_request, "request_id": request_id},
                 config={"recursion_limit": 20},

@@ -14,7 +14,6 @@ import {
   ModeLobby,
 } from "./CharacterExperience";
 import type { AppView } from "./CharacterExperience";
-import { ActivitiesPage, JournalPage, MomentsPage } from "./SharedChapters";
 import { ScenePickerPage, sceneAssetPath } from "./SceneExperience";
 import type {
   AvatarConfig,
@@ -103,6 +102,77 @@ const VOICE_LABELS: Record<VoicePhase, string> = {
 };
 
 const uid = () => crypto.randomUUID();
+
+interface ConfirmationOptions {
+  title: string;
+  message: string;
+  detail?: string;
+  confirmLabel?: string;
+  danger?: boolean;
+}
+
+function styledConfirm(options: ConfirmationOptions): Promise<boolean> {
+  return new Promise((resolve) => {
+    const backdrop = document.createElement("div");
+    backdrop.className = "confirmation-backdrop";
+    const card = document.createElement("section");
+    card.className = `confirmation-card${options.danger ? " danger" : ""}`;
+    card.setAttribute("role", "alertdialog");
+    card.setAttribute("aria-modal", "true");
+
+    const mark = document.createElement("span");
+    mark.className = "confirmation-mark";
+    mark.textContent = options.danger ? "!" : "◇";
+    const copy = document.createElement("div");
+    copy.className = "confirmation-copy";
+    const kicker = document.createElement("small");
+    kicker.textContent = options.danger ? "需要确认" : "确认操作";
+    const title = document.createElement("h2");
+    title.textContent = options.title;
+    const message = document.createElement("p");
+    message.textContent = options.message;
+    copy.append(kicker, title, message);
+    if (options.detail) {
+      const detail = document.createElement("span");
+      detail.textContent = options.detail;
+      copy.append(detail);
+    }
+
+    const actions = document.createElement("footer");
+    const cancel = document.createElement("button");
+    cancel.className = "confirmation-cancel";
+    cancel.textContent = "取消";
+    const confirm = document.createElement("button");
+    confirm.className = "confirmation-accept";
+    confirm.textContent = options.confirmLabel || "继续";
+    actions.append(cancel, confirm);
+    card.append(mark, copy, actions);
+    backdrop.append(card);
+
+    let settled = false;
+    const finish = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      document.removeEventListener("keydown", onKeyDown);
+      backdrop.remove();
+      resolve(value);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") finish(false);
+    };
+    cancel.addEventListener("click", () => finish(false));
+    confirm.addEventListener("click", () => finish(true));
+    backdrop.addEventListener("mousedown", (event) => {
+      if (event.target === backdrop) finish(false);
+    });
+    document.addEventListener("keydown", onKeyDown);
+    document.body.append(backdrop);
+    window.requestAnimationFrame(() => {
+      backdrop.classList.add("visible");
+      confirm.focus();
+    });
+  });
+}
 
 // A recovered SSE stream is historical UI state. It must never become a new
 // audio job: restoring a page must not make the companion read an old answer.
@@ -548,6 +618,7 @@ function App() {
   const [characterPickerScope, setCharacterPickerScope] = useState<"all" | "custom">("all");
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [sessionId, setSessionId] = useState(localStorage.getItem("mindspace.session") || uid());
+  const [settingsInitialTab, setSettingsInitialTab] = useState("model");
   const [messages, setMessages] = useState<Message[]>([]);
   const [round, setRound] = useState(1);
   const [input, setInput] = useState("");
@@ -898,17 +969,11 @@ function App() {
         ? "/draw"
         : view === "characters"
           ? "/characters"
-          : view === "journal"
-            ? `/characters/${activeCharacterId}/journal`
-            : view === "moments"
-              ? `/characters/${activeCharacterId}/moments`
-              : view === "scenes"
-                ? `/chat/${sessionId}/scenes`
-              : view === "activities"
-                ? "/activities"
-                : `/chat/${sessionId}`;
+          : view === "scenes"
+            ? `/chat/${sessionId}/scenes`
+            : `/chat/${sessionId}`;
     window.history.replaceState(null, "", `#${path}`);
-  }, [activeCharacterId, sessionId]);
+  }, [sessionId]);
 
   const loadConversationScene = useCallback(async (id: string) => {
     try {
@@ -955,13 +1020,27 @@ function App() {
       request<{ sessions: SessionSummary[] }>("/api/v1/sessions"),
       request<AvatarConfig>("/api/v1/avatar/config"),
       request<{ items: CharacterSummary[] }>("/api/v1/characters"),
-    ]).then(([config, sessionResult, avatarResult, characterResult]) => {
+    ]).then(async ([config, sessionResult, avatarResult, characterResult]) => {
       setSettings(config);
       setSessions(sessionResult.sessions);
       setAvatars(normalizeAvatarConfig(avatarResult));
       setCharacters(characterResult.items);
-      setAppView("modes");
-      window.history.replaceState(null, "", "#/modes");
+      const activeCharacterIds = new Set(
+        characterResult.items
+          .filter((item) => item.status === "active")
+          .map((item) => item.character_id),
+      );
+      const usableSessions = sessionResult.sessions.filter((item) =>
+        !item.character_id || activeCharacterIds.has(item.character_id),
+      );
+      const rememberedId = localStorage.getItem("mindspace.session");
+      const preferred = usableSessions.find((item) => item.session_id === rememberedId)
+        || usableSessions[0];
+      if (preferred) await openSession(preferred.session_id);
+      else {
+        setAppView("modes");
+        window.history.replaceState(null, "", "#/modes");
+      }
       setInitialDataLoaded(true);
     }).catch((error: Error) => notify(error.message));
   }, [notify]);
@@ -1849,6 +1928,7 @@ function App() {
     }
     if (!llmReady) {
       notify("请先在设置中填写并保存 LLM API 配置");
+      setSettingsInitialTab("model");
       setModalDirty(false);
       setModal("settings");
       return;
@@ -1947,7 +2027,7 @@ function App() {
     } catch (error) {
       if ((error as Error).name !== "AbortError") {
         notify((error as Error).message);
-        setMessages((items) => items.map((item) => item.status === "streaming" ? { ...item, content: (error as Error).message, status: "error" as const } : item));
+        setMessages((items) => items.map((item) => item.status === "streaming" ? { ...item, content: "模型连接失败。请检查 API 地址、密钥或模型名称，然后重新尝试。", status: "error" as const } : item));
         if (voiceOpenRef.current) {
           setVoice((current) => ({
             ...current,
@@ -2908,6 +2988,16 @@ function App() {
   }, [startListening, stopListening]);
 
   const createSessionForCharacter = useCallback(async (character: CharacterSummary | CharacterRecord) => {
+    const matchingSessions = sessions
+      .filter((item) => item.character_id === character.character_id
+        || (!item.character_id && str(item.character_name).trim() === character.display_name.trim()))
+      .sort((left, right) => Date.parse(right.updated_at || "0") - Date.parse(left.updated_at || "0"));
+    const existing = matchingSessions[0]?.session_id || character.latest_session_id;
+    if (existing) {
+      setCharacterPickerOpen(false);
+      await openSession(existing);
+      return;
+    }
     cancelIdleContinuation();
     idleContinuationSentRef.current = false;
     companionRoundRef.current = 0;
@@ -2931,7 +3021,7 @@ function App() {
     window.history.replaceState(null, "", `#/chat/${id}`);
     await loadSessions();
     notify("已创建新对话");
-  }, [cancelIdleContinuation, cancelRun, generating, loadConversationScene, loadSessions, notify]);
+  }, [cancelIdleContinuation, cancelRun, generating, loadConversationScene, loadSessions, notify, openSession, sessions]);
 
   const newSession = useCallback(() => {
     setCharacterPickerScope("all");
@@ -2939,20 +3029,42 @@ function App() {
   }, []);
 
   const deleteSession = async (id: string) => {
-    if (!window.confirm("确定删除这个会话吗？")) return;
+    const target = sessions.find((item) => item.session_id === id);
+    if (!target) { notify("会话不存在或已经删除"); return; }
+    const displayName = str(target.character_name || target.title || "未命名会话").trim();
+    const normalizedName = displayName.toLocaleLowerCase();
+    const hasDuplicateName = sessions.some((item) => item.session_id !== id
+      && str(item.character_name || item.title).trim().toLocaleLowerCase() === normalizedName);
+    const hasConversation = num(target.message_count) > 0;
+    if ((!hasDuplicateName || hasConversation) && !(await styledConfirm({
+      title: `删除“${displayName}”？`,
+      message: hasConversation
+        ? `这个会话包含 ${target.message_count} 条对话，删除后无法恢复。`
+        : "这是该名称下唯一的会话，删除后将回到其他最近会话。",
+      detail: hasDuplicateName ? "同名但有内容，因此仍需要确认。" : "唯一名称需要明确确认。",
+      confirmLabel: "删除会话",
+      danger: true,
+    }))) return;
     await request(`/api/v1/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+    const remaining = sessions.filter((item) => item.session_id !== id)
+      .sort((left, right) => Date.parse(right.updated_at || "0") - Date.parse(left.updated_at || "0"));
+    setSessions(remaining);
     if (id === sessionId) {
-      setMessages([]);
-      setConversationScene(null);
-      navigate("modes");
+      const next = remaining[0];
+      if (next) await openSession(next.session_id);
+      else {
+        setMessages([]);
+        setConversationScene(null);
+        navigate("modes");
+      }
     }
-    await loadSessions();
+    else await loadSessions();
     notify("会话已删除");
   };
 
   const deleteReply = async (messageId?: string) => {
     if (!messageId) { notify("回复尚未完成保存，暂时不能删除"); return; }
-    if (!window.confirm("删除这条 AI 回复？用户原话会保留，JSON 将在下一轮重新校正。")) return;
+    if (!(await styledConfirm({ title: "删除这条 AI 回复？", message: "用户原话会保留，相关 JSON 会在下一轮重新校正。", confirmLabel: "删除回复", danger: true }))) return;
     const result = await request<{ pending_json_reconciliation: boolean }>(`/api/v1/sessions/${encodeURIComponent(sessionId)}/messages/${encodeURIComponent(messageId)}`, { method: "DELETE" });
     setMessages((items) => items.filter((item) => item.message_id !== messageId));
     await loadSessions();
@@ -2961,7 +3073,7 @@ function App() {
 
   const clearCurrent = async () => {
     if (!messages.length) { notify("当前会话没有可清空的内容"); return; }
-    if (!window.confirm("清空当前会话上下文？")) return;
+    if (!(await styledConfirm({ title: "清空当前上下文？", message: "当前会话内容会被清空，但人物档案与长期记忆不会被删除。", confirmLabel: "清空上下文", danger: true }))) return;
     await request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/clear`, { method: "POST" });
     setMessages([]); setRound(1); await loadSessions(); notify("当前上下文已清空");
   };
@@ -2981,8 +3093,8 @@ function App() {
     enqueueSpeech(text, true, voiceCue);
   };
   const openModal = (name: Exclude<ModalName, null>) => { setModalDirty(false); setModal(name); };
-  const closeModal = useCallback(() => {
-    if (modalDirty && !window.confirm("存在未保存的修改，确定关闭吗？")) return;
+  const closeModal = useCallback(async () => {
+    if (modalDirty && !(await styledConfirm({ title: "放弃未保存的修改？", message: "关闭后，本次尚未保存的编辑会丢失。", confirmLabel: "放弃修改", danger: true }))) return;
     setModal(null); setModalDirty(false);
   }, [modalDirty]);
   const showFlow = () => { setInspectorTab("flow"); setInspectorOpen(true); };
@@ -3014,7 +3126,23 @@ function App() {
     closePlaybackContext();
   }, [closeCaptureContext, closePlaybackContext, stopAudio, stopListening]);
 
-  const filteredSessions = useMemo(() => sessions.filter((item) => item.title.toLowerCase().includes(search.toLowerCase())), [search, sessions]);
+  const recentSessions = useMemo(() => {
+    return [...sessions]
+      .sort((left, right) => Date.parse(right.updated_at || "0") - Date.parse(left.updated_at || "0"))
+      .slice(0, 40);
+  }, [sessions]);
+  const filteredSessions = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return recentSessions.filter((item) => !query
+      || item.title.toLowerCase().includes(query)
+      || str(item.character_name).toLowerCase().includes(query));
+  }, [recentSessions, search]);
+
+  const openSettings = useCallback((tab = "model") => {
+    setSettingsInitialTab(tab);
+    setModalDirty(false);
+    setModal("settings");
+  }, []);
   const title = sessions.find((item) => item.session_id === sessionId)?.title || "新对话";
   const userName = str(settings?.persona.user_name || "用户");
   const characterName = activeCharacter?.display_name || str(settings?.persona.character_name || "Mindspace");
@@ -3045,6 +3173,7 @@ function App() {
     return <>
       <ModeLobby
         characters={characters}
+        userName={userName}
         interrupted={interruptedSession}
         onDraw={() => void enterDrawMode()}
         onCustom={enterCustomMode}
@@ -3083,16 +3212,6 @@ function App() {
     />;
   }
 
-  if (activeCharacter && appView === "journal") {
-    return <JournalPage
-      character={activeCharacter}
-      sessionId={sessionId}
-      onBack={() => navigate("chat")}
-      onChanged={loadCharacters}
-      notify={notify}
-    />;
-  }
-
   if (activeCharacter && appView === "scenes") {
     return <ScenePickerPage
       character={activeCharacter}
@@ -3104,41 +3223,19 @@ function App() {
     />;
   }
 
-  if (activeCharacter && appView === "moments") {
-    return <MomentsPage
-      character={activeCharacter}
-      onBack={() => navigate("chat")}
-      onChanged={loadCharacters}
-      notify={notify}
-    />;
-  }
-
-  if (activeCharacter && appView === "activities") {
-    return <ActivitiesPage
-      character={activeCharacter}
-      sessionId={sessionId}
-      onBack={() => navigate("chat")}
-      onChanged={loadCharacters}
-      onContinueChat={(activitySessionId) => {
-        setActiveActivitySessionId(activitySessionId);
-        navigate("chat");
-        notify("活动现场已接入本轮对话；界面动作仍由服务端推进");
-      }}
-      notify={notify}
-    />;
-  }
-
   return <div className={`app-shell ${inspectorOpen ? "inspector-visible" : "inspector-hidden"}`}>
     <aside className={`sidebar ${sidebarOpen ? "mobile-open" : ""}`}>
-      <div className="brand-row"><button className="brand-mark" onClick={() => navigate("modes")} title="返回模式大厅">M</button><div><strong>Mindspace</strong><small>LANGGRAPH STUDIO</small></div><button className="icon-button mobile-only" onClick={() => setSidebarOpen(false)} aria-label="关闭会话栏">×</button></div>
-      <button className="new-chat" onClick={newSession}><span>＋</span> 新建对话 <kbd>Ctrl N</kbd></button>
+      <div className="brand-row"><button className="brand-mark" onClick={() => navigate("modes")} title="返回主页" aria-label="Mindspace 主页"><img src="/assets/mindspace-brand-icon.png" alt="" /></button><div><strong>Mindspace</strong><small>PRIVATE COMPANION</small></div><button className="icon-button mobile-only" onClick={() => setSidebarOpen(false)} aria-label="关闭会话栏">×</button></div>
+      <button className="new-chat home-entry" onClick={() => navigate("modes")}><span>⌂</span> 主页</button>
       <label className="search-box"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索会话" aria-label="搜索会话" /></label>
       <div className="session-heading"><span>最近会话</span><small>{filteredSessions.length}</small></div>
       <nav className="session-list">
-        {filteredSessions.length ? filteredSessions.map((item) => <div className={`session-item ${item.session_id === sessionId ? "active" : ""}`} key={item.session_id}><button className="session-open" onClick={() => void openSession(item.session_id)}>{item.character_avatar?.src ? <img className="session-avatar" src={item.character_avatar.src} alt="" /> : <span className="session-glyph">◌</span>}<span><strong>{item.title}</strong><small>{item.character_name ? `${item.character_name} · ` : ""}{item.message_count} 条 · {formatTime(item.updated_at)}</small></span></button><button className="session-delete" onClick={() => void deleteSession(item.session_id)} title="删除会话" aria-label={`删除会话 ${item.title}`}>×</button></div>) : <div className="empty-mini">没有匹配的会话</div>}
+        {filteredSessions.length ? filteredSessions.map((item) => <div className={`session-item ${item.session_id === sessionId ? "active" : ""}`} key={item.session_id}><button className="session-open" onClick={() => void openSession(item.session_id)}>{item.character_avatar?.src ? <img className="session-avatar" src={item.character_avatar.src} alt="" /> : <span className="session-glyph">◌</span>}<span><strong>{item.character_name || item.title}</strong><small>{item.message_count} 条 · {formatTime(item.updated_at)}</small></span></button><button className="session-delete" aria-label={`删除会话：${item.character_name || item.title}`} title="删除会话" onClick={() => void deleteSession(item.session_id)}>×</button></div>) : <div className="empty-mini">没有匹配的会话</div>}
       </nav>
-      <div className="sidebar-tools"><button onClick={() => openModal("knowledge")}><span>▱</span> 全局知识库</button><button onClick={() => openModal("memory")}><span>◎</span> 记忆中心</button><button onClick={() => { setProfileEditorRole("user"); openModal("profile"); }}><span>◇</span> 人物与状态档案</button><button onClick={() => openModal("diagnostics")}><span>⌁</span> 系统诊断</button></div>
-      <div className="account-card"><PortraitAvatar role="assistant" avatars={effectiveAvatars} label={characterName} className="small" onClick={() => setProfileCardRole("assistant")} /><button className="account-settings" onClick={() => navigate("characters")}><span><strong>{characterName}</strong><small><i /> 当前角色 · 已隔离</small></span><b>卡册</b></button></div>
+      <div className="sidebar-tools hub-navigation">
+        <button className="sidebar-memory-entry" onClick={() => openModal("memory")}><span>◇</span><b>记忆</b><i>查看与修订长期记忆</i></button>
+      </div>
+      <div className="account-card"><PortraitAvatar role="assistant" avatars={effectiveAvatars} label={characterName} className="small" onClick={() => setProfileCardRole("assistant")} /><button className="account-settings persona-entry" aria-label="打开人设工作区" onClick={() => { setProfileEditorRole("assistant"); setModal("profile"); }}><span><strong>{characterName}</strong><small><i /> 人物、状态与关系</small></span><b>人设</b></button></div>
     </aside>
 
     <main className={`workspace${conversationScene?.scene ? " scene-active" : ""}`}>
@@ -3148,7 +3245,7 @@ function App() {
         style={{ backgroundImage: `url("${sceneAssetPath(conversationScene.scene.asset_id)}")` }}
         aria-hidden="true"
       />}
-      <header className="topbar"><button className="mobile-only mobile-menu" onClick={() => setSidebarOpen(true)} aria-label="打开会话栏">☰</button><div className="title-block"><h1>{title}</h1><span>{characterName} · {generating ? "正在运行编排" : `第 ${round} 轮 · 已就绪`}</span></div><div className="top-actions"><button className="chapter-heart-entry" onClick={() => navigate("moments")} title="打开共同篇章"><img src={`/assets/archive/icons/heart-${activeCharacter?.chapters?.heart_state === "trace" ? "trace" : activeCharacter?.chapters?.heart_state === "warm" ? "warm" : activeCharacter?.chapters?.heart_state === "glow" || activeCharacter?.chapters?.heart_state === "keepsake" ? "glow" : "empty"}.svg`} alt="" /><span>共同篇章</span><b>{activeCharacter?.chapters?.moment_count || 0}</b></button><button className="text-action" onClick={() => navigate("modes")}>模式大厅</button>{activeCharacter?.source === "draw" ? <button className="text-action" onClick={() => navigate("draw")}>重新抽卡</button> : <button className="text-action" onClick={() => navigate("draw")}>前往灵感抽卡</button>}<span className={`model-chip ${llmReady ? "" : "warning"}`} title={llmReady ? "真实 LLM API 已配置" : "LLM API 尚未配置"}><i />{llmReady ? str(settings?.llm.model || "LLM") : "LLM 未配置"}</span><button onClick={exportSession} title="导出会话" aria-label="导出会话">⇩</button><button className="text-action" onClick={showFlow} title="查看 LangGraph 节点执行过程">执行详情</button><button onClick={() => openModal("settings")} title="产品设置" aria-label="产品设置">⚙</button></div></header>
+      <header className="topbar"><button className="mobile-only mobile-menu" onClick={() => setSidebarOpen(true)} aria-label="打开会话栏">☰</button><div className="title-block"><span className="topbar-kicker">CONVERSATION</span><h1>{title}</h1><span>{characterName} · {generating ? "正在回应" : `第 ${round} 轮 · 已就绪`}</span></div><div className="top-actions"><button className="top-character-entry" onClick={() => { setProfileEditorRole("assistant"); setModal("profile"); }} title="打开人设工作区"><span className="top-character-avatar" style={avatarStyle(effectiveAvatars.assistant)} aria-hidden="true"><img src={effectiveAvatars.assistant.src} alt="" /></span><span>{characterName}</span></button><button className="top-settings-entry" onClick={() => openSettings("model")} title={llmReady ? `${str(settings?.llm.model || "API 已连接")} · 打开设置` : "API 尚未配置 · 打开设置"}><i className={llmReady ? "ready" : "warning"} />⚙ <span>设置</span></button></div></header>
       <section
         className="conversation"
         ref={conversationRef}
@@ -3156,18 +3253,18 @@ function App() {
         onWheel={(event) => { if (event.deltaY < 0) pauseConversationFollow(); }}
         onTouchMove={pauseConversationFollow}
       >
-        {!messages.length && <div className="welcome-panel"><span className="eyebrow">PRIVATE · LOCAL · STATEFUL</span><h2>让每一次对话<br />都成为连续的记忆</h2><p>双源检索、角色一致性、状态写回与实时语音，都由可观察的 LangGraph 流程调度。</p><div className="prompt-grid">{["解释当前 LangGraph 节点如何调度", "总结知识库中最重要的三点", "检查当前角色和状态档案", "设计一个低延迟语音对话流程"].map((value) => <button key={value} onClick={() => void sendMessage(value)}><span>↗</span>{value}</button>)}</div></div>}
-        <MessageList messages={messages} avatars={effectiveAvatars} userName={userName} characterName={characterName} onProfile={setProfileCardRole} onCopy={(text) => { void navigator.clipboard.writeText(text); notify("已复制回复"); }} onSpeak={speakMessage} onRegenerate={(value, targetRound) => void sendMessage(value, "regenerate", targetRound)} onInitiative={(targetRound) => void sendMessage("", "regenerate", targetRound, true)} onDelete={(messageId) => void deleteReply(messageId)} />
+        {!messages.length && <div className="welcome-panel companion-stage"><div className="stage-portrait"><PortraitAvatar role="assistant" avatars={effectiveAvatars} label={characterName} onClick={() => setProfileCardRole("assistant")} /></div><span className="eyebrow">{activeCharacter?.relationship_label || "PRIVATE COMPANION"}</span><h2>{userName} <i>×</i> {characterName}</h2><blockquote>“{activeCharacter?.user_alias || userName}，我在。今天想从哪里开始？”</blockquote><div className="stage-actions"><button className="stage-speak" disabled={generating} onClick={() => void sendMessage("", "primary", round, true)}><span>✦</span><b>让 {characterName} 先说</b><small>由当前人设与场景发起一句话</small></button><button onClick={() => navigate("scenes")}><span>⌑</span><b>{conversationScene?.scene?.title || "选择场景"}</b><small>改变这次见面的环境</small></button><button onClick={() => { setProfileEditorRole("assistant"); setModal("profile"); }}><span>◇</span><b>查看人设</b><small>人物、关系与运行状态</small></button></div></div>}
+        <MessageList messages={messages} avatars={effectiveAvatars} userName={userName} characterName={characterName} onProfile={setProfileCardRole} onCopy={(text) => { void navigator.clipboard.writeText(text); notify("已复制回复"); }} onSpeak={speakMessage} onRegenerate={(value, targetRound) => void sendMessage(value, "regenerate", targetRound)} onInitiative={(targetRound) => void sendMessage("", "regenerate", targetRound, true)} onDelete={(messageId) => void deleteReply(messageId)} onConfigure={() => openSettings("model")} />
         <div className="conversation-tail" ref={conversationTailRef} aria-hidden="true" />
       </section>
-      <section className="composer-wrap">{generating && <div className="run-strip"><span><i /> 正在流式执行 · {runId.slice(0, 8)}</span><button onClick={() => void cancelRun()}>停止生成</button></div>}{activeActivitySessionId && <div className="activity-context-strip"><span>活动现场已接入本轮 Prompt</span><button className="chapter-control-button secondary" onClick={() => navigate("activities")}>查看活动</button><button className="chapter-control-button quiet" onClick={() => setActiveActivitySessionId("")}>退出活动</button></div>}<div className="composer"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} placeholder="输入消息，或开启实时语音…" rows={1} /><div className="composer-row"><div><button className="voice-entry" onClick={openVoiceEntry}>● 实时语音</button><button className={`adult-entry${adultMode ? " active" : ""}`} aria-pressed={adultMode} onClick={toggleAdultMode} title="开启或关闭 NSFW 模式">NSFW</button>{adultMode && <select className="r18-style-select" value={r18StyleId} aria-label="R18 风格包" onChange={(event) => { const next = event.target.value; setR18StyleId(next); localStorage.setItem(R18_STYLE_STORAGE_KEY, next); }}><option value="high_intensity">高强度推进</option><option value="immersive_narrative">叙事沉浸</option><option value="dialogue_led">台词主导</option></select>}<button className="initiative-entry" disabled={generating} onClick={() => void sendMessage("", "primary", round, true)} title="不输入文字，让角色根据当前关系主动说点什么">✦ 让 AI 说点什么</button><button className={`scene-entry${conversationScene?.scene ? " active" : ""}`} onClick={() => navigate("scenes")}><img src="/assets/archive/icons/activity-scene.svg" alt="" /><span>{conversationScene?.scene?.title || "场景"}</span></button><details className="composer-menu"><summary>共同篇章</summary><div><button className="chapter-composer-entry" onClick={() => navigate("activities")}><img src="/assets/archive/icons/chapter-activity.svg" alt="" />陪伴活动</button><button className="chapter-composer-entry" onClick={() => navigate("journal")}><img src="/assets/archive/icons/chapter-journal.svg" alt="" />角色日记</button><button className="chapter-composer-entry" onClick={() => navigate("moments")}><img src="/assets/archive/icons/chapter-moments.svg" alt="" />共同片段</button></div></details><details className="composer-menu"><summary>更多</summary><div><button onClick={() => openModal("knowledge")}>＋ 知识</button><button onClick={showContext}>本轮引用 <b>{retrieval.length}</b></button></div></details></div><button className="send" onClick={() => generating ? void cancelRun() : void sendMessage()} disabled={!generating && !input.trim()} aria-label={generating ? "停止生成" : "发送消息"}>{generating ? "■" : "↑"}</button></div></div><div className="composer-meta"><span>Enter 发送 · Shift+Enter 换行 · Esc 打断</span><button onClick={() => void clearCurrent()}>清空当前上下文</button></div></section>
+      <section className="composer-wrap">{generating && <div className="run-strip"><span><i /> 正在回应</span><button onClick={() => void cancelRun()}>停止生成</button></div>}<div className="composer"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} placeholder={`对 ${characterName} 说点什么…`} rows={1} /><div className="composer-row"><div className="composer-primary-tools"><button className="voice-entry" onClick={openVoiceEntry}><span>●</span> 实时语音</button><button className={`scene-entry${conversationScene?.scene ? " active" : ""}`} onClick={() => navigate("scenes")}><img src="/assets/archive/icons/activity-scene.svg" alt="" /><span>{conversationScene?.scene?.title || "场景"}</span></button><button className="initiative-inline" disabled={generating} onClick={() => void sendMessage("", "primary", round, true)}>✦ 让 {characterName} 先说</button><details className="composer-menu composer-add-menu"><summary aria-label="更多对话功能"><span className="visually-hidden">更多</span><b aria-hidden="true">＋</b></summary><div><button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showFlow(); }}>会话流程与执行详情</button><button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showContext(); }}>本轮引用 <b>{retrieval.length}</b></button><button onClick={exportSession}>导出当前会话</button><button className={`adult-entry${adultMode ? " active" : ""}`} aria-label="NSFW" aria-pressed={adultMode} onClick={toggleAdultMode}>NSFW <span>{adultMode ? "已开启" : "已关闭"}</span></button>{adultMode && <label className="r18-style-menu-label"><span>成人模式风格</span><select className="r18-style-select" value={r18StyleId} aria-label="R18 风格包" onChange={(event) => { const next = event.target.value; setR18StyleId(next); localStorage.setItem(R18_STYLE_STORAGE_KEY, next); }}><option value="high_intensity">高强度推进</option><option value="immersive_narrative">叙事沉浸</option><option value="dialogue_led">台词主导</option></select></label>}<button className="composer-clear-action" onClick={() => void clearCurrent()}>清空当前上下文</button></div></details></div><button className="send" onClick={() => generating ? void cancelRun() : void sendMessage()} disabled={!generating && !input.trim()} aria-label={generating ? "停止生成" : "发送消息"}>{generating ? "■" : "↑"}</button></div></div><div className="composer-meta"><span>Enter 发送 · Shift+Enter 换行 · Esc 打断</span><span>{adultMode ? "NSFW 已开启" : conversationScene?.scene ? `当前场景：${conversationScene.scene.title}` : "本地 · 私密 · 连续记忆"}</span></div></section>
     </main>
 
     <Inspector open={inspectorOpen} tab={inspectorTab} onTab={setInspectorTab} onClose={() => setInspectorOpen(false)} events={events} retrieval={retrieval} runId={inspectionRunId} />
-    {modal === "settings" && settings && <SettingsDialog value={settings} avatars={avatars} onClose={closeModal} onDirty={setModalDirty} onSaved={(next, nextAvatars) => { setSettings(next); setAvatars(nextAvatars); setModalDirty(false); setModal(null); }} onSettingsChange={setSettings} onAvatarsChange={setAvatars} notify={notify} />}
+    {modal === "settings" && settings && <SettingsDialog value={settings} avatars={avatars} initialTab={settingsInitialTab} onClose={closeModal} onDirty={setModalDirty} onOpenProfile={(role) => { setProfileEditorRole(role); setModalDirty(false); setModal("profile"); }} onOpenMemory={() => { setModalDirty(false); setModal("memory"); }} onOpenKnowledge={() => { setModalDirty(false); setModal("knowledge"); }} onOpenDiagnostics={() => { setModalDirty(false); setModal("diagnostics"); }} onSaved={(next, nextAvatars) => { setSettings(next); setAvatars(nextAvatars); setModalDirty(false); setModal(null); }} onSettingsChange={setSettings} onAvatarsChange={setAvatars} notify={notify} />}
     {modal === "knowledge" && <KnowledgeDialog onClose={closeModal} onDirty={setModalDirty} notify={notify} />}
     {modal === "memory" && <MemoryDialog characterId={activeCharacterId} onClose={closeModal} onDirty={setModalDirty} notify={notify} />}
-    {modal === "profile" && <ProfileDialog characterId={activeCharacterId} initialName={profileEditorRole} onClose={closeModal} onDirty={setModalDirty} notify={notify} />}
+    {modal === "profile" && <ProfileDialog characterId={activeCharacterId} initialName={profileEditorRole} onClose={closeModal} onDirty={setModalDirty} onOpenConnection={() => openSettings("model")} onSaved={() => void loadCharacters()} notify={notify} />}
     {modal === "diagnostics" && <DiagnosticsDialog onClose={closeModal} notify={notify} onCleared={() => { newSession(); void loadSessions(); }} />}
     {modal === "voice-entry" && <VoiceEntryDialog mode={voiceEntryMode} scene={voiceEntryScene} busy={voiceEntryBusy} error={voiceEntryError} onModeChange={(next) => { setVoiceEntryMode(next); setModalDirty(true); }} onSceneChange={(next) => { setVoiceEntryScene(next); setModalDirty(true); }} onClose={closeVoiceEntry} onStart={() => void startVoiceFromEntry()} />}
     {profileCardRole && <ProfileCardDialog characterId={activeCharacterId} role={profileCardRole} avatars={effectiveAvatars} displayName={profileCardRole === "user" ? userName : characterName} onClose={() => setProfileCardRole(null)} onEdit={(role) => { setProfileCardRole(null); setProfileEditorRole(role); setModal("profile"); }} />}
@@ -3178,15 +3275,15 @@ function App() {
   </div>;
 }
 
-const MessageList = memo(function MessageList({ messages, avatars, userName, characterName, onProfile, onCopy, onSpeak, onRegenerate, onInitiative, onDelete }: {
+const MessageList = memo(function MessageList({ messages, avatars, userName, characterName, onProfile, onCopy, onSpeak, onRegenerate, onInitiative, onDelete, onConfigure }: {
   messages: Message[]; avatars: AvatarConfig; userName: string; characterName: string;
   onProfile: (role: Role) => void; onCopy: (text: string) => void; onSpeak: (text: string, voiceCue?: string) => void;
-  onRegenerate: (text: string, round: number) => void; onInitiative: (round: number) => void; onDelete: (messageId?: string) => void;
+  onRegenerate: (text: string, round: number) => void; onInitiative: (round: number) => void; onDelete: (messageId?: string) => void; onConfigure: () => void;
 }) {
   return <div className="message-list">{messages.map((message, index) => {
     const label = message.role === "user" ? userName : characterName;
     const initiativeLabel = message.initiative_trigger === "continuous_companionship" ? "· 连续陪伴" : message.kind === "initiative_response" ? "· 主动回应" : "";
-    return <article className={`message ${message.role} ${message.status || "complete"}`} key={message.message_id || `${message.round}-${message.role}-${index}`}><PortraitAvatar role={message.role} avatars={avatars} label={label} onClick={() => onProfile(message.role)} /><div className="message-content"><div className="message-head"><strong>{label}</strong><span>第 {message.round} 轮 {initiativeLabel}{message.status === "streaming" && "· 正在生成"}{message.status === "cancelled" && "· 已打断"}{message.status === "interrupted" && "· 回答在此处中断"}{message.status === "error" && "· 失败"}</span></div><div className="message-text">{richText(message.content || (message.status === "streaming" ? "" : "…"))}{message.status === "streaming" && <i className="stream-caret" />}</div>{message.role === "assistant" && message.status !== "streaming" && <div className="message-actions"><button onClick={() => onCopy(message.content)}>复制</button><button onClick={() => onSpeak(message.content, message.voice_cue)}>朗读</button><button onClick={() => { if (message.kind === "initiative_response") { onInitiative(message.round); return; } const user = messages.find((item) => item.role === "user" && item.round === message.round); if (user) onRegenerate(user.content, message.round); }}>重新生成</button><button onClick={() => onDelete(message.message_id)}>删除回复</button></div>}</div></article>;
+    return <article className={`message ${message.role} ${message.status || "complete"}`} key={message.message_id || `${message.round}-${message.role}-${index}`}><PortraitAvatar role={message.role} avatars={avatars} label={label} onClick={() => onProfile(message.role)} /><div className="message-content"><div className="message-head"><strong>{message.status === "error" ? "Mindspace" : label}</strong><span>第 {message.round} 轮 {initiativeLabel}{message.status === "streaming" && "· 正在生成"}{message.status === "cancelled" && "· 已打断"}{message.status === "interrupted" && "· 回答在此处中断"}{message.status === "error" && "· 连接失败"}</span></div><div className="message-text">{richText(message.content || (message.status === "streaming" ? "" : "…"))}{message.status === "streaming" && <i className="stream-caret" />}</div>{message.status === "error" ? <div className="message-actions error-actions"><button className="primary" onClick={onConfigure}>立即配置 API</button><button onClick={() => { const user = messages.find((item) => item.role === "user" && item.round === message.round); if (user) onRegenerate(user.content, message.round); }}>重新尝试</button></div> : message.role === "assistant" && message.status !== "streaming" && <div className="message-actions"><button onClick={() => onCopy(message.content)}>复制</button><button onClick={() => onSpeak(message.content, message.voice_cue)}>朗读</button><button onClick={() => { if (message.kind === "initiative_response") { onInitiative(message.round); return; } const user = messages.find((item) => item.role === "user" && item.round === message.round); if (user) onRegenerate(user.content, message.round); }}>重新生成</button><button onClick={() => onDelete(message.message_id)}>删除回复</button></div>}</div></article>;
   })}</div>;
 });
 
@@ -3276,11 +3373,13 @@ function VoiceEntryDialog({ mode, scene, busy, error, onModeChange, onSceneChang
 }
 
 function Modal({ title, kicker, onClose, children, footer, compact = false, className = "", dismissOnBackdrop = false }: { title: string; kicker: string; onClose: () => void; children: ReactNode; footer?: ReactNode; compact?: boolean; className?: string; dismissOnBackdrop?: boolean }) {
+  const displayTitle = title === "记忆中心" ? "记忆" : title;
+  const displayKicker = kicker === "MEMORY CENTER" ? "MEMORY" : kicker;
   return <div className="modal-backdrop" onMouseDown={(event) => {
     if (event.target !== event.currentTarget) return;
     if (dismissOnBackdrop) onClose();
     else event.preventDefault();
-  }}><section className={`modal-card ${compact ? "compact" : ""} ${className}`.trim()} role="dialog" aria-modal="true" aria-label={title}><header><div><span className="eyebrow">{kicker}</span><h2>{title}</h2></div><button onClick={onClose} aria-label={`关闭${title}`}>×</button></header><div className="modal-body">{children}</div>{footer && <footer>{footer}</footer>}</section></div>;
+  }}><section className={`modal-card ${compact ? "compact" : ""} ${className}`.trim()} role="dialog" aria-modal="true" aria-label={displayTitle}><header><div><span className="eyebrow">{displayKicker}</span><h2>{displayTitle}</h2></div><button onClick={onClose} aria-label={`关闭${displayTitle}`}>×</button></header><div className="modal-body">{children}</div>{footer && <footer>{footer}</footer>}</section></div>;
 }
 
 function Field({ label, value, type = "text", onChange, min, max, step, placeholder }: { label: string; value: unknown; type?: string; onChange: (value: unknown) => void; min?: number; max?: number; step?: number; placeholder?: string }) {
@@ -3298,7 +3397,7 @@ function AvatarEditor({ role, entry, onChange, onUpload, busy }: { role: Role; e
   return <article className="avatar-editor-card"><div className="avatar-editor-head"><div className="avatar-preview portrait-avatar" style={avatarStyle(entry)}><img src={entry.src} alt={`${label}预览`} /></div><div><strong>{label}</strong><small>{role === "assistant" ? "聊天与语音页面中的角色形象" : "聊天消息中的用户形象"}</small></div></div><div className="avatar-editor-actions"><label className="secondary upload-button">{busy ? "上传中…" : "上传图片"}<input hidden disabled={busy} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => { const file = event.target.files?.[0]; if (file) onUpload(file); event.currentTarget.value = ""; }} /></label><button className="secondary" onClick={() => onChange(DEFAULT_AVATARS[role])}>恢复默认</button></div><div className="avatar-controls"><SelectField label="头像比例" value={entry.aspect} options={[["2 / 3", "2:3 竖屏"], ["3 / 4", "3:4 竖屏"], ["4 / 5", "4:5 竖屏"], ["9 / 16", "9:16 长屏"], ["1 / 1", "1:1 方形"]]} onChange={(value) => onChange({ ...entry, aspect: value as AvatarEntry["aspect"] })} /><label>缩放 <b>{entry.scale.toFixed(2)}x</b><input type="range" min="0.6" max="3" step="0.01" value={entry.scale} onChange={(event) => onChange({ ...entry, scale: Number(event.target.value) })} /></label><label>横移 <b>{entry.x}%</b><input type="range" min="-80" max="80" value={entry.x} onChange={(event) => onChange({ ...entry, x: Number(event.target.value) })} /></label><label>纵移 <b>{entry.y}%</b><input type="range" min="-80" max="80" value={entry.y} onChange={(event) => onChange({ ...entry, y: Number(event.target.value) })} /></label></div></article>;
 }
 
-function SettingsDialog({ value, avatars, onClose, onDirty, onSaved, onSettingsChange, onAvatarsChange, notify }: { value: ProductSettings; avatars: AvatarConfig; onClose: () => void; onDirty: (dirty: boolean) => void; onSaved: (value: ProductSettings, avatars: AvatarConfig) => void; onSettingsChange: (value: ProductSettings) => void; onAvatarsChange: (value: AvatarConfig) => void; notify: (message: string) => void }) {
+function SettingsDialog({ value, avatars, initialTab = "model", onClose, onDirty, onOpenProfile, onOpenMemory, onOpenKnowledge, onOpenDiagnostics, onSaved, onSettingsChange, onAvatarsChange, notify }: { value: ProductSettings; avatars: AvatarConfig; initialTab?: string; onClose: () => void; onDirty: (dirty: boolean) => void; onOpenProfile: (role: Role) => void; onOpenMemory: () => void; onOpenKnowledge: () => void; onOpenDiagnostics: () => void; onSaved: (value: ProductSettings, avatars: AvatarConfig) => void; onSettingsChange: (value: ProductSettings) => void; onAvatarsChange: (value: AvatarConfig) => void; notify: (message: string) => void }) {
   const normalizedValue: ProductSettings = {
     ...structuredClone(value),
     audio: {
@@ -3344,7 +3443,7 @@ function SettingsDialog({ value, avatars, onClose, onDirty, onSaved, onSettingsC
   };
   const [draft, setDraft] = useState<ProductSettings>(normalizedValue);
   const [avatarDraft, setAvatarDraft] = useState<AvatarConfig>(structuredClone(avatars));
-  const [tab, setTab] = useState("model");
+  const [tab, setTab] = useState(initialTab);
   const [audioBusy, setAudioBusy] = useState("");
   const [audioStatus, setAudioStatus] = useState(bool(value.audio.tts_reference_configured) ? `已配置参考音频：${str(value.audio.tts_reference_name)}` : "尚未上传参考音频");
   const [providerBusy, setProviderBusy] = useState(false);
@@ -3547,7 +3646,7 @@ function SettingsDialog({ value, avatars, onClose, onDirty, onSaved, onSettingsC
     } catch (error) { setAudioStatus((error as Error).message); notify((error as Error).message); } finally { setAudioBusy(""); }
   };
   const clearReference = async () => {
-    if (!window.confirm("清除当前参考音频和参考文本？")) return;
+    if (!(await styledConfirm({ title: "清除参考音频？", message: "当前参考音频和参考文本都会被清除。", confirmLabel: "清除参考", danger: true }))) return;
     setAudioBusy("clear");
     try {
       const result = await request<{ settings: Record<string, unknown> }>("/api/v1/audio/tts/reference", { method: "DELETE" });
@@ -3594,9 +3693,27 @@ function SettingsDialog({ value, avatars, onClose, onDirty, onSaved, onSettingsC
       const normalized = normalizeAvatarConfig(result.config); setAvatarDraft(normalized); onAvatarsChange(normalized); notify(`${role === "assistant" ? "AI" : "用户"}头像上传成功`);
     } catch (error) { notify((error as Error).message); } finally { setAvatarBusy(""); }
   };
-  const tabs = [["model", "模型与角色"], ["avatar", "人物头像"], ["rag", "RAG 与分块"], ["protocol", "协议"], ["audio", "实时语音"], ["vocabulary", "识别词表"], ["appearance", "界面"], ["rhythm", "陪伴频率"], ["capabilities", "自动能力"]];
-  return <Modal title="产品设置" kicker="CONTROL CENTER" onClose={onClose} footer={<><button className="secondary" onClick={onClose}>取消</button><button className="primary" onClick={() => void save()}>保存设置</button></>}><div className="settings-layout"><nav>{tabs.map(([id, label]) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}</nav><div className="settings-panel">
+  const settingGroups = [
+    { id: "connection", label: "连接", tabs: [["model", "模型与 API"], ["capabilities", "自动能力"]] },
+    { id: "memory", label: "记忆", tabs: [["rag", "记忆与检索"]] },
+    { id: "voice", label: "声音", tabs: [["audio", "实时语音"], ["vocabulary", "识别词表"], ["rhythm", "陪伴频率"]] },
+    { id: "interface", label: "界面", tabs: [["avatar", "人物头像"], ["appearance", "显示偏好"]] },
+    { id: "advanced", label: "高级", tabs: [["protocol", "协议与诊断"]] },
+  ] as const;
+  const activeGroup = settingGroups.find((group) => group.tabs.some(([id]) => id === tab)) || settingGroups[0];
+  return <Modal title="设置中心" kicker="SETTINGS HUB" onClose={onClose} footer={<><button className="secondary" onClick={onClose}>取消</button><button className="primary" onClick={() => void save()}>保存设置</button></>}>
+    <div className="settings-layout settings-hub-layout">
+      <nav>{settingGroups.map((group) => <button key={group.id} className={activeGroup.id === group.id ? "active" : ""} onClick={() => setTab(group.tabs[0][0])}><span aria-hidden="true">{group.id === "connection" ? "⌁" : group.id === "memory" ? "◇" : group.id === "voice" ? "◉" : group.id === "interface" ? "▣" : "⌘"}</span>{group.label}</button>)}</nav>
+      <div className="settings-panel">
+        <div className="settings-subnav">
+          {activeGroup.tabs.map(([id, label]) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}
+          {activeGroup.id === "memory" && <><button onClick={onOpenMemory}>记忆内容 ↗</button><button onClick={onOpenKnowledge}>知识库 ↗</button></>}
+          {activeGroup.id === "advanced" && <button onClick={onOpenDiagnostics}>系统诊断 ↗</button>}
+        </div>
     {tab === "model" && <>
+      <h3>人物与状态档案</h3>
+      <p className="notice">这里同时管理人物设定和 API。完整结构化档案可单独编辑，保存后会继续沿用当前人物的长期关系与状态。</p>
+      <div className="persona-config-actions"><button type="button" onClick={() => onOpenProfile("user")}>编辑用户档案</button><button type="button" onClick={() => onOpenProfile("assistant")}>编辑 AI 人设档案</button></div>
       <h3>语言模型 API</h3>
       <p className={`notice ${bool(draft.llm.credentials_configured) ? "" : "warning"}`}>{bool(draft.llm.credentials_configured) ? "真实 LLM API 已启用；保存后立即用于下一轮对话。" : "尚未配置 LLM API 密钥。未配置时会阻止发送，不会生成演示回复。"}</p>
       <div className="form-grid"><SelectField label="运行模式" value="openai" disabled options={[["openai", "真实 API（OpenAI 兼容）"]]} onChange={() => undefined} /><Field label="模型" value={draft.llm.model} onChange={(next) => update("llm", "model", next)} /><Field label="API 地址" value={draft.llm.base_url} onChange={(next) => update("llm", "base_url", next)} /><Field label="新 API 密钥（留空保持）" value={llmApiKey} type="password" placeholder={bool(draft.llm.credentials_configured) ? "已配置；输入新密钥可替换" : "输入 API 密钥"} onChange={(next) => setLlmApiKey(str(next))} /><Field label="温度" value={draft.llm.temperature} type="number" min={0} max={2} step={0.05} onChange={(next) => update("llm", "temperature", next)} /><Field label="最大 token" value={draft.llm.max_tokens} type="number" min={64} max={32768} onChange={(next) => update("llm", "max_tokens", next)} /></div>
@@ -3649,7 +3766,7 @@ function SettingsDialog({ value, avatars, onClose, onDirty, onSaved, onSettingsC
       <h3>当前词表</h3>
       <div className="vocabulary-summary"><span>个人 <b>{num(vocabulary?.counts.manual)}</b></span><span>JSON 自动 <b>{num(vocabulary?.counts.profile)}</b></span><span>系统 <b>{num(vocabulary?.counts.system)}</b></span><span>解码热词 <b>{vocabulary?.decoder_hotwords.length || 0}</b></span><small>revision {vocabulary?.revision || "读取中"}</small></div>
       <label className="search-box vocabulary-search"><span>⌕</span><input value={vocabularyQuery} onChange={(event) => setVocabularyQuery(event.target.value)} placeholder="搜索标准词、别名、来源字段" /></label>
-      <div className="vocabulary-list">{(vocabulary?.entries || []).filter((item) => !vocabularyQuery.trim() || `${item.term} ${item.aliases.join(" ")} ${item.source_field} ${item.category}`.toLowerCase().includes(vocabularyQuery.trim().toLowerCase())).slice(0, 160).map((item) => <article key={item.id} className={!item.enabled ? "disabled" : ""}><div><strong>{item.term}</strong><span className={`priority ${item.priority}`}>{item.priority === "critical" ? "最高" : item.priority === "high" ? "高" : item.priority === "medium" ? "中" : "轻"}</span><small>{item.category} · {item.source === "manual" ? "个人" : item.source === "profile" ? "JSON 自动" : "系统"}</small>{item.aliases.length > 0 && <p>易错：{item.aliases.join("、")}</p>}{item.source_field && <p className="source-field">{item.source_field}</p>}</div>{item.source === "manual" ? <div className="vocabulary-actions"><button className="secondary" disabled={vocabularyBusy} onClick={() => void saveManualVocabulary((vocabulary?.entries || []).filter((entry) => entry.source === "manual").map((entry) => entry.id === item.id ? { ...entry, enabled: !entry.enabled } : entry))}>{item.enabled ? "停用" : "启用"}</button><button className="danger-text" disabled={vocabularyBusy} onClick={() => { if (window.confirm(`删除词条“${item.term}”？`)) void saveManualVocabulary((vocabulary?.entries || []).filter((entry) => entry.source === "manual" && entry.id !== item.id)); }}>删除</button></div> : <span className="read-only-badge">自动</span>}</article>)}</div>
+      <div className="vocabulary-list">{(vocabulary?.entries || []).filter((item) => !vocabularyQuery.trim() || `${item.term} ${item.aliases.join(" ")} ${item.source_field} ${item.category}`.toLowerCase().includes(vocabularyQuery.trim().toLowerCase())).slice(0, 160).map((item) => <article key={item.id} className={!item.enabled ? "disabled" : ""}><div><strong>{item.term}</strong><span className={`priority ${item.priority}`}>{item.priority === "critical" ? "最高" : item.priority === "high" ? "高" : item.priority === "medium" ? "中" : "轻"}</span><small>{item.category} · {item.source === "manual" ? "个人" : item.source === "profile" ? "JSON 自动" : "系统"}</small>{item.aliases.length > 0 && <p>易错：{item.aliases.join("、")}</p>}{item.source_field && <p className="source-field">{item.source_field}</p>}</div>{item.source === "manual" ? <div className="vocabulary-actions"><button className="secondary" disabled={vocabularyBusy} onClick={() => void saveManualVocabulary((vocabulary?.entries || []).filter((entry) => entry.source === "manual").map((entry) => entry.id === item.id ? { ...entry, enabled: !entry.enabled } : entry))}>{item.enabled ? "停用" : "启用"}</button><button className="danger-text" disabled={vocabularyBusy} onClick={async () => { if (await styledConfirm({ title: `删除词条“${item.term}”？`, message: "删除后，该词不会再作为个人识别词参与语音解码。", confirmLabel: "删除词条", danger: true })) await saveManualVocabulary((vocabulary?.entries || []).filter((entry) => entry.source === "manual" && entry.id !== item.id)); }}>删除</button></div> : <span className="read-only-badge">自动</span>}</article>)}</div>
       {(vocabulary?.entries.length || 0) > 160 && !vocabularyQuery && <p className="notice">自动词条较多，当前只展示前 160 条；使用搜索可定位其余词条。</p>}
     </>}
     {tab === "appearance" && <><h3>界面偏好</h3><div className="form-grid"><SelectField label="主题" value={draft.appearance.theme} options={[["mindscape", "Mindscape 暖色"], ["dark", "深色研究界面"]]} onChange={(next) => update("appearance", "theme", next)} /><SelectField label="界面密度" value={draft.appearance.density} options={[["chat", "舒适对话"], ["research", "紧凑研究"]]} onChange={(next) => update("appearance", "density", next)} /><SelectField label="字体大小" value={draft.appearance.font_scale ?? 1.3} options={[["1", "标准（100%）"], ["1.15", "较大（115%）"], ["1.3", "默认大字（130%）"], ["1.45", "更大（145%）"], ["1.6", "特大（160%）"]]} onChange={(next) => update("appearance", "font_scale", Number(next))} /><Field label="语言" value={draft.appearance.language} onChange={(next) => update("appearance", "language", next)} /></div><p className="notice">全屏或大屏窗口会在所选字号上自动再放大，缩回普通窗口后恢复；设置保存后立即生效。</p></>}
@@ -3662,7 +3779,7 @@ function KnowledgeDialog({ onClose, onDirty, notify }: { onClose: () => void; on
   useEffect(() => { void load(); }, [load]); useEffect(() => { onDirty(Boolean(text.trim())); return () => onDirty(false); }, [onDirty, text]);
   const add = async () => { try { const result = await request<{ count: number }>("/api/v1/knowledge", { method: "POST", body: JSON.stringify({ text, source }) }); setText(""); notify(`已写入 ${result.count} 个知识块`); await load(); } catch (error) { notify((error as Error).message); } };
   const upload = async (file: File) => { const form = new FormData(); form.append("file", file); try { const result = await request<{ count: number }>("/api/v1/knowledge/upload", { method: "POST", body: form }); notify(`已从 ${file.name} 导入 ${result.count} 个知识块`); await load(); } catch (error) { notify((error as Error).message); } };
-  return <Modal title="全局知识库" kicker="KNOWLEDGE BASE" onClose={onClose}><div className="knowledge-layout"><section className="knowledge-compose"><h3>新增资料</h3><Field label="来源名称" value={source} onChange={(next) => setSource(str(next))} /><Field label="知识内容" value={text} type="textarea" onChange={(next) => setText(str(next))} placeholder="粘贴文本，空行会成为自然分块边界" /><div className="row-actions"><label className="upload-button">上传 TXT / MD / JSON<input hidden type="file" accept=".txt,.md,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); event.currentTarget.value = ""; }} /></label><button className="primary" disabled={!text.trim()} onClick={() => void add()}>保存知识</button></div></section><section className="knowledge-manage"><div className="manage-head"><h3>知识块 <b>{items.length}</b></h3><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索内容或来源" /></label></div>{loading ? <div className="empty-mini">正在读取知识库…</div> : <div className="knowledge-list">{items.length ? items.map((item) => <article key={item.chunk_id}><header><span>{item.source}</span><button onClick={async () => { if (!window.confirm("删除这个知识块？")) return; await request(`/api/v1/knowledge/${item.chunk_id}`, { method: "DELETE" }); notify("知识块已删除"); await load(); }}>删除</button></header><p>{item.text}</p><small>{item.chunk_id} · {formatTime(item.created_at)}</small></article>) : <div className="empty-mini">知识库中暂无匹配内容</div>}</div>}</section></div></Modal>;
+  return <Modal title="全局知识库" kicker="KNOWLEDGE BASE" onClose={onClose}><div className="knowledge-layout"><section className="knowledge-compose"><h3>新增资料</h3><Field label="来源名称" value={source} onChange={(next) => setSource(str(next))} /><Field label="知识内容" value={text} type="textarea" onChange={(next) => setText(str(next))} placeholder="粘贴文本，空行会成为自然分块边界" /><div className="row-actions"><label className="upload-button">上传 TXT / MD / JSON<input hidden type="file" accept=".txt,.md,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); event.currentTarget.value = ""; }} /></label><button className="primary" disabled={!text.trim()} onClick={() => void add()}>保存知识</button></div></section><section className="knowledge-manage"><div className="manage-head"><h3>知识块 <b>{items.length}</b></h3><label className="search-box"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索内容或来源" /></label></div>{loading ? <div className="empty-mini">正在读取知识库…</div> : <div className="knowledge-list">{items.length ? items.map((item) => <article key={item.chunk_id}><header><span>{item.source}</span><button onClick={async () => { if (!(await styledConfirm({ title: "删除这个知识块？", message: "删除后，该内容不会再参与知识检索。", confirmLabel: "删除知识", danger: true }))) return; await request(`/api/v1/knowledge/${item.chunk_id}`, { method: "DELETE" }); notify("知识块已删除"); await load(); }}>删除</button></header><p>{item.text}</p><small>{item.chunk_id} · {formatTime(item.created_at)}</small></article>) : <div className="empty-mini">知识库中暂无匹配内容</div>}</div>}</section></div></Modal>;
 }
 
 function MemoryDialog({ characterId, onClose, onDirty, notify }: { characterId: string; onClose: () => void; onDirty: (dirty: boolean) => void; notify: (message: string) => void }) {
@@ -3690,7 +3807,7 @@ function MemoryDialog({ characterId, onClose, onDirty, notify }: { characterId: 
     } catch (error) { notify((error as Error).message); }
   };
   const remove = async (item: MemoryItem) => {
-    if (!window.confirm(`删除“${item.display_name}：${item.value}”？权威档案会同步更新。`)) return;
+    if (!(await styledConfirm({ title: `删除“${item.display_name}”？`, message: String(item.value), detail: "权威档案会同步更新，这条内容也会退出后续召回。", confirmLabel: "删除记忆", danger: true }))) return;
     try { await request(`/api/v1/memory/items/${encodeURIComponent(item.memory_key)}`, { method: "DELETE" }); notify("记忆已删除并退出召回"); await load(); }
     catch (error) { notify((error as Error).message); }
   };
@@ -3756,17 +3873,37 @@ function ProfileFieldEditor({ fieldKey, value, path, onChange }: { fieldKey: str
   return <label className="profile-form-field"><span>{label}</span><input aria-label={label} type={typeof value === "number" ? "number" : "text"} value={value == null ? "" : String(value)} onChange={(event) => onChange(path, typeof value === "number" ? Number(event.target.value) : event.target.value)} /></label>;
 }
 
-function ProfileDialog({ characterId, initialName, onClose, onDirty, notify }: { characterId: string; initialName: Role | "state"; onClose: () => void; onDirty: (dirty: boolean) => void; notify: (message: string) => void }) {
+function ProfileDialog({ characterId, initialName, onClose, onDirty, onOpenConnection, onSaved, notify }: { characterId: string; initialName: Role | "state"; onClose: () => void; onDirty: (dirty: boolean) => void; onOpenConnection: () => void; onSaved: () => void; notify: (message: string) => void }) {
   const [name, setName] = useState(initialName); const [document, setDocument] = useState(""); const [savedDocument, setSavedDocument] = useState(""); const [history, setHistory] = useState<ProfileHistoryItem[]>([]); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [mode, setMode] = useState<"form" | "json">("form"); const [error, setError] = useState("");
   const parsed = useMemo(() => { try { const value = JSON.parse(document); return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null; } catch { return null; } }, [document]);
   const characterQuery = name === "user" || !characterId ? "" : `?character_id=${encodeURIComponent(characterId)}`;
   const load = useCallback(async () => { setLoading(true); setError(""); try { const [value, versions] = await Promise.all([request<Record<string, unknown>>(`/api/v1/profiles/${name}${characterQuery}`), request<{ items: ProfileHistoryItem[] }>(`/api/v1/profiles/${name}/history${characterQuery}`).catch(() => ({ items: [] }))]); const serialized = JSON.stringify(value, null, 2); setDocument(serialized); setSavedDocument(serialized); setHistory(versions.items); } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); } finally { setLoading(false); } }, [characterQuery, name, notify]);
   useEffect(() => { void load(); }, [load]); useEffect(() => { onDirty(document !== savedDocument); return () => onDirty(false); }, [document, onDirty, savedDocument]);
   const updateValue = useCallback((path: string[], value: unknown) => { if (!parsed) return; const next = structuredClone(parsed); let cursor: Record<string, unknown> = next; path.slice(0, -1).forEach((key) => { cursor = cursor[key] as Record<string, unknown>; }); cursor[path[path.length - 1]] = value; setDocument(JSON.stringify(next, null, 2)); setError(""); }, [parsed]);
-  const save = async () => { if (!parsed) { setError("JSON 格式无效，请修正后再保存。"); return; } setSaving(true); setError(""); try { const result = await request<{ document: Record<string, unknown> }>(`/api/v1/profiles/${name}${characterQuery}`, { method: "PUT", body: JSON.stringify(parsed) }); const serialized = JSON.stringify(result.document, null, 2); setDocument(serialized); setSavedDocument(serialized); notify("档案已保存，后续对话将使用新版本"); } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); } finally { setSaving(false); } };
-  const restorePrevious = async () => { const previous = history[0]; if (!previous || !parsed) return; if (!window.confirm(`恢复修订 ${previous.revision} 的内容？当前版本仍会保留在历史中。`)) return; setSaving(true); setError(""); try { const result = await request<{ document: Record<string, unknown> }>(`/api/v1/profiles/${name}/restore${characterQuery}`, { method: "POST", body: JSON.stringify({ version_id: previous.version_id, expected_revision: parsed.revision }) }); const serialized = JSON.stringify(result.document, null, 2); setDocument(serialized); setSavedDocument(serialized); notify("已恢复上一版本，并生成新的修订"); await load(); } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); } finally { setSaving(false); } };
-  const switchProfile = (id: Role | "state") => { if (document !== savedDocument && !window.confirm("切换会放弃未保存修改，是否继续？")) return; setName(id); };
-  return <Modal title="人物与状态档案" kicker="PROFILE DOCUMENTS" onClose={onClose} footer={<><button className="secondary" disabled={loading || saving || !history.length} onClick={() => void restorePrevious()}>恢复上一版本</button><button className="secondary" disabled={loading || saving} onClick={() => void load()}>放弃修改并重载</button><button className="primary" disabled={loading || saving || !parsed || document === savedDocument} onClick={() => void save()}>{saving ? "正在保存…" : "保存档案"}</button></>}><div className="profile-tabs">{([["user", "用户档案"], ["assistant", "AI 档案"], ["state", "运行状态"]] as Array<[Role | "state", string]>).map(([id, label]) => <button className={name === id ? "active" : ""} key={id} onClick={() => switchProfile(id)}>{label}</button>)}</div><div className="profile-editor-toolbar"><p className="advanced-note">用户修改直接生效并生成新 revision；AI 后续写回必须基于该 revision。当前保留 {history.length} 个可恢复版本。</p><div><button className={mode === "form" ? "active" : ""} onClick={() => setMode("form")}>表单编辑</button><button className={mode === "json" ? "active" : ""} onClick={() => setMode("json")}>高级 JSON</button></div></div>{error && <div className="profile-editor-error" role="alert">{error}</div>}{loading ? <div className="empty-mini">正在载入档案…</div> : mode === "json" ? <textarea aria-label="高级 JSON 编辑器" className="json-editor" value={document} onChange={(event) => { setDocument(event.target.value); setError(""); }} spellCheck={false} /> : parsed ? <div className="profile-form">{Object.entries(parsed).filter(([key]) => !PROFILE_TECHNICAL_FIELDS.has(key)).map(([key, value]) => <ProfileFieldEditor key={key} fieldKey={key} value={value} path={[key]} onChange={updateValue} />)}</div> : <div className="profile-editor-error" role="alert">JSON 格式无效，请切换到高级 JSON 修正。</div>}</Modal>;
+  const save = async () => { if (!parsed) { setError("JSON 格式无效，请修正后再保存。"); return; } setSaving(true); setError(""); try { const result = await request<{ document: Record<string, unknown> }>(`/api/v1/profiles/${name}${characterQuery}`, { method: "PUT", body: JSON.stringify(parsed) }); const serialized = JSON.stringify(result.document, null, 2); setDocument(serialized); setSavedDocument(serialized); onSaved(); notify("档案已保存，人物名称与后续对话将使用新版本"); } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); } finally { setSaving(false); } };
+  const restorePrevious = async () => { const previous = history[0]; if (!previous || !parsed) return; if (!(await styledConfirm({ title: `恢复修订 ${previous.revision}？`, message: "当前版本仍会保留在历史中，并会生成一个新的修订版本。", confirmLabel: "恢复版本" }))) return; setSaving(true); setError(""); try { const result = await request<{ document: Record<string, unknown> }>(`/api/v1/profiles/${name}/restore${characterQuery}`, { method: "POST", body: JSON.stringify({ version_id: previous.version_id, expected_revision: parsed.revision }) }); const serialized = JSON.stringify(result.document, null, 2); setDocument(serialized); setSavedDocument(serialized); notify("已恢复上一版本，并生成新的修订"); await load(); } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); } finally { setSaving(false); } };
+  const switchProfile = async (id: Role | "state") => { if (document !== savedDocument && !(await styledConfirm({ title: "放弃未保存的修改？", message: "切换档案后，本页尚未保存的编辑会丢失。", confirmLabel: "继续切换", danger: true }))) return; setName(id); };
+  return <Modal
+    title="人设工作区"
+    kicker="PERSONA WORKSPACE"
+    onClose={onClose}
+    footer={<>
+      <button className="secondary" disabled={loading || saving || !history.length} onClick={() => void restorePrevious()}>恢复上一版本</button>
+      <button className="secondary" disabled={loading || saving} onClick={() => void load()}>放弃修改并重载</button>
+      <button className="primary" disabled={loading || saving || !parsed || document === savedDocument} onClick={() => void save()}>{saving ? "正在保存…" : "保存档案"}</button>
+    </>}
+  >
+    <div className="profile-tabs persona-workspace-tabs">
+      {([["user", "用户档案"], ["assistant", "AI 档案"], ["state", "运行状态"]] as Array<[Role | "state", string]>).map(([id, label]) => <button className={name === id ? "active" : ""} key={id} onClick={() => switchProfile(id)}>{label}</button>)}
+      <button className="profile-connection-tab" onClick={onOpenConnection}>API 连接 <span>↗</span></button>
+    </div>
+    <div className="profile-editor-toolbar">
+      <p className="advanced-note">用户修改直接生效并生成新 revision；AI 后续写回必须基于该 revision。当前保留 {history.length} 个可恢复版本。</p>
+      <div><button className={mode === "form" ? "active" : ""} onClick={() => setMode("form")}>表单编辑</button><button className={mode === "json" ? "active" : ""} onClick={() => setMode("json")}>高级 JSON</button></div>
+    </div>
+    {error && <div className="profile-editor-error" role="alert">{error}</div>}
+    {loading ? <div className="empty-mini">正在载入档案…</div> : mode === "json" ? <textarea aria-label="高级 JSON 编辑器" className="json-editor" value={document} onChange={(event) => { setDocument(event.target.value); setError(""); }} spellCheck={false} /> : parsed ? <div className="profile-form">{Object.entries(parsed).filter(([key]) => !PROFILE_TECHNICAL_FIELDS.has(key)).map(([key, value]) => <ProfileFieldEditor key={key} fieldKey={key} value={value} path={[key]} onChange={updateValue} />)}</div> : <div className="profile-editor-error" role="alert">JSON 格式无效，请切换到高级 JSON 修正。</div>}
+  </Modal>;
 }
 
 function ProfileCardDialog({ characterId, role, avatars, displayName, onClose, onEdit }: { characterId: string; role: Role; avatars: AvatarConfig; displayName: string; onClose: () => void; onEdit: (role: Role) => void }) {
@@ -3780,7 +3917,7 @@ function DiagnosticsDialog({ onClose, notify, onCleared }: { onClose: () => void
   const [report, setReport] = useState<DiagnosticReport | null>(null); const [loading, setLoading] = useState(true);
   const load = useCallback(() => { setLoading(true); request<DiagnosticReport>("/api/v1/diagnostics").then(setReport).catch((error: Error) => notify(error.message)).finally(() => setLoading(false)); }, [notify]);
   useEffect(() => { load(); }, [load]);
-  const clear = async (scope: "knowledge" | "sessions" | "all") => { const phrase = { knowledge: "CLEAR KNOWLEDGE", sessions: "CLEAR SESSIONS", all: "CLEAR ALL" }[scope]; if (!window.confirm(`危险操作：${phrase}，是否继续？`)) return; await request("/api/v1/data/clear", { method: "POST", body: JSON.stringify({ scope, confirmation: phrase }) }); notify("数据清理完成"); onCleared(); load(); };
+  const clear = async (scope: "knowledge" | "sessions" | "all") => { const phrase = { knowledge: "CLEAR KNOWLEDGE", sessions: "CLEAR SESSIONS", all: "CLEAR ALL" }[scope]; if (!(await styledConfirm({ title: "危险数据操作", message: phrase, detail: "此操作会清除对应的本地运行数据，无法撤销。", confirmLabel: "确认清除", danger: true }))) return; await request("/api/v1/data/clear", { method: "POST", body: JSON.stringify({ scope, confirmation: phrase }) }); notify("数据清理完成"); onCleared(); load(); };
   return <Modal title="系统诊断与数据管理" kicker="SYSTEM HEALTH" onClose={onClose}>{loading ? <div className="empty-mini">正在检查服务状态…</div> : <><div className="diagnostic-grid"><article><span>主服务</span><strong>{report?.ok ? "正常" : "异常"}</strong><small>{str(report?.app.version)}</small></article><article><span>会话</span><strong>{num(report?.counts.sessions)}</strong><small>SQLite 权威存储 · JSON 投影</small></article><article><span>知识块</span><strong>{num(report?.counts.chunks)}</strong><small>{num(report?.counts.characters)} 字符</small></article><article><span>语音</span><strong>{bool(report?.audio.asr_ready) ? "ASR 就绪" : "ASR 降级"}</strong><small>{str(report?.audio.asr_provider)}</small></article></div><details className="report-json"><summary>查看完整诊断报告</summary><pre>{JSON.stringify(report, null, 2)}</pre></details><section className="danger-zone"><h3>危险数据操作</h3><p>这些操作只影响当前新项目的 runtime，不会修改原 Mindscape 数据。</p><div><button onClick={() => void clear("knowledge")}>清空知识库</button><button onClick={() => void clear("sessions")}>清空会话</button><button className="danger" onClick={() => void clear("all")}>清空全部运行数据</button></div></section></>}</Modal>;
 }
 

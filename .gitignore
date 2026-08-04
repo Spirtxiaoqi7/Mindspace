@@ -60,3 +60,13 @@ vendor/CosyVoice/
 .DS_Store
 Thumbs.db
 Desktop.ini
+# Live2D remains a V1.0 preview in 0.8.0. Keep SDK, renderer builds and model
+# sources local until licensing and public-delivery gates are explicitly cleared.
+desktop/companion/
+desktop/assets/live2d/
+desktop/assets/companion-renderer/
+
+# Brand production intermediates are reproducible; retain only the approved
+# transparent master, normalized asset and packaged ICO in source control.
+desktop/assets/brand/mindspace-icon-chroma-v1.png
+desktop/assets/brand/mindspace-icon-preview-*.png

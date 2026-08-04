@@ -11,10 +11,7 @@ type AppView =
   | "draw"
   | "characters"
   | "chat"
-  | "journal"
-  | "moments"
-  | "scenes"
-  | "activities";
+  | "scenes";
 
 interface CharacterOption {
   id: string;
@@ -62,6 +59,7 @@ function characterAvatar(character: CharacterSummary | CharacterRecord) {
 
 export function ModeLobby({
   characters,
+  userName,
   interrupted,
   onDraw,
   onCustom,
@@ -69,6 +67,7 @@ export function ModeLobby({
   onResume,
 }: {
   characters: CharacterSummary[];
+  userName: string;
   interrupted?: { session_id: string; title: string };
   onDraw: () => void;
   onCustom: () => void;
@@ -76,15 +75,19 @@ export function ModeLobby({
   onResume: (sessionId: string) => void;
 }) {
   const drawCount = characters.filter((item) => item.source === "draw").length;
+  const primary = [...characters].sort((a, b) => b.last_used_at.localeCompare(a.last_used_at))[0];
+  const pairLine = primary
+    ? `${primary.user_alias || userName || "你"}，我在这里。今天想从哪里继续？`
+    : "先构筑一位角色，让下一次打开不再从空白开始。";
   return <main className="mode-lobby">
     <header className="mode-lobby-header">
-      <div className="brand-mark">M</div>
+      <div className="brand-mark"><img src="/assets/mindspace-brand-icon.png" alt="" /></div>
       <div>
-        <span className="eyebrow">MINDSPACE · CHARACTER ARCHIVE</span>
-        <h1>今天，想和谁见面？</h1>
-        <p>选择一种开始方式。角色、关系、记忆和会话会彼此隔离，不会串到另一张卡里。</p>
+        <span className="eyebrow">MINDSPACE · COMPANION HOME</span>
+        <h1>{primary ? `${userName || "你"} × ${primary.display_name}` : "建立你们的第一段关系"}</h1>
+        <p>{pairLine}</p>
       </div>
-      <button className="archive-link" onClick={onLibrary}>典藏卡册 <b>{characters.length}</b></button>
+      <button className="archive-link" onClick={onLibrary}>人设 <b>{characters.length}</b></button>
     </header>
 
     {interrupted && <button className="interrupted-run-card" onClick={() => onResume(interrupted.session_id)}>
@@ -94,24 +97,36 @@ export function ModeLobby({
       <b>继续查看 →</b>
     </button>}
 
+    {primary && <section className="pair-home-stage">
+      <div className="pair-home-copy">
+        <span>{primary.relationship_label || "陪伴关系"}</span>
+        <blockquote>“{pairLine}”</blockquote>
+        <div className="pair-home-actions">
+          <button onClick={() => primary.latest_session_id && onResume(primary.latest_session_id)} disabled={!primary.latest_session_id}>继续最近对话 <b>↗</b></button>
+          <button onClick={onCustom}>切换人物</button>
+        </div>
+      </div>
+      <img src={characterAvatar(primary)} alt={primary.display_name} />
+    </section>}
+
     <section className="mode-card-grid">
       <button className="mode-card draw-card" onClick={onDraw}>
         <div className="mode-card-ornament" aria-hidden="true">✦</div>
-        <span>QUICK START · 灵感构筑</span>
-        <h2>灵感抽卡</h2>
-        <p>只需给出名字、性格、缺陷和关系，让 AI 帮你补全一张可编辑的人物卡。</p>
+        <span>QUICK START · 从灵感开始</span>
+        <h2>{primary ? "再遇见一位角色" : "灵感抽卡"}</h2>
+        <p>给出名字、性格、缺陷和关系；完成后直接进入这位角色的连续对话。</p>
         <footer>
           <small>{drawCount ? `已有 ${drawCount} 张抽卡角色` : "约 3 分钟完成首张卡"}</small>
-          <b>{drawCount ? "继续抽卡" : "开始构筑"} →</b>
+          <b>{drawCount ? "继续构筑" : "开始构筑"} →</b>
         </footer>
       </button>
       <button className="mode-card custom-card" onClick={onCustom}>
         <div className="mode-card-ornament" aria-hidden="true">◇</div>
-        <span>FULL CONTROL · 完整配置</span>
-        <h2>自定义模式</h2>
-        <p>进入现有完整工作台，继续使用档案、知识库、Prompt Inspector 与语音能力。</p>
+        <span>CONTINUE · 选择已有角色</span>
+        <h2>人物与关系</h2>
+        <p>选择一位已有角色，恢复她最近的会话；人物档案与 API 设置始终在同一处。</p>
         <footer>
-          <small>适合已经有角色卡的用户</small>
+          <small>不会因为点击再次创建聊天窗口</small>
           <b>选择角色进入 →</b>
         </footer>
       </button>
@@ -141,14 +156,14 @@ export function CharacterPicker({
   return <div className="modal-backdrop character-picker-backdrop">
     <section className="character-picker" role="dialog" aria-modal="true" aria-label={title}>
       <header>
-        <div><span className="eyebrow">CHARACTER BINDING</span><h2>{title}</h2><p>会话一旦产生消息，就不能静默换绑角色。</p></div>
+        <div><span className="eyebrow">CHARACTER</span><h2>{title}</h2><p>已有对话会恢复到最近位置；只有首次进入才创建会话。</p></div>
         <button onClick={onClose} aria-label="关闭">×</button>
       </header>
       <div className="character-picker-grid">
         {characters.map((character) => <button key={character.character_id} onClick={() => onChoose(character)}>
           <img src={characterAvatar(character)} alt="" />
           <span><strong>{character.display_name}</strong><small>{character.relationship_label || "未定义关系"} · {character.source === "draw" ? "灵感抽卡" : "自定义"}</small></span>
-          <b>选择</b>
+          <b>{character.latest_session_id ? "继续" : "开始"}</b>
         </button>)}
         <button className="character-picker-new" onClick={onDraw}>
           <i>＋</i><span><strong>创建新角色</strong><small>前往灵感抽卡</small></span>
@@ -390,7 +405,7 @@ export function DrawWorkshop({
 
   return <main className="draw-workshop">
     <header className="workshop-topbar">
-      <button onClick={onBack}>← 返回模式大厅</button>
+      <button onClick={onBack}>← 返回主页</button>
       <div><span className="eyebrow">INSPIRATION FORGE</span><strong>灵感抽卡工坊</strong></div>
       <small>草稿只在确认收藏后写入角色库</small>
     </header>
@@ -507,7 +522,6 @@ export function CharacterLibrary({
   const [history, setHistory] = useState<Array<{ version_id: string; revision: number; updated_at: string }>>([]);
   const [error, setError] = useState("");
   const importRef = useRef<HTMLInputElement | null>(null);
-  const selectedSummary = characters.find((item) => item.character_id === selectedId);
 
   useEffect(() => {
     if (!selectedId) {
@@ -572,15 +586,15 @@ export function CharacterLibrary({
 
   return <main className="character-library">
     <header>
-      <button onClick={onBack}>← 返回模式大厅</button>
-      <div><span className="eyebrow">COLLECTOR'S ARCHIVE</span><h1>典藏卡册</h1><p>每张卡拥有独立档案、运行状态、共同经历和对话记忆。</p></div>
+      <button onClick={onBack}>← 返回主页</button>
+      <div><span className="eyebrow">PERSONA</span><h1>人设管理</h1><p>管理人物档案、运行状态和连续对话。</p></div>
       <div><button onClick={() => importRef.current?.click()}>导入卡包</button><button className="primary" onClick={onDraw}>＋ 灵感抽卡</button><input ref={importRef} hidden type="file" accept=".mindspace-card" onChange={(event) => void importCard(event.target.files?.[0])} /></div>
     </header>
     <div className="library-layout">
       <nav className="card-shelf">
         {characters.map((character) => <button key={character.character_id} className={selectedId === character.character_id ? "active" : ""} onClick={() => setSelectedId(character.character_id)}>
           <img src={characterAvatar(character)} alt="" />
-          <span><strong>{character.display_name}</strong><small>{character.relationship_label || "未定义关系"} · {character.session_count || 0} 个会话</small><small>日记 {character.chapters?.journal_count || 0} · 片段 {character.chapters?.moment_count || 0} · 活动 {character.chapters?.activity_count || 0}</small></span>
+          <span><strong>{character.display_name}</strong><small>{character.relationship_label || "未定义关系"} · {character.latest_session_id ? "可继续对话" : "尚未开始"}</small></span>
           <i>{character.status === "archived" ? "已归档" : character.source === "draw" ? "灵感" : "自定义"}</i>
         </button>)}
         {!characters.length && <div className="library-empty"><b>还没有收藏角色</b><p>先抽取第一张卡，或导入 `.mindspace-card`。</p><button onClick={onDraw}>开始抽卡</button></div>}
@@ -589,10 +603,10 @@ export function CharacterLibrary({
         {record ? <>
           <div className="library-hero">
             <img src={characterAvatar(record)} alt="" />
-            <div><span>{record.gender} · {record.relationship_label}</span><h2>{record.display_name}</h2><p>{text(asRecord(record.ai_profile.identity).self_description)}</p><small>修订 {record.revision} · 更新于 {new Date(record.updated_at).toLocaleString()}</small><small className="chapter-counts">日记 {selectedSummary?.chapters?.journal_count || 0} · 共同片段 {selectedSummary?.chapters?.moment_count || 0} · 已完成活动 {selectedSummary?.chapters?.activity_count || 0}</small></div>
+            <div><span>{record.gender} · {record.relationship_label}</span><h2>{record.display_name}</h2><p>{text(asRecord(record.ai_profile.identity).self_description)}</p><small>修订 {record.revision} · 更新于 {new Date(record.updated_at).toLocaleString()}</small></div>
           </div>
           <div className="library-actions">
-            <button className="primary" onClick={() => onChat(record)}>开始新对话</button>
+            <button className="primary" onClick={() => onChat(record)}>{record.latest_session_id ? "继续对话" : "开始对话"}</button>
             <a href={`/api/v1/characters/${encodeURIComponent(record.character_id)}/export`} download>导出卡包</a>
             <button onClick={() => void mutate(`/api/v1/characters/${encodeURIComponent(record.character_id)}/clone`)}>复制角色</button>
             <button onClick={() => void mutate(`/api/v1/characters/${encodeURIComponent(record.character_id)}/archive`)}>{record.status === "archived" ? "取消归档" : "归档"}</button>

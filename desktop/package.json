@@ -1,14 +1,16 @@
 {
   "name": "mindspace-desktop",
-  "version": "0.5.54",
+  "version": "0.8.0",
   "description": "Mindspace local AI desktop application",
   "author": "Mindspace",
   "private": true,
   "main": "main.cjs",
   "scripts": {
     "check": "tsc --noEmit",
+    "check:companion": "tsc --noEmit -p companion/tsconfig.json",
     "test": "node --test *.test.cjs",
-    "build": "tsc --noEmit && vite build",
+    "build:companion": "vite build --config companion/vite.config.ts",
+    "build": "npm run check && vite build",
     "dev": "vite",
     "electron": "electron .",
     "predist": "node prepare-bootstrap.cjs",
@@ -41,6 +43,9 @@
     "files": [
       "dist/**/*",
       "assets/**/*",
+      "!assets/brand/**/*",
+      "!assets/live2d/**/*",
+      "!assets/companion-renderer/**/*",
       "main.cjs",
       "preload.cjs",
       "update-manager.cjs",
@@ -54,6 +59,7 @@
       "qwen-runtime-policy.cjs",
       "process-check.cjs",
       "announcement-policy.cjs",
+      "companion-policy.cjs",
       "app-paths.cjs",
       "storage-location.cjs",
       "bootstrap-core.cjs",
@@ -98,7 +104,7 @@
       ],
       "icon": "assets/mindspace-icon.ico",
       "executableName": "Mindspace",
-      "artifactName": "Mindspace-${version}-${arch}.${ext}"
+      "artifactName": "Mindspace-${version}-${arch}-offline.${ext}"
     },
     "publish": [
       {

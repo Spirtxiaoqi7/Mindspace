@@ -61,87 +61,12 @@ export interface CharacterSummary {
   last_used_at: string;
   session_count?: number;
   latest_session_id?: string;
-  chapters?: SharedChapterSummary;
 }
 
 export interface CharacterRecord extends CharacterSummary {
   system_prompt: string;
   ai_profile: Record<string, unknown>;
   runtime_state: Record<string, unknown>;
-}
-
-export type HeartState = "empty" | "trace" | "warm" | "glow" | "keepsake";
-
-export interface SharedChapterSummary {
-  character_id?: string;
-  journal_count: number;
-  moment_count: number;
-  candidate_moment_count: number;
-  activity_count: number;
-  heart_state: HeartState;
-  next_heart_at?: number | null;
-}
-
-export interface JournalEntry {
-  entry_id: string;
-  character_id: string;
-  revision: number;
-  title: string;
-  content: string;
-  status: "draft" | "saved" | "archived";
-  source: "user_written" | "assistant_draft" | "activity_summary" | "template";
-  session_id: string;
-  activity_session_id: string;
-  cover_asset_id: string;
-  source_round_start?: number | null;
-  source_round_end?: number | null;
-  source_message_count?: number;
-  visibility: "narrative_only";
-  eligible_for_json_evidence: false;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface RelationshipMoment {
-  moment_id: string;
-  character_id: string;
-  revision: number;
-  title: string;
-  summary: string;
-  event_type: string;
-  status: "candidate" | "saved" | "archived";
-  source: string;
-  art_asset_id: string;
-  evidence_refs: string[];
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ActivityDefinition {
-  activity_id: "mutual_questions" | "story_choices";
-  title: string;
-  description: string;
-  icon_asset_id: string;
-  cover_asset_id: string;
-  initial_phase: string;
-  questions?: string[];
-  nodes?: Record<string, {
-    text: string;
-    choices: Array<{ choice_id: string; label: string; next: string }>;
-  }>;
-}
-
-export interface ActivitySession {
-  activity_session_id: string;
-  activity_id: ActivityDefinition["activity_id"];
-  character_id: string;
-  session_id: string;
-  revision: number;
-  phase: string;
-  status: "active" | "completed" | "interrupted";
-  state: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface SceneDefinition {

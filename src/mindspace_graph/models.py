@@ -269,7 +269,7 @@ class ModelUsage(BaseModel):
     model: str = ""
     request_kind: Literal[
         "generation", "repair", "compaction", "role_audit", "capability_plan", "preflight",
-        "research_review", "emotion_post", "memory_extract"
+        "research_review", "emotion_post", "memory_extract", "character_generate"
     ] = "generation"
     prompt_tokens: int = Field(default=0, ge=0)
     cached_tokens: int = Field(default=0, ge=0)

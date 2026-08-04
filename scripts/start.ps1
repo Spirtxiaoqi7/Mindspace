@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [switch]$OpenBrowser,
-    [switch]$Sync
+    [switch]$Sync,
+    [switch]$Verify
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,4 +43,13 @@ if ($OpenBrowser) {
 if (-not (Test-Path -LiteralPath $PythonExe)) {
     throw 'Mindspace private Python environment is missing. Run Launcher one-click initialization first.'
 }
+
+# Normal desktop startup must stay on the fast path.  The full verifier imports
+# sentence-transformers, FunASR and Torch/CUDA and is therefore reserved for an
+# explicit maintenance request.  The Launcher advanced-management action also
+# invokes runtime-verify.ps1 directly.
+if ($Verify) {
+    & (Join-Path $PSScriptRoot 'runtime-verify.ps1')
+}
+
 & $PythonExe -m mindspace_graph.server

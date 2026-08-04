@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
+import "./redesign.css";
 
 const services = {
-  api: { title: "Mindspace Core", subtitle: "LangGraph · RAG · SSE", icon: "M", tone: "clay" },
+  api: { title: "Mindspace Core", subtitle: "LangGraph · RAG · SSE", icon: "brand", tone: "brand" },
   asr: { title: "实时聆听", subtitle: "FunASR · VAD · 打断", icon: "≋", tone: "teal" },
   tts: { title: "自然声音", subtitle: "可切换本地流式合成", icon: "◒", tone: "sage" },
 } as const;
@@ -51,23 +52,23 @@ const voiceOptions = [
   {
     id: "gpt-sovits",
     title: "GPT-SoVITS",
-    badge: "普通用户推荐",
-    description: "适合二次元人物声线，选择多，实时生成时按正文增量开始朗读。",
-    requirement: "建议 6–8 GB 显存",
+    badge: "二次元音色库",
+    description: "多种二次元音色可选；生成时可随正文增量开始朗读。",
+    requirement: "GPU ≥ 6 GB · 推荐",
   },
   {
     id: "cosyvoice",
     title: "CosyVoice",
     badge: "声音克隆",
     description: "通过参考音频克隆声音，安装后还需要在应用内上传并校对参考音频。",
-    requirement: "建议 6–8 GB 显存",
+    requirement: "GPU ≥ 6 GB",
   },
   {
     id: "qwen3-vllm",
     title: "Qwen3-TTS",
     badge: "高质量活人感",
     description: "整段生成并使用语气指令，声音表现更丰富，但本地运行成本最高。",
-    requirement: "16 GB 显存 · 32 GB 内存 · WSL2/vLLM",
+    requirement: "GPU ≥ 16 GB · WSL2",
   },
 ] as const;
 
@@ -78,7 +79,7 @@ const dashboardVoiceOptions = [
     title: "SiliconFlow",
     badge: "云端 API",
     description: "使用应用内配置的云端流式 TTS，不下载本地模型，也不占用本地显存。",
-    requirement: "需要 API 密钥与网络",
+    requirement: "云端 API · 零本地显存",
   },
 ] as const;
 
@@ -216,7 +217,7 @@ function OnboardingWizard({
   const currentItem = runtime.items.find((item) => item.id === runtime.pipeline?.currentId);
   return <div className="onboarding-shell">
     <header className="onboarding-header">
-      <div className="brand"><span className="brand-mark">M</span><div><strong>Mindspace</strong><small>QUICK START</small></div></div>
+      <div className="brand"><span className="brand-mark"><img src="./mindspace-brand-icon.png" alt="" /></span><div><strong>Mindspace</strong><small>QUICK START</small></div></div>
       {state.complete && <button className="quiet" onClick={onClose}>返回管理台</button>}
     </header>
     <main className="onboarding-main">
@@ -736,7 +737,8 @@ function App() {
     }
   }
 
-  const showOnboarding = Boolean(data?.onboarding) && (
+  const forceDashboard = new URLSearchParams(window.location.search).has("dashboard");
+  const showOnboarding = !forceDashboard && Boolean(data?.onboarding) && (
     onboardingMode === "open"
     || (onboardingMode === "auto" && data!.onboarding.showWizard)
   );
@@ -753,7 +755,7 @@ function App() {
 
   if (!data) {
     return <div className="launcher-loading" role="status" aria-live="polite">
-      <div className="brand"><span className="brand-mark">M</span><div><strong>Mindspace</strong><small>LOCAL COMPANION</small></div></div>
+      <div className="brand"><span className="brand-mark"><img src="./mindspace-brand-icon.png" alt="" /></span><div><strong>Mindspace</strong><small>LOCAL COMPANION</small></div></div>
       <div className="launcher-loading-card">
         <i className="spinner" />
         <span className="eyebrow">STARTING LOCALLY</span>
@@ -779,8 +781,8 @@ function App() {
 
   return <div className="app-shell">
     <header className="titlebar">
-      <div className="brand"><span className="brand-mark">M</span><div><strong>Mindspace</strong><small>LOCAL COMPANION</small></div></div>
-      <nav><button className="active">服务管理</button><button onClick={() => { setAnnouncementView("history"); setAnnouncementOpen(true); }}>更新</button><button onClick={() => window.launcher.open("models")}>模型</button></nav>
+      <div className="brand"><span className="brand-mark"><img src="./mindspace-brand-icon.png" alt="" /></span><div><strong>Mindspace</strong><small>LOCAL COMPANION</small></div></div>
+      <nav><button className="active">首页</button><button onClick={() => { setAnnouncementView("history"); setAnnouncementOpen(true); }}>版本公告</button><button onClick={() => { document.getElementById("advanced-management")?.scrollIntoView({ behavior: "smooth", block: "start" }); }}>高级管理</button></nav>
       <div className="font-controls" aria-label="启动器字体大小">
         <button aria-label="减小启动器字体" title="减小字体" disabled={launcherFontScale <= 1} onClick={() => setLauncherFontScale((value) => Math.max(1, Number((value - 0.1).toFixed(1))))}>A−</button>
         <span title="启动器字体比例">{Math.round(launcherFontScale * 100)}%</span>
@@ -796,15 +798,27 @@ function App() {
       </section>}
       <section className="hero">
         <div className="hero-copy">
-          <span className="eyebrow">YOUR PRIVATE AI SPACE</span>
-          <h1>一次点击，<br />唤醒你的 <em>Mindspace</em></h1>
-          <p>记忆与识别在本机准备，语音合成可由云端 API 承接。启动器负责让服务安静地运转，并安全同步新版本。</p>
-          <div className="hero-actions"><button className="primary launch" disabled={Boolean(busy)} onClick={launchMindspace}>{busy === "launch" ? <><i className="spinner" />{runtime.ready ? "正在启动 Core" : "正在初始化"}</> : !runtime.ready ? <>一键初始化并进入 <b>→</b></> : coreOnline ? <>进入 Mindspace <b>↗</b></> : <>启动 Core 并进入 <b>→</b></>}</button><button className="quiet" onClick={() => window.launcher.open("root")}>打开应用目录</button></div>
+          <span className="eyebrow">PRIVATE · LOCAL · READY</span>
+          <h1>一切准备就绪，<br /><em>她在等你。</em></h1>
+          <p>进入对话，或让角色安静地留在桌面。服务、模型和更新会在后台保持可见、可控。</p>
+          <div className="hero-actions action-deck">
+            <button className="action-card action-card-primary" disabled={Boolean(busy)} onClick={launchMindspace}>
+              <span className="action-orb" aria-hidden="true"><img src="./ui/launcher-clay-orb-v1.png" alt="" /></span>
+              <span className="action-copy"><small>START A CONVERSATION</small><b>{busy === "launch" ? <><i className="spinner" />{runtime.ready ? "正在启动 Core" : "正在初始化"}</> : !runtime.ready ? "一键初始化并进入" : coreOnline ? "进入 Mindspace" : "启动 Core 并进入"}</b><em>{runtime.ready ? "继续最近一次对话" : "环境会按顺序完成准备"}</em></span>
+              <strong aria-hidden="true">↗</strong>
+            </button>
+            <button className="action-card action-card-desktop" onClick={() => setNotice("Live2D 桌宠将在 V1.0 正式版开放；0.8.0 不包含 SDK、模型或下载项")}>
+              <span className="action-symbol" aria-hidden="true">✦</span>
+              <span className="action-copy"><small>LIVE2D PREVIEW</small><b>V1.0 正式版开放</b><em>本版仅保留入口 · 不占用运行资源</em></span>
+              <strong aria-hidden="true">→</strong>
+            </button>
+          </div>
           <span className="notice-line"><i />{notice}</span>
         </div>
         <div className="hero-visual">
           <div className="aura aura-one" /><div className="aura aura-two" />
-          <div className="portrait"><img src="./avatar-ai-default.webp" alt="Mindspace 角色头像" /></div>
+          <div className="portrait companion-art"><img src="./mindspace-companion-portrait-v1.webp" alt="Mindspace 角色肖像" /></div>
+          <span className="companion-controls companion-advanced" aria-label="Live2D 桌宠版本说明">V1.0 · COMING SOON</span>
           <span className="floating-chip chip-memory"><i>◇</i><b>记忆已连接</b><small>本地持久化</small></span>
           <span className="floating-chip chip-voice"><i>≋</i><b>{asrOnline ? "语音已启用" : "本次仅文字"}</b><small>{asrOnline ? "实时聆听可用" : "VAD / ASR 未启动"}</small></span>
         </div>
@@ -815,7 +829,7 @@ function App() {
         <div><button onClick={() => { setExpanded((value) => ({ ...value, [baseIds.has(failedItems[0].id) ? "base" : "capabilities"]: true })); window.setTimeout(() => document.getElementById(`component-${failedItems[0].id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 60); }}>定位组件</button><button onClick={() => window.launcher.open("logs")}>打开日志</button><button onClick={() => void exportDiagnostics()}>导出诊断报告</button></div>
       </section>}
 
-      <section className="runtime-panel overview-panel">
+      <section className="runtime-panel overview-panel" id="advanced-management">
         <div className="panel-heading"><div><span className="eyebrow">RUNTIME</span><h2>本地服务</h2></div><div className="panel-controls"><button className="refresh" disabled={Boolean(busy)} onClick={stopAll}>全部停止</button><button className="refresh" onClick={() => void refresh()}>↻ 刷新</button></div></div>
         <div className="service-grid service-strip">{Object.entries(services).map(([id, item]) => {
           const isQwenTts = id === "tts" && qwenSelected;
@@ -841,7 +855,7 @@ function App() {
           const hardwareUnavailable = selectedHardwareItem?.hardwareAvailable === false;
           const showAsrProgress = id === "asr" && !online && (!asrAllReady || asrInstalling);
           return <article className={`service-card ${online && !ttsDisabled ? "online" : ""}${showAsrProgress ? " has-progress" : ""}`} key={id}>
-            <span className={`service-icon ${item.tone}`}>{item.icon}</span>
+            <span className={`service-icon ${item.tone}`}>{item.icon === "brand" ? <img src="./mindspace-brand-icon.png" alt="" /> : item.icon}</span>
             <div><strong>{isQwenTts ? "Qwen3 实时语音" : item.title}</strong><small>{ttsDisabled ? "声音已关闭 · 仅文字对话" : remoteTts ? "SiliconFlow · 流式 API" : isQwenTts ? "vLLM-Omni · WSL2 · CustomVoice 固定 Serena" : id === "tts" && data?.ttsProvider === "gpt-sovits" ? `${voices.items.find((voice) => voice.id === voices.current)?.label || "GPT-SoVITS"} · 本地流式` : item.subtitle}</small></div>
             <span className="service-state" title={hardwareUnavailable ? selectedHardwareItem?.unavailableReason : ""}><i />{ttsDisabled ? "已关闭" : remoteTts ? "API 托管" : hardwareUnavailable ? "硬件不满足" : isQwenTts && !qwenRuntime?.ready ? "运行时未接入" : isQwenTts && starting ? "正在加载模型" : online ? "运行中" : id === "asr" && asrInstalling ? "正在安装" : "未启动"}</span>
             <button disabled={Boolean(busy) || ttsDisabled || remoteTts || hardwareUnavailable || (isQwenTts && !qwenRuntime?.ready)} title={hardwareUnavailable ? selectedHardwareItem?.unavailableReason : ""} onClick={() => serviceAction(serviceId, starting ? "stop" : online ? "restart" : "start")}>{ttsDisabled ? "无需启动" : remoteTts ? "无需本地模型" : hardwareUnavailable ? selectedHardwareItem?.preflightCode === "RAM_INSUFFICIENT" ? "内存不足" : selectedHardwareItem?.preflightCode === "VRAM_INSUFFICIENT" ? "显存不足" : "硬件不满足" : isQwenTts && !qwenRuntime?.ready ? "请先接入" : isQwenTts && starting ? "停止加载" : online ? "重启" : id === "asr" && asrInstalling ? `${asrInstallProgress.toFixed(0)}%` : asrNeedsSetup ? asrRuntime?.partial || asrProgressItem?.partial || asrProgressItem?.error ? "继续修复并启动" : "安装并启动" : "启动"}</button>
@@ -852,7 +866,7 @@ function App() {
           </article>;
         })}</div>
         <div className="voice-provider-switcher">
-          <div><strong>声音方案</strong><small>启动器与应用内共用同一配置；切换时先释放旧引擎，再启动新引擎。</small></div>
+          <div className="voice-provider-intro"><span className="voice-intro-mark" aria-hidden="true">♪</span><div><strong>声音方案</strong><small>与应用内共用同一配置；切换时会先安全释放旧引擎。</small></div></div>
           <div>{dashboardVoiceOptions.map((option) => {
             const hardwareItem = option.id === "qwen3-vllm"
               ? qwenRuntime
@@ -870,8 +884,9 @@ function App() {
               title={unavailable ? hardwareItem?.unavailableReason || "当前设备不满足本地声音条件" : option.description}
               onClick={() => void switchVoiceProvider(option.id)}
             >
-              <b>{option.title}</b>
-              <small>{selected ? data?.services.tts?.online ? "使用中" : "已选择" : option.badge}</small>
+              <span className="voice-plan-glyph" aria-hidden="true">{option.id === "none" ? "○" : option.id === "gpt-sovits" ? "✦" : option.id === "cosyvoice" ? "◌" : option.id === "qwen3-vllm" ? "◇" : "☁"}</span>
+              <span className="voice-plan-copy"><b>{option.title}</b><small>{selected ? data?.services.tts?.online ? "使用中" : "已选择" : option.badge}</small></span>
+              <em>{option.requirement}</em>
             </button>;
           })}</div>
         </div>
@@ -931,7 +946,7 @@ function App() {
           <div className="update-row official"><span className="official-source"><i />Mindspace 官方签名更新源</span><select value={updateChannel} onChange={(event) => setUpdateChannel(event.target.value)}><option value="stable">稳定通道</option><option value="beta">测试通道</option></select><button onClick={() => updateAction("configure")} disabled={Boolean(busy)}>切换通道</button><button onClick={() => updateAction("check")} disabled={Boolean(busy)}>检查更新</button></div>
           {(update?.status === "downloading" || update?.progress) ? <div className="progress"><i style={{ width: `${update.progress}%` }} /></div> : null}
           <div className="update-status"><span>{update?.error || update?.message || "日常更新优先下载轻量 Core 包；环境和用户数据保持不变。"}{update?.status === "downloading" ? ` · ${formatBytes(update.speedBps)}/s · ${formatBytes(update.downloadedBytes)}/${formatBytes(update.totalBytes)}` : ""}</span><div>{update?.status === "available" && <button onClick={() => updateAction("download")} disabled={Boolean(busy)}>下载 v{update.latestVersion}</button>}{update?.status === "downloading" && <button onClick={() => updateAction("pause")}>暂停</button>}{update?.status === "paused" && <button onClick={() => updateAction("download")}>继续</button>}{update?.downloaded && <button className="primary" onClick={() => updateAction("install")} disabled={Boolean(busy)}>安装并重启</button>}{["paused", "error"].includes(update?.status || "") && <button onClick={() => updateAction("discard")}>清除下载</button>}{update?.rollbackAvailable && <button onClick={() => updateAction("rollback")} disabled={Boolean(busy)}>回滚上一版</button>}</div></div>
-          <div className="tool-actions"><button onClick={() => maintenance("verify", "完整验收")} disabled={Boolean(busy)}><i>✓</i><span>完整验收<small>环境、模型与服务</small></span></button><button onClick={() => maintenance("repair", "依赖修复")} disabled={Boolean(busy)}><i>↻</i><span>依赖修复<small>只补齐未通过项目</small></span></button><button onClick={() => window.launcher.open("logs")}><i>≡</i><span>运行日志<small>查看原始记录</small></span></button><button onClick={() => void exportDiagnostics()} disabled={Boolean(busy)}><i>⇩</i><span>诊断报告<small>脱敏状态与日志</small></span></button><button onClick={() => setOnboardingMode("open")} disabled={Boolean(busy)}><i>⚙</i><span>重新配置<small>声音、环境与模型</small></span></button></div>
+          <div className="tool-actions"><button onClick={() => maintenance("verify", "完整验收")} disabled={Boolean(busy)}><i>✓</i><span>完整验收<small>环境、模型与服务</small></span></button><button onClick={() => maintenance("repair", "依赖修复")} disabled={Boolean(busy)}><i>↻</i><span>依赖修复<small>只补齐未通过项目</small></span></button><button onClick={() => window.launcher.open("logs")}><i>≡</i><span>运行日志<small>查看原始记录</small></span></button><button onClick={() => void exportDiagnostics()} disabled={Boolean(busy)}><i>⇩</i><span>诊断报告<small>脱敏状态与日志</small></span></button><button onClick={() => window.launcher.open("models")}><i>◇</i><span>模型目录<small>查看本地模型文件</small></span></button><button onClick={() => window.launcher.open("root")}><i>↗</i><span>应用目录<small>打开 Mindspace 根目录</small></span></button><button onClick={() => setOnboardingMode("open")} disabled={Boolean(busy)}><i>⚙</i><span>重新配置<small>声音、环境与模型</small></span></button></div>
         </div>}
       </section>
     </main>

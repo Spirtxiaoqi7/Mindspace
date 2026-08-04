@@ -29,4 +29,7 @@ contextBridge.exposeInMainWorld("launcher", {
   },
   source: (source = "china") => ipcRenderer.invoke("runtime:source", { source }),
   proxy: (proxy = "") => ipcRenderer.invoke("runtime:proxy", { proxy }),
+  companion: (action = "snapshot") => action === "snapshot"
+    ? ipcRenderer.invoke("companion:snapshot")
+    : ipcRenderer.invoke("companion:action", { action }),
 });

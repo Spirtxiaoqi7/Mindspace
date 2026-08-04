@@ -268,11 +268,22 @@ function installFetchMock(settingsOverride: Record<string, unknown> = {}) {
 
 async function renderReady() {
   render(<App />);
-  await screen.findByRole("heading", { name: "今天，想和谁见面？" });
-  await screen.findByRole("button", { name: /典藏卡册\s*1/ });
-  fireEvent.click(screen.getByRole("button", { name: /自定义模式/ }));
-  fireEvent.click(await screen.findByRole("button", { name: /Mindspace.*助手.*选择/ }));
-  await screen.findByRole("button", { name: "产品设置" });
+  await waitFor(() => {
+    expect(
+      document.querySelector(".mode-lobby") || document.querySelector(".app-shell"),
+    ).toBeTruthy();
+  });
+  if (document.querySelector(".mode-lobby")) {
+    await screen.findByRole("button", { name: /人设\s*1/ });
+    fireEvent.click(document.querySelector(".custom-card")!);
+    fireEvent.click(await screen.findByRole("button", { name: /Mindspace.*助手.*开始/ }));
+  }
+  await waitFor(() => expect(document.querySelector(".top-settings-entry")).toBeTruthy());
+}
+
+async function openProductSettings() {
+  fireEvent.click(document.querySelector(".top-settings-entry")!);
+  await screen.findByRole("dialog");
 }
 
 describe("Mindspace product interactions", () => {
@@ -309,10 +320,10 @@ describe("Mindspace product interactions", () => {
 
   it("opens on the mode lobby before any chat is created", async () => {
     render(<App />);
-    expect(await screen.findByRole("heading", { name: "今天，想和谁见面？" })).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: /典藏卡册\s*1/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /灵感抽卡/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /自定义模式/ })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "用户 × Mindspace" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /人设\s*1/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /再遇见一位角色/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /人物与关系/ })).toBeInTheDocument();
     expect(document.querySelector(".app-shell")).not.toBeInTheDocument();
   });
 
@@ -325,7 +336,7 @@ describe("Mindspace product interactions", () => {
 
   it("keeps settings open when the backdrop is clicked", async () => {
     await renderReady();
-    fireEvent.click(screen.getByRole("button", { name: "产品设置" }));
+    await openProductSettings();
     const dialog = await screen.findByRole("dialog");
     fireEvent.mouseDown(document.querySelector(".modal-backdrop")!);
     expect(dialog).toBeInTheDocument();
@@ -333,20 +344,20 @@ describe("Mindspace product interactions", () => {
 
   it("asks before Escape closes a dirty dialog", async () => {
     await renderReady();
-    fireEvent.click(screen.getByRole("button", { name: "产品设置" }));
+    await openProductSettings();
     const dialog = await screen.findByRole("dialog");
     const firstInput = dialog.querySelector("input")!;
     fireEvent.change(firstInput, { target: { value: "changed" } });
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(confirm).toHaveBeenCalledOnce();
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent("放弃未保存的修改？");
+    fireEvent.click(document.querySelector<HTMLButtonElement>(".confirmation-cancel")!);
     expect(dialog).toBeInTheDocument();
   });
 
   it("submits the complete LLM API key without exposing it in the response", async () => {
     const user = userEvent.setup();
     await renderReady();
-    await user.click(screen.getByRole("button", { name: "产品设置" }));
+    await openProductSettings();
     const keyInput = await screen.findByLabelText("新 API 密钥（留空保持）");
     await user.type(keyInput, "sk-complete-secret");
     expect(keyInput).toHaveValue("sk-complete-secret");
@@ -362,7 +373,7 @@ describe("Mindspace product interactions", () => {
 
   it("locks the product to real API mode instead of exposing fixed demo replies", async () => {
     await renderReady();
-    fireEvent.click(screen.getByRole("button", { name: "产品设置" }));
+    await openProductSettings();
     const mode = screen.getByLabelText("运行模式");
     expect(mode).toHaveValue("openai");
     expect(mode).toBeDisabled();
@@ -374,9 +385,10 @@ describe("Mindspace product interactions", () => {
     await renderReady();
     expect(document.documentElement.style.fontSize).toBe("20.8px");
 
-    await user.click(screen.getByRole("button", { name: "产品设置" }));
+    await openProductSettings();
     const tabs = document.querySelectorAll<HTMLButtonElement>(".settings-layout nav button");
-    await user.click(tabs[6]);
+    await user.click(screen.getByRole("button", { name: "界面" }));
+    await user.click(screen.getByRole("button", { name: "显示偏好" }));
     const fontSize = screen.getByLabelText("字体大小");
     expect(fontSize).toHaveValue("1.3");
     await user.selectOptions(fontSize, "1.45");
@@ -394,9 +406,10 @@ describe("Mindspace product interactions", () => {
     vi.stubGlobal("Audio", class { onended: null | (() => void) = null; async play() { this.onended?.(); } });
     vi.stubGlobal("URL", { ...URL, createObjectURL: vi.fn(() => "blob:test-audio"), revokeObjectURL: vi.fn() });
     await renderReady();
-    await user.click(screen.getByRole("button", { name: "产品设置" }));
+    await openProductSettings();
     const tabs = document.querySelectorAll<HTMLButtonElement>(".settings-layout nav button");
-    await user.click(tabs[4]);
+    await user.click(screen.getByRole("button", { name: "声音" }));
+    await user.click(screen.getByRole("button", { name: "实时语音" }));
     await user.selectOptions(screen.getByLabelText("TTS 链路"), "siliconflow");
     await user.click(tabs[0]);
     await user.type(screen.getByLabelText("新 TTS API 密钥（留空保持）"), "sk-tts-test");
@@ -409,9 +422,10 @@ describe("Mindspace product interactions", () => {
   it("persists a local TTS route immediately and does not jump back to the API", async () => {
     const user = userEvent.setup();
     await renderReady();
-    await user.click(screen.getByRole("button", { name: "产品设置" }));
+    await openProductSettings();
     const tabs = document.querySelectorAll<HTMLButtonElement>(".settings-layout nav button");
-    await user.click(tabs[4]);
+    await user.click(screen.getByRole("button", { name: "声音" }));
+    await user.click(screen.getByRole("button", { name: "实时语音" }));
     const route = screen.getByLabelText("TTS 链路");
 
     await user.selectOptions(route, "cosyvoice");
@@ -424,8 +438,11 @@ describe("Mindspace product interactions", () => {
     expect(call).toBeDefined();
 
     await user.click(screen.getByRole("button", { name: "取消" }));
-    await user.click(screen.getByRole("button", { name: "产品设置" }));
-    await user.click(document.querySelectorAll<HTMLButtonElement>(".settings-layout nav button")[4]);
+    const discardRouteEdit = screen.queryByRole("button", { name: "放弃修改" });
+    if (discardRouteEdit) await user.click(discardRouteEdit);
+    await openProductSettings();
+    await user.click(screen.getByRole("button", { name: "声音" }));
+    await user.click(screen.getByRole("button", { name: "实时语音" }));
     expect(screen.getByLabelText("TTS 链路")).toHaveValue("cosyvoice");
   });
 
@@ -442,7 +459,7 @@ describe("Mindspace product interactions", () => {
     const user = userEvent.setup();
     await renderReady();
 
-    await user.click(screen.getByRole("button", { name: /让 AI 说点什么/ }));
+    await user.click(document.querySelector(".stage-speak")!);
 
     expect(await screen.findByText("那我就陪你安静一会儿。")).toBeInTheDocument();
     expect(screen.queryByText("请求 AI 主动回复")).not.toBeInTheDocument();
@@ -470,7 +487,7 @@ describe("Mindspace product interactions", () => {
     });
     try {
       await renderReady();
-      await user.type(screen.getByPlaceholderText("输入消息，或开启实时语音…"), "定位到本轮");
+      await user.type(screen.getByPlaceholderText(/对 .*说点什么/), "定位到本轮");
       await user.click(screen.getByRole("button", { name: "发送消息" }));
       await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
       expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "end", behavior: "auto" });
@@ -497,7 +514,7 @@ describe("Mindspace product interactions", () => {
     await user.selectOptions(style, "dialogue_led");
     expect(localStorage.getItem("mindspace.r18_style")).toBe("dialogue_led");
 
-    await user.type(screen.getByPlaceholderText("输入消息，或开启实时语音…"), "继续");
+    await user.type(screen.getByPlaceholderText(/对 .*说点什么/), "继续");
     await user.click(screen.getByRole("button", { name: "发送消息" }));
 
     const call = vi.mocked(fetch).mock.calls.find(
@@ -534,7 +551,7 @@ describe("Mindspace product interactions", () => {
     installFetchMock({ interaction: { idle_continuation_enabled: true, text_idle_seconds: 0.01, voice_idle_seconds: 30 } });
     const user = userEvent.setup();
     await renderReady();
-    await user.type(screen.getByPlaceholderText("输入消息，或开启实时语音…"), "你好");
+    await user.type(screen.getByPlaceholderText(/对 .*说点什么/), "你好");
     await user.click(screen.getByRole("button", { name: "发送消息" }));
     await screen.findByText("那我就陪你安静一会儿。");
 
@@ -556,13 +573,16 @@ describe("Mindspace product interactions", () => {
     const user = userEvent.setup();
     await renderReady();
 
-    await user.click(screen.getByRole("button", { name: "产品设置" }));
+    await openProductSettings();
+    await user.click(screen.getByRole("button", { name: "声音" }));
     await user.click(screen.getByRole("button", { name: "陪伴频率" }));
     expect(screen.getByLabelText("无限制回复")).toBeChecked();
     expect(screen.getByLabelText("连续陪伴轮次上限")).toHaveValue(12);
     expect(screen.getByText(/衔接间隔固定为 10 秒/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "取消" }));
+    const discardCompanionEdit = screen.queryByRole("button", { name: "放弃修改" });
+    if (discardCompanionEdit) await user.click(discardCompanionEdit);
     await user.click(screen.getByRole("button", { name: /实时语音/ }));
     await user.click(screen.getByRole("button", { name: "开始通话" }));
     expect(await screen.findByText("0 / 12")).toBeInTheDocument();
@@ -611,7 +631,7 @@ describe("Mindspace product interactions", () => {
   it("shows explainable memories and saves user edits", async () => {
     const user = userEvent.setup();
     await renderReady();
-    await user.click(screen.getByRole("button", { name: /记忆中心/ }));
+    await user.click(document.querySelector(".sidebar-memory-entry")!);
     expect(await screen.findByText("草莓")).toBeInTheDocument();
     expect(screen.getByText("为什么记住")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "修改" }));
@@ -628,8 +648,8 @@ describe("Mindspace product interactions", () => {
   it("edits and saves the AI profile through the structured form", async () => {
     const user = userEvent.setup();
     await renderReady();
-    await user.click(screen.getByRole("button", { name: /人物与状态档案/ }));
-    await user.click(await screen.findByRole("button", { name: "AI 档案" }));
+    await user.click(document.querySelector(".account-settings.persona-entry")!);
+    expect(await screen.findByRole("button", { name: "AI 档案" })).toHaveClass("active");
     const traits = await screen.findByLabelText("核心性格");
     fireEvent.change(traits, { target: { value: "可靠\n很容易满足" } });
     await user.click(screen.getByRole("button", { name: "保存档案" }));
@@ -645,7 +665,8 @@ describe("Mindspace product interactions", () => {
   it("lets the user select user and AI gender through the profile form", async () => {
     const user = userEvent.setup();
     await renderReady();
-    await user.click(screen.getByRole("button", { name: /人物与状态档案/ }));
+    await user.click(document.querySelector(".account-settings.persona-entry")!);
+    await user.click(await screen.findByRole("button", { name: "用户档案" }));
     const userGender = await screen.findByLabelText("第一认同性别");
     expect(userGender).toHaveValue("男");
     await user.selectOptions(userGender, "女");
@@ -662,7 +683,7 @@ describe("Mindspace product interactions", () => {
   it("opens an editable profile directly from the user-owned character card", async () => {
     const user = userEvent.setup();
     await renderReady();
-    await user.click(screen.getByRole("button", { name: "查看Mindspace人物卡" }));
+    await user.click(screen.getAllByRole("button", { name: "查看Mindspace人物卡" })[0]);
     expect(await screen.findByText("AI 角色设定与当前关系状态")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "编辑这份档案" }));
     expect(await screen.findByRole("button", { name: "AI 档案" })).toHaveClass("active");
@@ -682,7 +703,8 @@ describe("Mindspace product interactions", () => {
     await renderReady();
     expect(document.querySelector(".app-shell")).toHaveClass("inspector-hidden");
     expect(document.querySelector(".inspector")).not.toBeVisible();
-    await user.click(screen.getByRole("button", { name: "执行详情" }));
+    fireEvent.click(document.querySelector(".composer-add-menu > summary")!);
+    await user.click(screen.getByRole("button", { name: "会话流程与执行详情" }));
     expect(document.querySelector(".app-shell")).toHaveClass("inspector-visible");
     expect(document.querySelector(".inspector")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "关闭执行详情" }));
@@ -691,16 +713,18 @@ describe("Mindspace product interactions", () => {
 
   it("exposes TTS reference and dual avatar controls", async () => {
     await renderReady();
-    fireEvent.click(screen.getByRole("button", { name: "产品设置" }));
+    await openProductSettings();
     const nav = await waitFor(() => document.querySelectorAll(".settings-layout nav button"));
-    expect(nav).toHaveLength(9);
-    fireEvent.click(nav[4]);
+    expect(nav).toHaveLength(5);
+    fireEvent.click(screen.getByRole("button", { name: "声音" }));
+    fireEvent.click(screen.getByRole("button", { name: "实时语音" }));
     fireEvent.change(screen.getByLabelText("TTS 链路"), { target: { value: "cosyvoice" } });
     await screen.findByText("已切换并保存：本地 CosyVoice");
     const audioInput = document.querySelector<HTMLInputElement>('input[type="file"][accept*=".wav"]');
     expect(audioInput).toHaveAttribute("accept", expect.stringContaining(".flac"));
     expect(document.querySelector(".reference-panel")).toBeInTheDocument();
-    fireEvent.click(nav[1]);
+    fireEvent.click(screen.getByRole("button", { name: /界面/ }));
+    fireEvent.click(screen.getByRole("button", { name: "人物头像" }));
     expect(document.querySelectorAll(".avatar-editor-card")).toHaveLength(2);
     expect(document.querySelectorAll('.avatar-editor-card input[type="range"]')).toHaveLength(6);
   });
@@ -708,9 +732,10 @@ describe("Mindspace product interactions", () => {
   it("edits the ASR vocabulary online without an LLM request", async () => {
     const user = userEvent.setup();
     await renderReady();
-    await user.click(screen.getByRole("button", { name: "产品设置" }));
+    await openProductSettings();
     const nav = document.querySelectorAll<HTMLButtonElement>(".settings-layout nav button");
-    await user.click(nav[5]);
+    await user.click(screen.getByRole("button", { name: "声音" }));
+    await user.click(screen.getByRole("button", { name: "识别词表" }));
     await user.type(screen.getByLabelText("标准写法"), "长离");
     await user.type(screen.getByLabelText("常见误识别（逗号分隔）"), "长利,常离");
     await user.click(screen.getByRole("button", { name: "新增并立即生效" }));
@@ -724,9 +749,9 @@ describe("Mindspace product interactions", () => {
   it("saves persistent read-only capability permissions without per-call prompts", async () => {
     const user = userEvent.setup();
     await renderReady();
-    await user.click(screen.getByRole("button", { name: "产品设置" }));
+    await openProductSettings();
     const nav = document.querySelectorAll<HTMLButtonElement>(".settings-layout nav button");
-    await user.click(nav[8]);
+    await user.click(screen.getByRole("button", { name: "自动能力" }));
     await user.click(screen.getByLabelText("允许联网搜索"));
     await user.click(screen.getByLabelText("允许实时热点"));
     await user.click(screen.getByRole("button", { name: "保存设置" }));
@@ -1058,13 +1083,11 @@ describe("Mindspace product interactions", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<App />);
-    await screen.findByRole("button", { name: /恢复测试/ });
+    await screen.findByRole("heading", { name: "恢复测试" });
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/runs/recover-run/stream?after=0",
       expect.objectContaining({ headers: { "Last-Event-ID": "0" } }),
     ));
-    await userEvent.click(screen.getByRole("button", { name: /恢复测试/ }));
-
     expect(await screen.findByText("已经生成的部分")).toBeInTheDocument();
     expect(screen.getByText(/回答在此处中断/)).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
@@ -1120,12 +1143,11 @@ describe("Mindspace product interactions", () => {
       return json({ detail: `unexpected request ${url}` }, 404);
     });
     vi.stubGlobal("fetch", fetchMock);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-
     await renderReady();
     await userEvent.click(document.querySelector(".session-open")!);
     await screen.findByText("待删除回复");
     await userEvent.click(screen.getByRole("button", { name: "删除回复" }));
+    await userEvent.click(document.querySelector<HTMLButtonElement>(".confirmation-accept")!);
 
     await waitFor(() => expect(screen.queryByText("待删除回复")).not.toBeInTheDocument());
     expect(screen.getByText("用户原话")).toBeInTheDocument();

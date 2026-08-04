@@ -59,7 +59,7 @@ test("diagnostics are redacted and exposed through a dedicated IPC contract", ()
   assert.match(preload, /diagnostics: \(\) => ipcRenderer\.invoke\("runtime:diagnostics"\)/);
 });
 
-test("Core, web and announcements share a version while Launcher is independently versioned", () => {
+test("Core, web, Launcher and announcements share the release version", () => {
   const root = path.resolve(__dirname, "..");
   const desktop = JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8"));
   const frontend = JSON.parse(fs.readFileSync(path.join(root, "frontend", "package.json"), "utf8"));
@@ -73,5 +73,5 @@ test("Core, web and announcements share a version while Launcher is independentl
   assert.equal(frontend.version, projectVersion);
   assert.equal(coreVersion, projectVersion);
   assert.equal(history[0].version, projectVersion);
-  assert.notEqual(desktop.version, projectVersion);
+  assert.equal(desktop.version, projectVersion);
 });
