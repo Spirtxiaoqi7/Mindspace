@@ -95,17 +95,6 @@ FIELDS = (
         "persistent",
     ),
     _field(
-        "user.communication.length",
-        "user_profile",
-        "/communication_preferences/response_length",
-        "回复长度",
-        "交流偏好",
-        "scalar",
-        "replace_one",
-        "user",
-        "persistent",
-    ),
-    _field(
         "user.communication.depth",
         "user_profile",
         "/communication_preferences/explanation_depth",

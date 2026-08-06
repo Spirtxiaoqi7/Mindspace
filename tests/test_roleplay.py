@@ -10,13 +10,18 @@ from mindspace_graph.adapters.file_storage import (
 from mindspace_graph.adapters.local_retriever import LocalKnowledgeRetriever
 from mindspace_graph.models import ApiConfig, ChatRequest, JsonWriteReceipt, ProfileBundle
 from mindspace_graph.prompting import _role_profile, build_prompt
+from mindspace_graph.r18_director import build_style_packet
 from mindspace_graph.roleplay import (
     allow_raw_chat_retrieval,
+    build_presentation_plan,
     build_roleplay_layer,
+    effective_roleplay_temperature,
     evaluate_roleplay_quality,
+    normalize_presentation_response,
     normalize_voice_response,
+    project_history_for_presentation,
+    resolve_presentation_mode,
 )
-from mindspace_graph.r18_director import build_style_packet
 
 
 def request(message: str, **updates) -> ChatRequest:
@@ -93,6 +98,90 @@ def test_acknowledgement_and_bare_scene_transition_skip_raw_chat_retrieval():
     assert allow_raw_chat_retrieval(request("我到家了，继续刚才说的电影")) is True
 
 
+def test_presentation_auto_defaults_to_dialogue_and_routes_explicit_action_to_scene():
+    assert resolve_presentation_mode(request("你怎么看这件事？"), []) == "dialogue"
+    assert resolve_presentation_mode(request("我走过去抱住你"), []) == "scene"
+    assert resolve_presentation_mode(request("我们现在在咖啡馆，你怎么看菜单？"), []) == "scene"
+    assert resolve_presentation_mode(request("我把菜单推给你，你怎么看？"), []) == "scene"
+    assert resolve_presentation_mode(request("随便聊聊今天"), []) == "dialogue"
+
+
+def test_roleplay_temperature_is_dynamic_and_never_raises_user_setting():
+    assert effective_roleplay_temperature(request("普通聊天"), []) == 0.45
+    assert effective_roleplay_temperature(request("我把菜单推给你"), []) == 0.25
+    assert effective_roleplay_temperature(request("继续", initiative=True), []) == 0.25
+    assert effective_roleplay_temperature(request("继续", adult_mode=True), []) == 0.65
+    assert (
+        effective_roleplay_temperature(
+            request("普通聊天", api=ApiConfig(temperature=0.15)), []
+        )
+        == 0.15
+    )
+
+
+def test_presentation_override_and_scene_continuation_are_observable():
+    history = [
+        {
+            "role": "assistant",
+            "content": "（我推开门。）进来。",
+            "presentation_mode": "scene",
+        }
+    ]
+    assert resolve_presentation_mode(request("继续"), history) == "scene"
+    assert (
+        resolve_presentation_mode(request("继续", presentation_mode="dialogue"), history)
+        == "dialogue"
+    )
+    assert (
+        resolve_presentation_mode(request("说说你的看法", presentation_mode="scene"), history)
+        == "scene"
+    )
+
+
+def test_dialogue_projection_drops_only_legacy_stage_openers_and_preserves_normal_parentheses():
+    history = [
+        {"role": "user", "content": "我走到窗边。"},
+        {"role": "assistant", "content": "（我放下杯子。）这事我不赞同。"},
+        {"role": "assistant", "content": "我更倾向前一种（但不是绝对）。"},
+    ]
+    dialogue = project_history_for_presentation(history, "dialogue")
+    scene = project_history_for_presentation(history, "scene")
+    assert dialogue[0]["content"] == "我走到窗边。"
+    assert dialogue[1]["content"] == "这事我不赞同。"
+    assert dialogue[2]["content"] == "我更倾向前一种（但不是绝对）。"
+    assert scene[1]["content"].startswith("（我放下杯子。）")
+
+
+def test_presentation_plan_limits_questions_and_scopes_character_agency():
+    history = [
+        {"role": "assistant", "content": "（我低头看着杯子。）你今天开心吗？"},
+        {"role": "assistant", "content": "（我低头转着杯子。）那你想聊什么？"},
+    ]
+    plan = build_presentation_plan(request("我也不知道"), history)
+    assert plan["resolved"] == "dialogue"
+    assert plan["question_budget"] == 0
+    assert "target_characters" not in plan
+    assert "minimum_content_beats" not in plan
+    assert "角色自己的观点" in plan["agency_budget"]["allowed"]
+    assert "共同事件与环境物件" in plan["agency_budget"]["requires_user_or_server_evidence"]
+    assert "替用户补动作或身体反应" in plan["agency_budget"]["forbidden"]
+
+
+def test_text_boundary_preserves_parentheses_and_model_authored_prose():
+    history = [{"role": "assistant", "content": "我说完了，你怎么想？"}]
+    source = "（我放下杯子。）我介意的是你什么都不说。你到底怎么想？"
+    normalized = normalize_presentation_response(source, request("我不知道"), history)
+    assert normalized == source
+
+
+def test_scene_boundary_preserves_action_opening():
+    source = "（我推开门，侧身让出位置。）进来。"
+    normalized = normalize_presentation_response(
+        source, request("我走到门口", presentation_mode="scene"), []
+    )
+    assert normalized == source
+
+
 def test_roleplay_examples_are_selected_by_current_turn_category():
     bundle = profiles()
     bundle.ai_profile["roleplay"]["examples"]["scene_transition"] = [
@@ -135,6 +224,25 @@ def test_private_r18_protocol_is_loaded_only_for_explicit_r18_mode():
     assert adult["turn_style"] == "intimate"
     assert adult["r18_director"]["private_overlay"][-1] == "原文规则一：直接推进。"
     assert adult["r18_director"]["library_sources"]["character_overlay"] is True
+
+
+def test_adult_role_correction_does_not_leak_into_daily_lane():
+    history = [
+        {
+            "role": "assistant",
+            "adult_mode": True,
+            "role_quality": "drift",
+            "role_quality_correction": "R18 性行为模式已开启：继续明确性行为",
+        }
+    ]
+
+    layer = build_roleplay_layer(
+        request("回到普通聊天", adult_mode=False),
+        profiles(),
+        history,
+    )
+
+    assert "previous_turn_correction" not in layer
 
 
 def test_r18_director_does_not_upgrade_on_initiative_silence():
@@ -199,8 +307,14 @@ def test_voice_response_discards_stage_direction_without_affecting_text_chat():
 
 def test_hidden_voice_cue_is_removed_from_text_and_voice_delivery():
     source = "[[voice:firm]] 这件事我会处理。"
-    assert normalize_voice_response(source, request("继续", interaction_mode="text")) == "这件事我会处理。"
-    assert normalize_voice_response(source, request("继续", interaction_mode="voice")) == "这件事我会处理。"
+    assert (
+        normalize_voice_response(source, request("继续", interaction_mode="text"))
+        == "这件事我会处理。"
+    )
+    assert (
+        normalize_voice_response(source, request("继续", interaction_mode="voice"))
+        == "这件事我会处理。"
+    )
 
 
 def test_voice_stage_direction_is_reported_for_next_turn_correction():
@@ -275,7 +389,7 @@ def test_r18_quality_accepts_explicit_sexual_action_progress():
     assert "r18_missing_sexual_action" not in result["reasons"]
 
 
-def test_r18_voice_quality_rejects_short_clean_euphemisms():
+def test_r18_voice_quality_does_not_reject_by_length():
     result = evaluate_roleplay_quality(
         "我现在开始动了，你待会儿可别后悔。",
         request("继续", adult_mode=True, interaction_mode="voice"),
@@ -285,8 +399,8 @@ def test_r18_voice_quality_rejects_short_clean_euphemisms():
     assert result["quality"] == "drift"
     assert "r18_missing_sexual_action" in result["reasons"]
     assert "r18_missing_dirty_language" in result["reasons"]
-    assert "r18_response_too_short" in result["reasons"]
-    assert "180至250个中文字符" in result["correction"]
+    assert "r18_response_too_short" not in result["reasons"]
+    assert "180至250个中文字符" not in result["correction"]
 
 
 def test_prompt_omits_model_write_protocol_and_loads_only_selected_roleplay_examples():

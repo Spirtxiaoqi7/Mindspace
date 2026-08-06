@@ -139,58 +139,29 @@ class OpenAICompatibleLanguageModel:
     def compact(self, messages: list[dict[str, str]], config: ApiConfig) -> str:
         """Run a separate non-streaming low-priority context compaction request."""
 
-        endpoint = f"{config.base_url.rstrip('/')}/chat/completions"
-        body: dict[str, Any] = {
-            "model": config.model,
-            "messages": messages,
-            "temperature": 0,
-            "max_tokens": config.max_tokens,
-            "stream": False,
-        }
-        headers = {"Content-Type": "application/json"}
-        if config.api_key:
-            headers["Authorization"] = f"Bearer {config.api_key}"
-        response = self._client.post(
-            endpoint, headers=headers, json=body, timeout=self.timeout
+        # DeepSeek V4 enables thinking by default. A bounded compaction request
+        # can otherwise spend its entire budget on reasoning_content and return
+        # an empty final content field. Reuse the structured-call compatibility
+        # ladder so official DeepSeek gets non-thinking JSON while generic
+        # OpenAI-compatible servers can still fall back to their base fields.
+        return self._private_completion(
+            messages,
+            config,
+            request_kind="compaction",
+            max_tokens=config.max_tokens,
+            timeout=self.timeout,
         )
-        response.raise_for_status()
-        payload = response.json()
-        self._capture_usage(payload, config, "compaction")
-        choices = payload.get("choices") or []
-        if not choices:
-            raise ValueError("compaction response has no choices")
-        message = choices[0].get("message") or {}
-        content = message.get("content")
-        if not isinstance(content, str) or not content.strip():
-            raise ValueError("compaction response content is blank")
-        return content
 
     def audit_role(self, messages: list[dict[str, str]], config: ApiConfig) -> str:
         """Independent post-turn audit; callers schedule it after visible output."""
 
-        self._local.usage = None
-        endpoint = f"{config.base_url.rstrip('/')}/chat/completions"
-        body: dict[str, Any] = {
-            "model": config.model,
-            "messages": messages,
-            "temperature": 0,
-            "max_tokens": min(600, config.max_tokens),
-            "stream": False,
-        }
-        headers = {"Content-Type": "application/json"}
-        if config.api_key:
-            headers["Authorization"] = f"Bearer {config.api_key}"
-        response = self._client.post(
-            endpoint, headers=headers, json=body, timeout=self.timeout
+        return self._private_completion(
+            messages,
+            config,
+            request_kind="role_audit",
+            max_tokens=600,
+            timeout=self.timeout,
         )
-        response.raise_for_status()
-        payload = response.json()
-        self._capture_usage(payload, config, "role_audit")
-        choices = payload.get("choices") or []
-        content = (choices[0].get("message") or {}).get("content") if choices else None
-        if not isinstance(content, str) or not content.strip():
-            raise ValueError("role audit response content is blank")
-        return content
 
     def generate_structured(
         self,

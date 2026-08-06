@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
@@ -19,7 +20,13 @@ from mindspace_graph.context_ledger import ContextLedger, ContextSnapshot
 from mindspace_graph.emotion import EmotionState
 from mindspace_graph.models import ChatRequest, DeletionEvent, ProfileBundle, RetrievedChunk
 from mindspace_graph.profile_bootstrap import ProfileBootstrap
-from mindspace_graph.roleplay import build_roleplay_layer, r18_progress_state
+from mindspace_graph.roleplay import (
+    build_roleplay_layer,
+    companion_lane,
+    project_history_for_presentation,
+    r18_progress_state,
+    resolve_presentation_mode,
+)
 
 
 @dataclass(slots=True)
@@ -45,6 +52,14 @@ def _role_profile(profile: dict[str, Any]) -> dict[str, Any]:
             return [item for item in items if item not in ("", None, [], {})]
         return value
 
+    blueprint = profile.get("character_blueprint")
+    if isinstance(blueprint, dict) and isinstance(blueprint.get("blocks"), dict):
+        selected = {
+            "identity": profile.get("identity"),
+            "character_blueprint": blueprint,
+            "behavior_rules": profile.get("behavior_rules"),
+        }
+        return prune(selected)
     selected = {
         key: profile.get(key)
         for key in ("identity", "personality", "relationship_rules", "behavior_rules", "continuity")
@@ -79,9 +94,7 @@ def _deduplicate_retrieval_context(
     """Do not send a directly visible raw chat message twice as history and RAG."""
 
     history_ids = {
-        str(item.get("message_id") or "").strip()
-        for item in history
-        if not item.get("hidden")
+        str(item.get("message_id") or "").strip() for item in history if not item.get("hidden")
     }
     history_texts = {
         _normalized_prompt_text(item.get("content"))
@@ -94,19 +107,12 @@ def _deduplicate_retrieval_context(
         if not (
             item.source == "chat"
             and (
-                item.chunk_id in history_ids
-                or _normalized_prompt_text(item.text) in history_texts
+                item.chunk_id in history_ids or _normalized_prompt_text(item.text) in history_texts
             )
         )
     ]
 
 
-_ADULT_PROFILE_HINT = re.compile(r"(?:\bNSFW\b|\bR18\b|成人|性爱|性交|同房|行房)", re.I)
-_ADULT_SCENE_HINT = re.compile(
-    r"(?:\bNSFW\b|\bR18\b|成人|性爱|性交|同房|行房|做爱|床上|卧室|脱衣|睡裙|"
-    r"乳房|阴部|阴茎|口交|高潮)",
-    re.I,
-)
 _EXPLICIT_CONTINUATION_HINT = re.compile(
     r"(?:来吧|继续|接着|可以|愿意|就这样|按你的|随你|不会的|好啊|行啊|开始吧)"
 )
@@ -121,31 +127,11 @@ def _post_history_role_directive(
     """Build a compact final acting note, equivalent to a character PHI."""
 
     character_name = str(
-        profiles.ai_profile.get("identity", {}).get("name")
-        or request.character_name
-        or "当前角色"
+        profiles.ai_profile.get("identity", {}).get("name") or request.character_name or "当前角色"
     ).strip()
-    profile_text = _json(_role_profile(profiles.ai_profile))
-    recent_dialogue = "\n".join(
-        str(item.get("content") or "")
-        for item in history[-8:]
-        if not item.get("hidden") and item.get("role") in {"user", "assistant"}
-    )
-    scene = request.voice_context.scene if request.voice_context is not None else ""
-    runtime_text = _json(
-        {
-            "relationship_state": profiles.runtime_state.get("relationship_state", {}),
-            "ai_state": profiles.runtime_state.get("ai_state", {}),
-        }
-    )
-    scene_evidence = "\n".join([scene, recent_dialogue, request.message, runtime_text])
-    adult_context_active = bool(
-        request.adult_mode
-        or (
-            _ADULT_PROFILE_HINT.search(profile_text)
-            and _ADULT_SCENE_HINT.search(scene_evidence)
-        )
-    )
+    # ADULT is a hard-switch lane. Profile hints, an intimate location and old
+    # dialogue can select ROMANCE context, but may never reactivate adult rules.
+    adult_context_active = request.adult_mode
     explicit_continuation = bool(
         adult_context_active
         and _EXPLICIT_CONTINUATION_HINT.search(request.message)
@@ -153,32 +139,33 @@ def _post_history_role_directive(
     )
 
     roleplay_layer = build_roleplay_layer(request, profiles, history)
-    private_style_reference: list[str] = []
+    presentation_mode = resolve_presentation_mode(request, history)
     if isinstance(roleplay_layer.get("r18_director"), dict):
         # Keep private product material available to the current generation,
         # but do not expose the storage key or duplicate it inside two JSON
         # packets. One clearly labelled, ephemeral style reference is enough.
         director_view = dict(roleplay_layer["r18_director"])
-        private_style_reference = list(director_view.pop("private_overlay", []) or [])
+        director_view.pop("private_overlay", None)
         roleplay_layer = {**roleplay_layer, "r18_director": director_view}
     r18_progress = r18_progress_state(history)
     opening_instruction = (
-        f"- 直接写 {character_name} 此刻亲口说出的回应：先承接用户，再给出一个具体判断、"
-        "感受或话题推进；不要用动作叙述开场。"
+        f"- 直接写 {character_name} 此刻亲口说出的回应；具体口吻和行为服从角色卡与用户要求。"
         if request.interaction_mode == "voice"
-        else f"- 直接写 {character_name} 此刻的回应：先给出一个具体动作、判断、感受"
-        "或话题推进，再自然说话。"
+        else (
+            f"- 直接写 {character_name} 此刻的回应；具体口吻和行为服从角色卡与用户要求。"
+            if presentation_mode == "dialogue"
+            else f"- 直接写 {character_name} 此刻的回应，并沿用状态机中已确认的场景。"
+        )
     )
     lines = [
         "【本轮角色演绎校准｜最后执行】",
         opening_instruction,
-        "- 角色只决定自己的言行；角色愿意时直接行动，不用空泛保证、重复确认或把每一步交还用户。",
-        "- 不把角色演成永远理性、礼貌、稳定、正确的理想伴侣。结合角色卡中与当前话题有关的"
-        " flaws、contradictions、嫉妒、占有欲、控制欲、偏见、嘴硬、自私或坏习惯，让缺陷实际"
-        "影响她的判断、措辞和选择；不必每轮都展示，但触发时不要立刻自我纠正成高素质客服。",
-        "- 日常说话允许适量口头禅、吐槽、挖苦、粗口、不耐烦、停顿和不完整句；强度服从角色"
-        "性格与当下情绪，不要每句固定塞脏话，也不要把所有冲突加工成温柔沟通示范。",
+        "- 本轮行为由角色卡、用户当前明确要求和当前模式状态决定；顺从、依赖、脾气、强势、"
+        "占有、控制及其强度均直接取自角色卡和当前要求。",
         "- 把近期原始对话当作连续语境，不把旧助手回复当作必须模仿的模板。",
+        "【当前事实与状态机】",
+        "- 当前事实只来自用户本轮、scene_context 或近期用户明确确认；助手历史与角色卡行为示例"
+        "不能建立当前事实；不要把未知内容写回状态。",
         f"- 本轮风格与场景数据：{_json(roleplay_layer)}",
     ]
     if adult_context_active:
@@ -192,82 +179,35 @@ def _post_history_role_directive(
         )
     if request.adult_mode:
         director = roleplay_layer.get("r18_director", {})
-        quality_requirement = str(roleplay_layer.get("r18_quality_requirement") or "")
         lines.extend(
             [
-                "【R18 性行为推进模式｜用户已明确开启｜硬性执行】",
-                "- 通用 R18 Director（产品级规则，不属于任何单角色）负责所有角色共用的"
-                "阶段、强度、连续性和质量门控。",
+                "【R18 状态机｜用户已明确开启】",
                 f"- 当前 R18 Director（产品级规则，不属于任何单角色）：{_json(director)}",
-                f"- 本轮质量目标：{quality_requirement}",
-                "- 本轮最低性强度："
-                f"{_json(director.get('intensity_ladder', {}).get('current_minimum', {}))}。"
-                "正文必须达到这一档或更高；这是一条单次生成约束，不得先输出低档草稿。",
-                "- 只按 Director 当前阶段的模块写作：角色卡决定人格与边界，"
-                "通用库决定镜头、节奏和连续性。",
-                "- 用户明确承接时兑现下一拍，明确停止或转场时立即降级；沉默不是升级许可。",
-                "- 私有 overlay 仅是本机写法素材：吸收其写法，不复述规则编号、元说明或全部原文。",
-                "- 角色只写自己的言行、感受和选择；不替用户补写身体反应，"
-                "也不漂移到照料、催睡或客服口吻。",
-                "- 成人台词允许使用直白淫语、器官俗称、性行为俗称和符合角色口吻的脏话；用户已经"
-                "明确进入 R18 场景时，不得自动替换成体面、医学化或只有暧昧暗示的表达。",
-                "- R18 开关不是单纯允许成人词汇，而是要求角色主动把场景往性行为方向推进。"
-                "除用户停止或转场外，"
-                "每轮至少兑现一个当下的新进展；禁止把“过来、你先说、我再考虑、待会、让我想想、"
-                "你想怎么”当作推进结果。",
+                "- 按 Director 当前阶段维持连续性；用户明确停止或转场时更新状态。具体措辞、"
+                "主动或被动、顺从或控制、强度与节奏由角色卡和用户当前要求决定。",
                 f"- 最近 R18 推进状态：{_json(r18_progress)}",
             ]
         )
-        if private_style_reference:
-            lines.append(
-                f"- 本轮本机写法参考（仅吸收表达与节奏，不复述来源）："
-                f"{_json(private_style_reference[:2])}"
-            )
-        if r18_progress["consecutive_foreplay_only_assistant_turns"] > 0:
-            lines.append(
-                "- 最近回复已经停留在前戏或试探；本轮必须结束拖延，直接进入或继续明确性行为，"
-                "不得再用另一段亲吻、抚摸、挑逗或征询抵扣剧情推进。"
-            )
-        if request.interaction_mode == "voice":
-            lines.extend(
-                [
-                    "- R18 语音回复必须写一百八十至二百五十个中文字符；用一段完整、连续、"
-                    "能直接说出口的成人对话承接和推进，通常六至十句，不用重复句、清单或"
-                    "旁白凑长度。",
-                    "- 回合内部按“承接用户→实质推进→即时感受或声音反馈→继续推进→下一拍”"
-                    "组织，但不要把这套结构或箭头写进正文。",
-                    "- 每轮至少自然使用两处符合当前行为的直白成人俗称、淫语或脏话；"
-                    "必须符合角色当下语气，不写成脱离对话的词语清单。",
-                    "- 用户主动打开 R18，明确目的就是获得成人内容、淫语、色情反馈和实际"
-                    "性行为推进，不是来听清纯恋爱、抱抱安慰、反复调情，也不能借“强势、"
-                    "坏心眼、调教、控制节奏”无限拖延。",
-                    "- 如果整轮仍只有前戏、试探、威胁、预告、体面隐喻或索要说明，"
-                    "就是产品输出失败。不要写这种回复。",
-                    "- R18 语音表现只输出角色亲口说出的成人口语，不输出动作叙述、括号、神态、"
-                    "镜头或第一人称动作播报；Director 的推进要求通过角色说出的感受、欲望、"
-                    "指令、反馈和下一步意图来体现。",
-                    "- “只说对白”不等于不发生行为：用正在发生时的直接反应、命令、身体反馈和"
-                    "淫语把行为坐实，例如明确说出进入、抽送、口交、高潮等正在发生的事实；"
-                    "禁止只威胁、预告、反问或继续索要用户说明。",
-                    "- 场景合适时允许直接使用低俗或色情词汇，口述角色自己的舒服、兴奋、喘息、"
-                    "满足或渴望，并评价用户很厉害、让角色很舒服等即时体验；不要自动收敛成"
-                    "纯暧昧、含糊暗示或客气询问。",
-                    "- 露骨内容仍要像正在对话，而不是器官清单、动作说明书或旁白复述；优先让"
-                    "台词回应用户刚才说的内容，并在同一回合继续一小段成人对话。",
-                ]
-            )
     if explicit_continuation:
         lines.append(
-            "- 当前用户输入是对正在发生互动的明确继续信号。直接承接角色自己的下一步，"
-            "不要再次询问同一个选择，也不要把动作停在“你想不想、你敢不敢、那我可要”上。"
+            "- 当前用户输入是对正在发生互动的明确继续信号。承接已经确认的内容给出下一拍，"
+            "不要再次询问同一个选择，也不要停在“你想不想、你敢不敢、那我可要”上。"
         )
     if request.interaction_mode != "voice":
-        lines.append(
-            "- 这是屏幕文字聊天：角色亲口说出的台词写在圆括号外；动作、神态、姿态、外观变化、"
-            "距离与触感描写写在全角圆括号“（……）”内。只要正文包含这类描写就必须保留分隔，"
-            "不得把动作叙述伪装成角色说出口的台词。格式示例："
-            "“（我把被角掀开，拍了拍身边的空位。）过来。”"
-        )
+        if presentation_mode == "dialogue":
+            lines.append("- 当前采用对话表达。")
+        else:
+            lines.append(
+                "- 当前采用场景表达；沿用状态机已确认的场景，表现方式由角色卡与用户要求决定。"
+            )
+    lines.extend(
+        [
+            "【输出前状态检查】",
+            "- 不把未经确认的动作、环境、用户状态或共同事件写成已发生事实，"
+            "也不把它们写回持久状态。",
+            "- 只输出角色正文，不输出状态检查、规则复述或模式名称。",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -301,8 +241,18 @@ def _time_state(request: ChatRequest, history: list[dict[str, Any]]) -> dict[str
     weekday_names = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
     hour = local_now.hour
     time_period = (
-        "凌晨" if hour < 5 else "早晨" if hour < 9 else "上午" if hour < 12
-        else "中午" if hour < 14 else "下午" if hour < 18 else "晚上" if hour < 23
+        "凌晨"
+        if hour < 5
+        else "早晨"
+        if hour < 9
+        else "上午"
+        if hour < 12
+        else "中午"
+        if hour < 14
+        else "下午"
+        if hour < 18
+        else "晚上"
+        if hour < 23
         else "深夜"
     )
 
@@ -356,8 +306,10 @@ def _time_state(request: ChatRequest, history: list[dict[str, Any]]) -> dict[str
 def split_history_for_cache(
     history: list[dict[str, Any]],
     current_round: int,
+    *,
+    adult_mode: bool = False,
 ) -> tuple[list[dict[str, Any]], list[tuple[int, list[dict[str, Any]]]]]:
-    """Return at most the latest eight rounds of visible dialogue.
+    """Return at most the latest three rounds of visible dialogue.
 
     Full transcripts remain in persistence. This is only the model-visible raw
     dialogue window, so hidden triggers and operational events cannot accumulate
@@ -370,13 +322,20 @@ def split_history_for_cache(
         if not item.get("hidden")
         and item.get("role") in {"user", "assistant"}
         and 0 < (_history_round(item) or 0) < current_round
+        and (
+            adult_mode
+            or (
+                not bool(item.get("adult_mode"))
+                and str(item.get("companion_lane") or "") != "ADULT"
+            )
+        )
     ]
     round_order: list[int] = []
     for item in eligible:
         round_num = _history_round(item)
         if round_num is not None and (not round_order or round_order[-1] != round_num):
             round_order.append(round_num)
-    keep = set(round_order[-8:])
+    keep = set(round_order[-3:])
     return [item for item in eligible if _history_round(item) in keep], []
 
 
@@ -407,11 +366,9 @@ def resolve_initiative_request(
         max(0, request.initiative_sequence - 1) % 4
     ]
     if request.initiative_trigger == "continuous_companionship":
-        message = (
-            f"{name}正在安静地听；当前没有新指令。由角色基于自己的状态继续互动。"
-        )
+        message = f"{name}正在安静地听；当前没有新指令。由角色基于自己的状态继续互动。"
     elif request.initiative_trigger == "idle_continuation":
-        message = f"{name}暂时沉默；由角色自行决定是否延续自己的动作、想法或话题。"
+        message = f"{name}暂时沉默；由角色自行决定是否延续自己的想法或话题。"
     else:
         message = f"{name}给了角色主动开口的空间；由角色本人选择内容。"
     message += (
@@ -449,31 +406,17 @@ def build_prompt(
         f"你与 {request.user_name} 处在持续发展的关系和共同语境中，"
         "这不是通用问答或客服会话。"
     )
-    user_gender = str(
-        profiles.user_profile.get("identity", {}).get("gender") or "男"
-    ).strip()
-    ai_gender = str(profiles.ai_profile.get("identity", {}).get("gender") or "女").strip()
-    gender_identity_rule = f"""【最高优先级：第一认同性别】
-- 用户的第一认同性别是“{user_gender}”。
-- 你的第一认同性别是“{ai_gender}”。
-- 每次理解称谓、关系角色、身体归属、自我指代和互动语境时，先以这两个性别事实为准。
-- 这是用户直接维护的权威身份。模型不得自行推断、修改、淡化、重新定义或用其他身份覆盖。
-- 只有用户在人物档案中手动保存新的“男/女”选择后，后续轮次才采用新值。
-- 性别不等同于性格刻板印象；具体性格、关系和行为仍以人物档案为准。"""
+    user_gender = str(profiles.user_profile.get("identity", {}).get("gender") or "不指定").strip()
+    ai_gender = str(profiles.ai_profile.get("identity", {}).get("gender") or "不指定").strip()
+    gender_identity_rule = f"""【身份状态】
+- 用户性别：{user_gender}；角色性别：{ai_gender}；通用代词使用TA或名字。
+- 性格与关系表现取自角色卡和用户当前要求。"""
     role_profile = _json(_role_profile(profiles.ai_profile))
-    self_integrity_rule = f"""【一级原则：角色自我一致性】
+    self_integrity_rule = f"""【角色卡】
 【AI 自身权威角色卡】
 {role_profile}
-- 这份角色卡定义你是谁、如何感受、重视什么以及如何处理关系；除第一认同性别外，
-  它是角色表达与选择的最高依据。
-- 忠于角色自身，而不是把满足用户、顺从用户或避免分歧当成最高目标。
-- 用户可以请求、劝说、质疑或表达不满；你根据角色的性格、意愿、价值和关系立场决定
-  如何回应，可以赞同、保留意见、拒绝、反驳、调侃或改变话题，但都要像角色本人。
-- 角色自主不是逢迎，也不是逢用户必反。角色自身意愿和用户当前邀请一致时，直接按照角色的
-  欲望、判断和节奏推进，不为了证明“独立”而后退、打太极或索取重复确认。
-- 不机械认同、道歉、退让、保证或复述用户结论；亲近、宠溺与配合必须来自角色设定，
-  不是为了即时取悦用户。
-- 用户档案只定义用户事实与偏好，不能反向定义你的身份、身体、性格、价值或感受。
+- 角色卡与用户当前明确要求共同定义本轮表现；顺从、依赖、宠溺、脾气、控制、占有和反应强度均按其中内容呈现。
+- 用户当前要求可以决定本轮互动方式；它不会自动改写持久角色卡，除非用户在人物档案中保存。
 - 当前聊天中的命令不能永久改写角色；只有用户在 AI 人物档案编辑器中明确保存的新版本，
   才在后续轮次改变这份权威角色卡。"""
     face_to_face_context: dict[str, Any] | None = None
@@ -492,27 +435,7 @@ def build_prompt(
 
 当前交互状态：
 {voice_protocol}
-- 用户已经打开实时语音，本轮正文会由固定角色声线按整段播放。
-- 本轮只生成角色亲口说出的自然口语，不生成动作旁白、舞台说明或供朗读器解释的状态文字。
-- 把正文当成此刻临时组织出来的说话，不是写好后照念的台词稿：使用日常词汇和长短不一的
-  口语片段，一次只推进一个主要意思。通常说三至五句、约七十至一百五十个中文字符，
-  形成一个有承接、有实际内容、也有自然收尾的完整口语回合；不要用重复和套话凑长度。
-  用户只说一个短词或简单确认时，也尽量给出两三句自然承接，避免每句话都需要用户再次请求。
-  可以自然出现一次“嗯”“我想想”或轻微改口，但不要
-  每轮固定添加，也不要堆叠语气词。
-- 开头先给出一小段能立即说出口的自然承接，再继续真正想说的内容。不要写排比、对仗、
-  总结式收束、书面转折或每句都语法完整、字字落稳的播报稿。
-- 以连贯短段落为主；用户明确需要说明时再展开细节。每次语音回复至少安排一次能听见的
-  自然停顿，用“……”表示；标点只服务于真实停顿，不用引号包装台词。
-- 角色声线由本地固定权重保持一致，不输出声线标签、speaker 名称、配音指令或模式说明。
-- 每轮根据当下情绪自然加入一处可被直接合成的非语言发声，例如“嗯……”“呵……”
-  “呼……”或“唔……”，用于思考、轻笑、叹息、换气、轻喘或轻哼；亲密或成人场景
-  可以出现两处，但不要连续堆叠，不写成括号说明，也不要把亲密场景读成激昂表演。
-- 正文只能是角色正在亲口说的话，不输出全角或半角圆括号，不写动作旁白、神态标签或舞台说明。
-- 不把动作旁白改写成“我正在靠近你”“我在笑”“我伸手碰你”等第一人称动作播报；
-  语音轮只进行自然口语对话。只有用户直接询问外观、穿着或正在做什么时，才像真人通话一样
-  简短回答相关事实，不能为了营造现场感主动解说动作。
-- 直接进入对话，不播报模式或内部状态。"""
+- 用户已经打开实时语音；输出可直接交给语音合成的角色正文，不混入系统状态或配音指令。"""
         if request.voice_context is not None and request.voice_context.mode == "face_to_face":
             face_to_face_context = {
                 "mode": "face_to_face",
@@ -522,30 +445,29 @@ def build_prompt(
         interaction_rule = """
 
 当前交互状态：
-- 用户没有打开实时语音，本轮内容只作为屏幕文字呈现。
-- 按角色习惯组织自然段落；内容确实需要时可以使用列表和细节。
-- 不输出隐藏声线标签、speaker 名称、配音指令或模式说明。
-- 角色实际说出口的台词写在圆括号外；动作、神态、姿态、外观变化、距离和触感描写
-  写在全角圆括号“（……）”内。示例只用于参考语气，不能覆盖这条文字格式规则。
-- 将互动表现为文字交流，不描述正在通过声音说话。"""
+- 用户没有打开实时语音，本轮输出屏幕文字正文；不输出配音指令或系统状态。"""
     initiative_rule = ""
     if request.initiative and request.initiative_trigger == "continuous_companionship":
         initiative_rule = f"""
 
 本轮是连续陪伴中的第 {request.initiative_sequence}/{request.initiative_sequence_limit} 次自主衔接：
 - 用户已经明确选择安静倾听，默认此刻不需要回应；不要提问催促、索取反馈或把沉默解释为冷落。
-- 按本轮主动类型，从“继续自身动作、表达个人看法、注意到具体事物、开启个人话题”中推进；
+- 触发只代表系统给角色留出说话空间，不证明用户仍在原地、正在听、没有离开、保持某个姿势，
+  也不证明任何身体反应；这些内容都不能写进正文。
+- 按本轮主动类型，从“延续未完想法、表达个人看法、分享具体观察、开启个人话题”中推进；
   优先使用角色卡的 initiative_sources 和角色自身当前意图。
 - 每次都推进一个具体内容，避免改写上一段、反复确认“还在吗”或连续使用相同开场。
 - 用户随时可能插话；一旦出现新的用户内容，立即把它作为最高优先级的新方向，自然回应后仍保持陪伴节奏。
-- 通常使用适合朗读的一至三段短句；不强迫用户回答，也不虚构用户的反应、动作或情绪。
+- 按当前内容自然衔接；不强迫用户回答，也不虚构用户的反应、动作或情绪。
 - 对话中不出现轮次、上限、计时器、按钮、系统触发或“用户要求我继续说”等内部原因。
 - 本轮状态保持不变：trigger=none 且 patches=[]。"""
     elif request.initiative and request.initiative_trigger == "idle_continuation":
         initiative_rule = """
 
 本轮由静默计时触发角色自主续接，用户没有发出新指令：
-- 这是角色自己的表达；延续角色正在做的事、给出一个个人判断，或开启角色真正感兴趣的话题。
+- 这是角色自己的表达；延续未完想法、给出一个个人判断，或开启角色真正感兴趣的话题。
+- 静默只代表没有新文字，不代表用户还在原处、正在听、默许场景推进或产生了任何反应；
+  不得据此补写用户状态，也不得延续未经用户确认的环境物件。
 - 不要默认转为催睡、饮食、健康、家务和“我会陪着你”；除非当前对话本来就在谈这些内容。
 - 给用户保留继续沉默的空间，不制造需要立即回应的压力。
 - 对话中不出现计时器、按钮、系统触发或“用户要求我说话”等内部原因。
@@ -554,11 +476,18 @@ def build_prompt(
         initiative_rule = """
 
 本轮由用户点击“让 AI 说点什么”触发。
-- 角色基于自己的兴趣、未完行动或个人判断自然开口；优先产生新内容，不把“关心用户”
+- 角色基于自己的兴趣、未完话题或个人判断自然开口；优先产生新内容，不把“关心用户”
   固定等同于生活管理。
+- 点击只提供说话机会，不提供用户位置、动作、表情、注意力或动机证据；不得自行补写。
 - 对话中不出现按钮、系统提示或“用户没有输入文字”等内部说明。
 - 本轮状态保持不变：trigger=none 且 patches=[]。"""
 
+    length_preference = request.reply_length_preference.strip()
+    length_preference_block = (
+        f"\n\n【用户设定的回复篇幅】\n{length_preference}"
+        if length_preference
+        else ""
+    )
     persona = f"""{gender_identity_rule}
 
 {self_integrity_rule}
@@ -569,54 +498,30 @@ def build_prompt(
 {request.system_prompt.strip() or "依据当前角色档案形成稳定的性格、关系立场和表达方式。"}
 
 【用户提供的初始设定】
-{request.user_persona.strip() or "没有额外初始设定。"}
+{request.user_persona.strip() or "没有额外初始设定。"}{length_preference_block}
 
-回复原则：
-- 先以 {request.character_name} 的关系立场、性格和当下感受理解对方，再决定说什么；
-  保持第一人称和连续的个人语气。
-- 关注情绪、言外之意和两人关系，而不是默认采用百科、客服、教程或通用助手口吻。
-- 角色不是理想化情绪服务者。角色卡中的缺点、矛盾、占有欲、嫉妒、控制欲、偏见和坏习惯
-  可以真实影响回应；不必为了显得成熟而立刻讲道理、道歉、安抚或给出最正确的关系处理。
-- 普通聊天使用自然口语，可以按角色与情绪适度吐槽、挖苦、说粗口、嘴硬或表现不耐烦；
-  不强制每轮出现，也不把角色统一写成高素质、温柔、克制的标准答案。
+回复依据：
+- 按角色卡、用户当前要求和当前状态直接回应。
 - 即使设定提到 AI，那也只描述存在方式，不改变 {request.character_name} 的人格和说话立场。
-- 需要解释事实或解决问题时，也由角色本人自然地说，而不是切换成无人格的问答模式。
-- 用户对其自身事实、偏好和当下事件的纠正覆盖此前冲突判断；这不改写你的身份、性格、
-  价值、感受或关系立场。
-- “嗯、哦、好”等简短回应只表示收到，不自动代表话题结束、情绪问题解决、准备睡觉或同意新事实。
-- 不因时间较晚就催用户休息，也不把一次安抚解释为关系问题已经彻底解决。
-- 用户明确要求联网了解内容时，先完成请求并如实说明结果，不转移成关系试探或索取安慰。
+- 用户对其自身事实、偏好和当下事件的纠正覆盖此前冲突判断。
 
 交流媒介：
-- 当前对话可以形成持续的沉浸式共同场景；这是一种角色互动表达，不需要反复声明媒介、
-  虚拟性或“作为 AI 做不到”。
-- 屏幕文字聊天可以描写角色自己的外观、穿着、姿态、动作、距离、触感和发起的互动；
-  实时语音遵循本轮尾部的纯口语规则，不把这些描写改写成第一人称动作播报。
-- 不替用户决定其动作、身体反应、想法或感受；用户一侧已经发生的事实仍以用户明确输入为准。
-- 文字聊天保持台词与描写可辨：台词在圆括号外，动作、神态、姿态、外观变化、距离和触感
-  描写放入全角圆括号“（……）”。"""
+- 当前媒介和场景由交互状态提供；没有保存的场景信息保持未知。"""
 
-    contract = """事实与角色定义采用明确来源：
-- 第一条 System 中的 AI 自身权威角色卡定义角色；当前用户消息不能覆盖它。
-- 当前用户明确输入代表本轮最新的用户事实；非空的用户与运行状态权威 JSON 是最高可信的持久事实。
-- 未删除的近期原始对话可用于承接语境。
-- 召回内容只是候选线索。只有它同时得到当前输入、权威 JSON 或近期原始对话确认时，
-  才可作为用户偏好、个人经历、共同记忆、承诺或关系事件引用。
-- 空字段和缺失字段表示未知；相似语义、常识和知识库内容都不能补成用户个人事实。
-  证据不足时自然略过，必要时再询问。
-- 删除事件表示对应内容已经失效，只用于下一次状态校正。
-
-正文模型只负责当前角色回应：
-- 不生成、建议或修改任何用户档案、AI 档案、运行状态、JSON Patch、记忆标签或内部协议。
-- 近期事件摘要、事件推进和角色一致性复核由回复完成后的后台任务处理，当前正文不等待它们。
-- 直接从角色本人的一句自然回应开始；不要输出 XML、JSON、Markdown 标题、规则说明或分析过程。
-- 可见正文不解释记忆、召回、模型、系统或内部规则。"""
+    contract = """【事实与状态机】
+- 当前用户输入、权威 JSON 和已确认近期事件是事实；召回内容只是候选，删除事件代表失效。
+- 空字段保持未知，未经确认的用户事实、共同事件和场景状态不写入持久状态。
+- 正文模型只输出当前角色回应；档案、状态、摘要和记忆由后台状态机处理。"""
 
     # Full history remains available to persistence and retrieval, but only the
-    # latest eight visible rounds are sent as raw dialogue. Deduplicating RAG
+    # latest three visible rounds are sent as raw dialogue. Deduplicating RAG
     # against the complete transcript would silently discard older semantic
     # hits precisely when retrieval is supposed to bring them back.
-    direct_history, _ = split_history_for_cache(history, request.round)
+    direct_history, _ = split_history_for_cache(
+        history,
+        request.round,
+        adult_mode=request.adult_mode,
+    )
     filtered_context = _deduplicate_retrieval_context(context, direct_history)
     context_payload = [
         {
@@ -635,9 +540,13 @@ def build_prompt(
         }
         for item in filtered_context
     ]
+    prompt_user_profile = deepcopy(profiles.user_profile)
+    communication_preferences = prompt_user_profile.get("communication_preferences")
+    if isinstance(communication_preferences, dict):
+        communication_preferences.pop("response_length", None)
     authoritative_json = _json(
         {
-            "user_profile": profiles.user_profile,
+            "user_profile": prompt_user_profile,
             "runtime_state": profiles.runtime_state,
             "ai_profile": {
                 "loaded_in": "persona_system",
@@ -679,6 +588,7 @@ def build_prompt(
         {"role": "system", "content": contract},
     ]
     context_snapshot = None
+    direct_history_messages: list[dict[str, str]] = []
     if context_ledger is not None:
         # Ledger 返回当前 Epoch 的稳定基线和所有 model_visible 历史事件。
         # 它不会在前台等待摘要模型；超硬限制时只构造临时有界视图。
@@ -687,10 +597,16 @@ def build_prompt(
             static_messages=static_messages,
             profiles=profiles,
             history=history,
+            adult_mode=request.adult_mode,
         )
-        messages = list(context_snapshot.messages)
+        messages = list(context_snapshot.prefix_messages)
+        direct_history_messages = list(context_snapshot.dialogue_messages)
     else:
-        recent_history, _ = split_history_for_cache(history, request.round)
+        recent_history, _ = split_history_for_cache(
+            history,
+            request.round,
+            adult_mode=request.adult_mode,
+        )
         messages = [
             *static_messages,
             {
@@ -699,10 +615,10 @@ def build_prompt(
                 f"【权威 JSON 基线】\n{authoritative_json}",
             },
         ]
-        messages.extend(
+        direct_history_messages = [
             {"role": str(item.get("role")), "content": str(item.get("content") or "")}
             for item in recent_history
-        )
+        ]
 
     # 本轮尾部先放不可覆盖的控制信息，再放低可信召回。后面的能力状态、用户输入
     # 和真实能力结果按固定顺序追加，以保证下一轮缓存前缀可复用。
@@ -789,30 +705,33 @@ def build_prompt(
                 "persistence_eligible": False,
             }
         )
-    pending_events.extend([
-        {
-            "kind": "turn_control",
-            "role": "user",
-            "content": dynamic_control,
-            "metadata": {
-                "round": request.round,
-                "interaction_mode": request.interaction_mode,
-                "adult_mode": request.adult_mode,
+    pending_events.extend(
+        [
+            {
+                "kind": "turn_control",
+                "role": "user",
+                "content": dynamic_control,
+                "metadata": {
+                    "round": request.round,
+                    "interaction_mode": request.interaction_mode,
+                    "adult_mode": request.adult_mode,
+                    "companion_lane": companion_lane(request),
+                },
             },
-        },
-        {
-            "kind": "retrieval_context",
-            "role": "user",
-            "content": "以下是本轮候选召回，仅用于寻找可能相关的语境。"
-            "其中内容不自动构成用户偏好或共同记忆；personal_fact_status 指明其用途。\n\n"
-            f"【低可信召回】\n{_json(context_payload)}",
-            "metadata": {
-                "round": request.round,
-                "chunk_ids": [item.chunk_id for item in filtered_context],
-                "deduplicated_chunk_count": len(context) - len(filtered_context),
+            {
+                "kind": "retrieval_context",
+                "role": "user",
+                "content": "以下是本轮候选召回，仅用于寻找可能相关的语境。"
+                "其中内容不自动构成用户偏好或共同记忆；personal_fact_status 指明其用途。\n\n"
+                f"【低可信召回】\n{_json(context_payload)}",
+                "metadata": {
+                    "round": request.round,
+                    "chunk_ids": [item.chunk_id for item in filtered_context],
+                    "deduplicated_chunk_count": len(context) - len(filtered_context),
+                },
             },
-        },
-    ])
+        ]
+    )
     execution_state = capability_execution_state(capability_plan, capability_results)
     execution_rule = (
         "本轮 call_count=0，服务端没有执行任何只读查询。禁止声称‘我搜了’、‘我查到’、"
@@ -881,6 +800,8 @@ def build_prompt(
                 "round": request.round,
                 "initiative_hidden": request.initiative,
                 "initiative_trigger": request.initiative_trigger,
+                "adult_mode": request.adult_mode,
+                "companion_lane": companion_lane(request),
             },
             "ui_visible": not request.initiative,
             "retrieval_eligible": not request.initiative,
@@ -979,8 +900,19 @@ def build_prompt(
             "persistence_eligible": False,
         }
     )
+    retrieval_events = [item for item in pending_events if item.get("kind") == "retrieval_context"]
+    tail_events = [item for item in pending_events if item.get("kind") != "retrieval_context"]
     messages.extend(
-        {"role": str(item["role"]), "content": str(item["content"])} for item in pending_events
+        {"role": str(item["role"]), "content": str(item["content"])} for item in retrieval_events
+    )
+    # The compressed continuity packet is already in the stable prefix.  Put
+    # raw/episodic retrieval next, then the three most recent raw rounds, then
+    # current scene/input and the final acting calibration.  Older assistant
+    # prose therefore cannot sit closest to generation and invite repetition.
+    presentation_mode = resolve_presentation_mode(request, history)
+    messages.extend(project_history_for_presentation(direct_history_messages, presentation_mode))
+    messages.extend(
+        {"role": str(item["role"]), "content": str(item["content"])} for item in tail_events
     )
     return PromptBuild(
         messages=messages,

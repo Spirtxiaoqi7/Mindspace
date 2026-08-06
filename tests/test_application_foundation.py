@@ -113,7 +113,7 @@ def test_profile_gender_defaults_and_validation_are_explicit(tmp_path):
 
     invalid = deepcopy(user)
     invalid["identity"]["gender"] = "未设置"
-    with pytest.raises(ValueError, match="must be 男 or 女"):
+    with pytest.raises(ValueError, match="must be 男、女或不指定"):
         profiles.save_document("user_profile", invalid)
 
 

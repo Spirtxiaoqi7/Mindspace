@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict, deque
 from copy import deepcopy
 from threading import RLock
 from typing import Any
@@ -32,9 +32,8 @@ class PromptInspectionStore:
     @staticmethod
     def _layer_name(
         index: int,
-        base_count: int,
-        pending: list[dict[str, Any]],
         content: str,
+        pending_kind: str,
     ) -> str:
         if index == 0:
             return "system_and_current_character_profile"
@@ -42,11 +41,10 @@ class PromptInspectionStore:
             return "system_data_contract"
         if index == 2:
             return "global_user_and_character_runtime"
-        if "【历史压缩摘要】" in content:
+        if "【历史压缩摘要】" in content or "【当前连续性包】" in content:
             return "conversation_summary"
-        pending_index = index - base_count
-        if 0 <= pending_index < len(pending):
-            return str(pending[pending_index].get("kind") or "turn_context")
+        if pending_kind:
+            return pending_kind
         return "conversation_history"
 
     def _purge(self) -> None:
@@ -69,16 +67,25 @@ class PromptInspectionStore:
     ) -> None:
         if not run_id:
             return
-        base_count = max(0, len(messages) - len(pending_events))
+        pending_by_signature: dict[tuple[str, str], deque[str]] = defaultdict(deque)
+        for event in pending_events:
+            signature = (str(event.get("role") or ""), str(event.get("content") or ""))
+            pending_by_signature[signature].append(
+                str(event.get("kind") or "turn_context")
+            )
         layers = []
         for index, message in enumerate(messages):
             content = str(message.get("content") or "")
+            signature = (str(message.get("role") or ""), content)
+            pending_kind = (
+                pending_by_signature[signature].popleft()
+                if pending_by_signature[signature]
+                else ""
+            )
             layers.append(
                 {
                     "index": index,
-                    "layer": self._layer_name(
-                        index, base_count, pending_events, content
-                    ),
+                    "layer": self._layer_name(index, content, pending_kind),
                     "role": str(message.get("role") or ""),
                     "chars": len(content),
                     "estimated_tokens": max(1, len(content) // 2) if content else 0,

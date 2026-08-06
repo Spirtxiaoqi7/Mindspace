@@ -15,7 +15,7 @@ PROFILE_TYPES = {
     "runtime_state": "runtime_state",
 }
 
-IDENTITY_GENDERS = {"男", "女"}
+IDENTITY_GENDERS = {"男", "女", "不指定"}
 
 REQUIRED_SECTIONS = {
     "user_profile": {
@@ -107,7 +107,7 @@ class ProfileSchemaRegistry:
         if key in {"user_profile", "ai_profile"}:
             gender = candidate["identity"].get("gender")
             if gender not in IDENTITY_GENDERS:
-                raise ValueError(f"{key}.identity.gender must be 男 or 女")
+                raise ValueError(f"{key}.identity.gender must be 男、女或不指定")
         for field in DEFAULT_MEMORY_REGISTRY.fields:
             if field.target != key:
                 continue

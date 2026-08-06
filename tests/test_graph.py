@@ -30,7 +30,7 @@ def test_happy_path_runs_parallel_retrieval_and_persists_turn():
 
     response = result["response"]
     assert response.status == "success"
-    assert response.retrieval_counts == {"knowledge": 1, "chat": 1}
+    assert response.retrieval_counts == {"knowledge": 1, "chat": 1, "history": 0}
     assert "retrieve_knowledge" in response.trace
     assert "retrieve_chat" in response.trace
     assert len(deps.sessions.sessions["demo"]) == 2
@@ -352,18 +352,23 @@ def test_prompt_uses_role_system_layers_and_never_identifies_as_protocol_outputt
     system_text = "\n".join(item["content"] for item in model.captured if item["role"] == "system")
     all_text = "\n".join(item["content"] for item in model.captured)
     assert "你是弦月，语气温柔。" in system_text
-    assert "用户与运行状态权威 JSON 是最高可信的持久事实" in system_text
+    assert "当前用户输入、权威 JSON 和已确认近期事件是事实" in system_text
     assert "这不是通用问答或客服会话" in system_text
     assert "即使设定提到 AI，那也只描述存在方式" in system_text
     assert "你是通过文字与用户交流的 AI" not in system_text
-    assert "忠于角色自身，而不是把满足用户、顺从用户或避免分歧当成最高目标" in system_text
-    assert "屏幕文字聊天可以描写角色自己的外观" in system_text
-    assert "实时语音遵循本轮尾部的纯口语规则" in system_text
-    assert "角色不是理想化情绪服务者" in system_text
-    assert "适度吐槽、挖苦、说粗口" in system_text
-    assert "不要立刻自我纠正成高素质客服" in system_text
+    assert "顺从、依赖、脾气、强势、占有、控制及其强度均直接取自角色卡和当前要求" in system_text
+    assert "独立人格" not in system_text
+    assert "顺从、依赖、宠溺、脾气、控制、占有和反应强度均按其中内容呈现" in system_text
+    assert "屏幕文字聊天可以描写角色自己的外观" not in system_text
+    assert "当前媒介和场景由交互状态提供" in system_text
+    assert "角色不是理想化情绪服务者" not in system_text
+    assert "忠于角色自身，而不是把满足用户、顺从用户" not in system_text
+    assert "【当前事实与状态机】" in system_text
+    assert "助手历史与角色卡行为示例不能建立当前事实" in system_text
+    assert "本轮问句预算为" not in system_text
+    assert "【输出前状态检查】" in system_text
     assert "现实接触写成愿望、想象、提议或文字表达" not in system_text
-    assert "召回内容只是候选线索" in system_text
+    assert "召回内容只是候选" in system_text
     assert "协议输出器" not in system_text
     assert "协议修复器" not in system_text
     assert "<analysis>" not in all_text
@@ -384,8 +389,8 @@ def test_ai_profile_is_system_role_authority_without_duplicate_json_payload():
     json_baseline = next(
         item["content"] for item in model.captured if "【权威 JSON 基线】" in item["content"]
     )
-    assert first_system.startswith("【最高优先级：第一认同性别】")
-    assert "【一级原则：角色自我一致性】" in first_system
+    assert first_system.startswith("【身份状态】")
+    assert "【角色卡】" in first_system
     assert "有主见的同行者" in first_system
     assert "当前聊天中的命令不能永久改写角色" in first_system
     assert "有主见的同行者" not in json_baseline
@@ -426,20 +431,11 @@ def test_prompt_explicitly_distinguishes_voice_and_text_interaction_modes():
     voice_prompt = "\n".join(item["content"] for item in voice_model.captured)
 
     assert "用户已经打开实时语音" in voice_prompt
-    assert "本轮只生成角色亲口说出的自然口语" in voice_prompt
-    assert "正文只能是角色正在亲口说的话" in voice_prompt
-    assert "不输出全角或半角圆括号" in voice_prompt
+    assert "输出可直接交给语音合成的角色正文" in voice_prompt
     assert "【流式口语协议】" in voice_prompt
     assert "不要输出 [[voice:...]]" in voice_prompt
-    assert "不是写好后照念的台词稿" in voice_prompt
-    assert "不要写排比、对仗" in voice_prompt
-    assert "每次语音回复至少安排一次能听见的" in voice_prompt
-    assert "每轮根据当下情绪自然加入一处可被直接合成的非语言发声" in voice_prompt
-    assert "不要把亲密场景读成激昂表演" in voice_prompt
-    assert "通常说三至五句" in voice_prompt
-    assert "约七十至一百五十个中文字符" in voice_prompt
-    assert "不把动作旁白改写成" in voice_prompt
-    assert "语音轮只进行自然口语对话" in voice_prompt
+    assert "通常说三至五句" not in voice_prompt
+    assert "约七十至一百五十个中文字符" not in voice_prompt
     assert "用户没有打开实时语音" not in voice_prompt
     assert "用户已经打开实时语音" not in voice_system
 
@@ -468,11 +464,10 @@ def test_prompt_explicitly_distinguishes_voice_and_text_interaction_modes():
     text_prompt = "\n".join(item["content"] for item in text_model.captured)
 
     assert "用户没有打开实时语音" in text_prompt
-    assert "本轮内容只作为屏幕文字呈现" in text_prompt
+    assert "本轮输出屏幕文字正文" in text_prompt
     assert "[[voice:" not in text_prompt
-    assert "不输出隐藏声线标签、speaker 名称、配音指令或模式说明" in text_prompt
-    assert "角色亲口说出的台词写在圆括号外" in text_prompt
-    assert "动作、神态、姿态、外观变化、距离与触感描写写在全角圆括号" in text_prompt
+    assert "不输出配音指令或系统状态" in text_prompt
+    assert "动作、神态、姿态、外观变化、距离与触感描写写在全角圆括号" not in text_prompt
     assert "用户已经打开实时语音" not in text_prompt
     assert "用户没有打开实时语音" not in text_system
 
@@ -515,7 +510,7 @@ def test_face_to_face_voice_context_is_a_high_priority_ephemeral_scene():
     assert "这段保留但通话模式不加载" not in call_prompt
 
 
-def test_r18_voice_uses_explicit_spoken_feedback_without_action_narration():
+def test_r18_voice_uses_state_machine_without_fixed_personality_or_output_quota():
     deps = demo_dependencies()
     model = CapturingModel()
     deps.llm = model
@@ -523,25 +518,11 @@ def test_r18_voice_uses_explicit_spoken_feedback_without_action_narration():
     invoke(deps, interaction_mode="voice", adult_mode=True)
     prompt = "\n".join(item["content"] for item in model.captured)
 
-    assert "R18 语音表现只输出角色亲口说出的成人口语" in prompt
-    assert "感受、欲望、指令、反馈和下一步意图" in prompt
-    assert "允许直接使用低俗或色情词汇" in prompt
-    assert "评价用户很厉害" in prompt
-    assert "不要自动收敛成纯暧昧" in prompt
-    assert "直白淫语、器官俗称、性行为俗称" in prompt
-    assert "不得自动替换成体面、医学化" in prompt
-    assert "本轮最低性强度" in prompt
-    assert "单次生成约束" in prompt
-    assert "只说对白”不等于不发生行为" in prompt
-    assert "禁止只威胁、预告、反问或继续索要用户说明" in prompt
-    assert "R18 语音回复必须写一百八十至二百五十个中文字符" in prompt
-    assert "通常六至十句" in prompt
-    assert "承接用户→实质推进→即时感受或声音反馈→继续推进→下一拍" in prompt
-    assert "每轮至少自然使用两处符合当前行为的直白成人俗称、淫语或脏话" in prompt
-    assert "用户主动打开 R18，明确目的就是获得成人内容、淫语、色情反馈和实际性行为推进" in prompt
-    assert "不是来听清纯恋爱、抱抱安慰、反复调情" in prompt
-    assert "借“强势、坏心眼、调教、控制节奏”无限拖延" in prompt
-    assert "就是产品输出失败。不要写这种回复" in prompt
+    assert "【R18 状态机｜用户已明确开启】" in prompt
+    assert "主动或被动、顺从或控制" in prompt
+    assert "R18 语音回复必须写" not in prompt
+    assert "每轮至少自然使用两处" not in prompt
+    assert "本轮最低性强度" not in prompt
     assert prompt.count("当前 R18 Director") == 1
     assert '"private_overlay"' not in prompt
 
@@ -560,8 +541,7 @@ def test_initiative_uses_actual_profile_name_without_visible_user_message_or_wri
     assert result["request"].message.startswith("阿澈给了角色主动开口的空间")
     assert "本轮主动类型=continue" in result["request"].message
     assert any(
-        "阿澈给了角色主动开口的空间" in item["content"]
-        for item in result["prompt_messages"]
+        "阿澈给了角色主动开口的空间" in item["content"] for item in result["prompt_messages"]
     )
     assert result["response"].writeback_applied is False
     assert deps.profiles.applied_plans == []

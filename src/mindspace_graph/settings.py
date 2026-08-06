@@ -47,7 +47,7 @@ class AppSettings:
     context_compaction_soft_ratio: float = 0.65
     context_compaction_hard_ratio: float = 0.82
     context_compaction_patch_limit: int = 32
-    context_compaction_retain_turns: int = 8
+    context_compaction_retain_turns: int = 3
     context_compaction_delay_seconds: float = 1.5
     role_audit_enabled: bool = True
     role_audit_model: str = ""
@@ -128,7 +128,7 @@ class AppSettings:
                 os.environ.get("MINDSPACE_CONTEXT_COMPACTION_PATCH_LIMIT", "32")
             ),
             context_compaction_retain_turns=int(
-                os.environ.get("MINDSPACE_CONTEXT_COMPACTION_RETAIN_TURNS", "8")
+                os.environ.get("MINDSPACE_CONTEXT_COMPACTION_RETAIN_TURNS", "3")
             ),
             context_compaction_delay_seconds=float(
                 os.environ.get("MINDSPACE_CONTEXT_COMPACTION_DELAY_SECONDS", "1.5")

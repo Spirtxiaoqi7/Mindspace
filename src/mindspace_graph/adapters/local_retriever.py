@@ -386,6 +386,7 @@ class LocalKnowledgeRetriever:
         character_name: str = "",
         messages: list[dict[str, Any]] | None = None,
         include_raw_chat: bool = True,
+        adult_mode: bool = False,
     ) -> list[RetrievedChunk]:
         settings = settings or RetrievalSettings()
         source_messages = (
@@ -394,7 +395,18 @@ class LocalKnowledgeRetriever:
             else self.sessions.load_session(session_id).get("messages", [])
         )
         messages = (
-            [item for item in source_messages if chat_message_retrieval_eligible(item)]
+            [
+                item
+                for item in source_messages
+                if chat_message_retrieval_eligible(item)
+                and (
+                    adult_mode
+                    or (
+                        not bool(item.get("adult_mode"))
+                        and str(item.get("companion_lane") or "") != "ADULT"
+                    )
+                )
+            ]
             if include_raw_chat
             else []
         )
@@ -410,6 +422,13 @@ class LocalKnowledgeRetriever:
                 if (
                     str(item.get("character_id") or "") != character_id
                     or str(item.get("session_id") or "") == session_id
+                    or (
+                        not adult_mode
+                        and (
+                            bool(item.get("adult_mode"))
+                            or str(item.get("companion_lane") or "") == "ADULT"
+                        )
+                    )
                 ):
                     continue
                 content = str(item.get("text") or "")
@@ -433,7 +452,15 @@ class LocalKnowledgeRetriever:
             historical.sort(key=lambda value: (value[0], value[1]), reverse=True)
             messages = [*messages, *(item for _, _, item in historical[: max(k * 3, 12)])]
         memory_records = (
-            self.memory_store.list_active(character_id)
+            [
+                item
+                for item in self.memory_store.list_active(character_id)
+                if adult_mode
+                or (
+                    not bool(item.get("episode", {}).get("adult_mode"))
+                    and str(item.get("episode", {}).get("companion_lane") or "") != "ADULT"
+                )
+            ]
             if self.memory_store is not None
             else []
         )

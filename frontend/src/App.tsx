@@ -28,6 +28,8 @@ import type {
   MemoryItem,
   Message,
   ProductSettings,
+  PresentationModePreference,
+  PresentationModeResolved,
   ProfileCardData,
   ProfileHistoryItem,
   PromptInspection,
@@ -204,6 +206,7 @@ const ACTIVE_RUN_STORAGE_KEY = "mindspace.active_run";
 const ADULT_MODE_STORAGE_KEY = "mindspace.r18_enhanced";
 const NSFW_ADULT_CONFIRMED_STORAGE_KEY = "mindspace.nsfw_adult_confirmed";
 const R18_STYLE_STORAGE_KEY = "mindspace.r18_style";
+const PRESENTATION_MODE_STORAGE_KEY = "mindspace.presentation_mode";
 const VOICE_INPUT_DEVICE_STORAGE_KEY = "mindspace.voice_input_device";
 const VOICE_CAPTURE_RECOVERY_STORAGE_KEY = "mindspace.voice_capture_recovery";
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -331,7 +334,11 @@ const str = (value: unknown) => String(value ?? "");
 // is therefore never reset at sentence boundaries.
 export function shouldBufferQwenReplyForSinglePass(settings: ProductSettings | null | undefined, voiceOpen: boolean): boolean {
   return settings?.audio.tts_provider === "qwen3-vllm"
-    && (voiceOpen || bool(settings.audio.auto_tts));
+    && voiceOpen;
+}
+
+export function shouldAutomaticallyQueueSpeech(voiceOpen: boolean): boolean {
+  return voiceOpen;
 }
 
 export function shouldFollowConversationScroll(distanceFromBottom: number, threshold = 180): boolean {
@@ -615,7 +622,7 @@ function App() {
   const [conversationScene, setConversationScene] = useState<ConversationScene | null>(null);
   const [appView, setAppView] = useState<AppView>("modes");
   const [characterPickerOpen, setCharacterPickerOpen] = useState(false);
-  const [characterPickerScope, setCharacterPickerScope] = useState<"all" | "custom">("all");
+  const [characterPickerIntent, setCharacterPickerIntent] = useState<"resume" | "new">("resume");
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [sessionId, setSessionId] = useState(localStorage.getItem("mindspace.session") || uid());
   const [settingsInitialTab, setSettingsInitialTab] = useState("model");
@@ -631,6 +638,11 @@ function App() {
   const [r18StyleId, setR18StyleId] = useState(
     () => localStorage.getItem(R18_STYLE_STORAGE_KEY) || "high_intensity",
   );
+  const [presentationMode, setPresentationMode] = useState<PresentationModePreference>(() => {
+    const saved = localStorage.getItem(PRESENTATION_MODE_STORAGE_KEY);
+    return saved === "dialogue" || saved === "scene" ? saved : "auto";
+  });
+  const [resolvedPresentationMode, setResolvedPresentationMode] = useState<PresentationModeResolved>("dialogue");
   const [search, setSearch] = useState("");
   const [runId, setRunId] = useState("");
   const [initialDataLoaded, setInitialDataLoaded] = useState(false);
@@ -779,6 +791,15 @@ function App() {
     setNsfwConfirmationOpen(false);
     notify("已确认成年，NSFW 已开启");
   }, [notify, nsfwConfirmationSeconds]);
+
+  const cyclePresentationMode = useCallback(() => {
+    const next: PresentationModePreference = presentationMode === "auto"
+      ? "dialogue"
+      : presentationMode === "dialogue" ? "scene" : "auto";
+    setPresentationMode(next);
+    localStorage.setItem(PRESENTATION_MODE_STORAGE_KEY, next);
+    notify(next === "auto" ? "表达方式已设为自动判断" : next === "dialogue" ? "表达方式已锁定对话" : "表达方式已锁定场景");
+  }, [notify, presentationMode]);
 
   useEffect(() => { inputRef.current = input; }, [input]);
   useEffect(() => { generatingRef.current = generating; }, [generating]);
@@ -953,6 +974,7 @@ function App() {
   const loadSessions = useCallback(async () => {
     const result = await request<{ sessions: SessionSummary[] }>("/api/v1/sessions");
     setSessions(result.sessions);
+    return result.sessions;
   }, []);
 
   const loadCharacters = useCallback(async () => {
@@ -966,7 +988,7 @@ function App() {
     const path = view === "modes"
       ? "/modes"
       : view === "draw"
-        ? "/draw"
+        ? "/fate"
         : view === "characters"
           ? "/characters"
           : view === "scenes"
@@ -1002,6 +1024,10 @@ function App() {
     setActiveActivitySessionId("");
     void loadConversationScene(id);
     const loadedMessages = value.messages || [];
+    const latestResolved = [...loadedMessages].reverse().find(
+      (item) => item.role === "assistant" && item.presentation_mode,
+    )?.presentation_mode;
+    setResolvedPresentationMode(latestResolved || "dialogue");
     const sameSession = id === sessionId;
     const recovering = readActiveRun()?.session_id === id;
     setMessages((current) =>
@@ -1616,7 +1642,9 @@ function App() {
   }, [notify, playPCMStream, prepareSpeech, publishPlaybackState, scheduleIdleContinuation, setVoiceInputLocked]);
 
   const enqueueSpeech = useCallback((text: string, force = false, voiceCue = ttsVoiceCueRef.current) => {
-    if ((!force && !voiceOpenRef.current && !bool(settings?.audio.auto_tts)) || !text.trim()) return;
+    // Text chat never starts TTS implicitly. Manual replay remains available
+    // through force=true, while live voice owns automatic synthesis.
+    if ((!force && !shouldAutomaticallyQueueSpeech(voiceOpenRef.current)) || !text.trim()) return;
     const speech = ttsResponseStartedRef.current ? text.trim() : stripLeadingTtsFiller(text);
     if (!hasSpeakableContent(speech)) return;
     ttsResponseStartedRef.current = true;
@@ -1625,7 +1653,7 @@ function App() {
     // text in this queue avoids a hidden stack of HTTP streams behind the
     // GPT-SoVITS lock when a streamed answer arrives quickly.
     if (!audioPlayingRef.current) void playQueue();
-  }, [playQueue, settings]);
+  }, [playQueue]);
 
   const acceptSpeechDelta = useCallback((delta: string, flush = false) => {
     const sentences = speechSegmenterRef.current.feed(
@@ -1821,6 +1849,10 @@ function App() {
       }
       activeInitiativeRef.current = { trigger: "none", sequence: 0 };
       currentAssistantIdRef.current = str(response.assistant_message_id);
+      const completedPresentation = str(response.presentation_mode);
+      if (completedPresentation === "dialogue" || completedPresentation === "scene") {
+        setResolvedPresentationMode(completedPresentation);
+      }
       if (shouldSynthesizeStreamEvent(isRecoveryReplay)) {
         if (shouldBufferQwenReplyForSinglePass(settings, voiceOpenRef.current)) {
           if (!qwenFullReplySubmittedRef.current) {
@@ -1831,7 +1863,7 @@ function App() {
           acceptSpeechDelta("", true);
         }
       }
-      setMessages((items) => items.map((item) => item.status === "streaming" ? { ...item, message_id: str(response.assistant_message_id) || item.message_id, content: str(response.reply || item.content), status: "complete" as const } : item));
+      setMessages((items) => items.map((item) => item.status === "streaming" ? { ...item, message_id: str(response.assistant_message_id) || item.message_id, content: str(response.reply || item.content), presentation_mode: completedPresentation === "scene" ? "scene" : "dialogue", status: "complete" as const } : item));
       if (voiceOpenRef.current) setVoice((current) => ({ ...current, reply: str(response.reply || current.reply), phase: audioPlayingRef.current || audioQueueRef.current.length ? "assistant-speaking" : "listening" }));
       activeVoiceTurnTextRef.current = "";
       activeVoiceTurnRoundRef.current = 0;
@@ -1922,7 +1954,6 @@ function App() {
     if (!content) { notify("请输入消息内容"); return; }
     if (!activeCharacterId) {
       notify("请先为当前会话选择角色");
-      setCharacterPickerScope("all");
       setCharacterPickerOpen(true);
       return;
     }
@@ -1985,7 +2016,7 @@ function App() {
       message: content, session_id: sessionId, character_id: activeCharacterId,
       activity_session_id: activeActivitySessionId,
       session_mode: activeCharacter?.source === "draw" ? "draw" : "custom",
-      round: targetRound, mode, interaction_mode: voiceOpenRef.current ? "voice" : "text", adult_mode: adultMode, r18_style_id: r18StyleId, initiative, initiative_trigger: initiativeTrigger,
+      round: targetRound, mode, interaction_mode: voiceOpenRef.current ? "voice" : "text", presentation_mode: presentationMode, adult_mode: adultMode, r18_style_id: r18StyleId, initiative, initiative_trigger: initiativeTrigger,
       initiative_sequence: initiativeSequence, initiative_sequence_limit: initiativeSequenceLimit,
       client_sent_at: clientSentAt,
       client_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
@@ -2001,12 +2032,13 @@ function App() {
         },
       } : null,
       user_name: str(persona.user_name || "用户"), user_persona: str(persona.user_persona),
+      reply_length_preference: str(persona.reply_length_preference),
       character_name: str(persona.character_name || "Mindspace"), system_prompt: str(persona.system_prompt),
       api: { temperature: num(llm.temperature, 0.7), max_tokens: num(llm.max_tokens, 2000) },
       retrieval: {
         rag_enabled: bool(retrievalSettings.rag_enabled ?? true), knowledge_enabled: bool(retrievalSettings.knowledge_enabled ?? true),
         chat_enabled: bool(retrievalSettings.chat_enabled ?? true), structured_memory_enabled: bool(retrievalSettings.structured_memory_enabled ?? true), temporal_enabled: bool(retrievalSettings.temporal_enabled ?? true),
-        knowledge_k: num(retrievalSettings.knowledge_k, 5), chat_k: num(retrievalSettings.chat_k, 10),
+        knowledge_k: num(retrievalSettings.knowledge_k, 2), chat_k: num(retrievalSettings.chat_k, 3), history_k: num(retrievalSettings.history_k, 3),
         similarity_threshold: num(retrievalSettings.similarity_threshold, 0.5), decay_rounds: num(retrievalSettings.decay_rounds, 20),
         decay_hours: num(retrievalSettings.decay_hours, 168),
         fairness_enabled: bool(retrievalSettings.fairness_enabled ?? true), low_exposure_ratio: num(retrievalSettings.low_exposure_ratio, 0.2),
@@ -2043,7 +2075,7 @@ function App() {
     } finally {
       abortRef.current = null;
     }
-  }, [activeActivitySessionId, activeCharacter, activeCharacterId, adultMode, cancelIdleContinuation, cancelRun, captureVoiceInterruption, clearPendingResponseDelta, generating, handleStreamEvent, input, llmReady, notify, r18StyleId, round, sessionId, setVoiceInputLocked, settings, stopAudio]);
+  }, [activeActivitySessionId, activeCharacter, activeCharacterId, adultMode, cancelIdleContinuation, cancelRun, captureVoiceInterruption, clearPendingResponseDelta, generating, handleStreamEvent, input, llmReady, notify, presentationMode, r18StyleId, round, sessionId, setVoiceInputLocked, settings, stopAudio]);
 
   useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
 
@@ -2987,17 +3019,7 @@ function App() {
     void startListening();
   }, [startListening, stopListening]);
 
-  const createSessionForCharacter = useCallback(async (character: CharacterSummary | CharacterRecord) => {
-    const matchingSessions = sessions
-      .filter((item) => item.character_id === character.character_id
-        || (!item.character_id && str(item.character_name).trim() === character.display_name.trim()))
-      .sort((left, right) => Date.parse(right.updated_at || "0") - Date.parse(left.updated_at || "0"));
-    const existing = matchingSessions[0]?.session_id || character.latest_session_id;
-    if (existing) {
-      setCharacterPickerOpen(false);
-      await openSession(existing);
-      return;
-    }
+  const startNewSessionForCharacter = useCallback(async (character: CharacterSummary | CharacterRecord) => {
     cancelIdleContinuation();
     idleContinuationSentRef.current = false;
     companionRoundRef.current = 0;
@@ -3019,12 +3041,26 @@ function App() {
     setCharacterPickerOpen(false);
     setAppView("chat");
     window.history.replaceState(null, "", `#/chat/${id}`);
-    await loadSessions();
+    await Promise.all([loadSessions(), loadCharacters()]);
     notify("已创建新对话");
-  }, [cancelIdleContinuation, cancelRun, generating, loadConversationScene, loadSessions, notify, openSession, sessions]);
+  }, [cancelIdleContinuation, cancelRun, generating, loadCharacters, loadConversationScene, loadSessions, notify]);
+
+  const resumeCharacterSession = useCallback(async (character: CharacterSummary | CharacterRecord) => {
+    const matchingSessions = sessions
+      .filter((item) => item.character_id === character.character_id
+        || (!item.character_id && str(item.character_name).trim() === character.display_name.trim()))
+      .sort((left, right) => Date.parse(right.updated_at || "0") - Date.parse(left.updated_at || "0"));
+    const existing = matchingSessions[0]?.session_id;
+    if (existing) {
+      setCharacterPickerOpen(false);
+      await openSession(existing);
+      return;
+    }
+    await startNewSessionForCharacter(character);
+  }, [openSession, sessions, startNewSessionForCharacter]);
 
   const newSession = useCallback(() => {
-    setCharacterPickerScope("all");
+    setCharacterPickerIntent("new");
     setCharacterPickerOpen(true);
   }, []);
 
@@ -3046,19 +3082,32 @@ function App() {
       danger: true,
     }))) return;
     await request(`/api/v1/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
-    const remaining = sessions.filter((item) => item.session_id !== id)
-      .sort((left, right) => Date.parse(right.updated_at || "0") - Date.parse(left.updated_at || "0"));
-    setSessions(remaining);
+    if (localStorage.getItem("mindspace.session") === id) {
+      localStorage.removeItem("mindspace.session");
+    }
+    const [remaining, refreshedCharacters] = await Promise.all([loadSessions(), loadCharacters()]);
     if (id === sessionId) {
-      const next = remaining[0];
+      const deletedCharacterId = str(target.character_id);
+      const next = remaining.find((item) => item.character_id === deletedCharacterId);
       if (next) await openSession(next.session_id);
       else {
         setMessages([]);
+        setRound(1);
+        setEvents([]);
+        setRetrieval([]);
         setConversationScene(null);
-        navigate("modes");
+        const characterStillExists = refreshedCharacters.some(
+          (item) => item.character_id === deletedCharacterId && item.status === "active",
+        );
+        if (characterStillExists) {
+          setActiveCharacterId(deletedCharacterId);
+          navigate("characters");
+        } else {
+          setActiveCharacterId("");
+          navigate("modes");
+        }
       }
     }
-    else await loadSessions();
     notify("会话已删除");
   };
 
@@ -3146,26 +3195,30 @@ function App() {
   const title = sessions.find((item) => item.session_id === sessionId)?.title || "新对话";
   const userName = str(settings?.persona.user_name || "用户");
   const characterName = activeCharacter?.display_name || str(settings?.persona.character_name || "Mindspace");
-  const pickerCharacters = characterPickerScope === "custom"
-    ? characters.filter((item) => item.source !== "draw")
-    : characters;
+  const pickerCharacters = characters;
   const interruptedSession = sessions.find((item) => Boolean((item as SessionSummary & { interrupted?: boolean }).interrupted));
 
   const enterDrawMode = async () => {
-    const recent = characters.find((item) => item.source === "draw");
+    const recent = characters.find((item) => item.status === "active");
     if (!recent) {
       navigate("draw");
       return;
     }
-    if (recent.latest_session_id) {
-      await openSession(recent.latest_session_id);
+    const createAnother = await styledConfirm({
+      title: "再遇见一位新角色？",
+      message: `你已经创建了“${recent.display_name}”。是否继续创建一位新角色？`,
+      detail: "选择取消会直接回到现有角色的最近对话。",
+      confirmLabel: "创建新角色",
+    });
+    if (createAnother) {
+      navigate("draw");
       return;
     }
-    await createSessionForCharacter(recent);
+    await resumeCharacterSession(recent);
   };
 
   const enterCustomMode = () => {
-    setCharacterPickerScope("custom");
+    setCharacterPickerIntent("resume");
     setCharacterPickerOpen(true);
   };
 
@@ -3183,9 +3236,11 @@ function App() {
       <CharacterPicker
         open={characterPickerOpen}
         characters={pickerCharacters}
-        title={characterPickerScope === "custom" ? "选择自定义模式角色" : "选择本次对话的角色"}
+        title="选择本次对话的角色"
         onClose={() => setCharacterPickerOpen(false)}
-        onChoose={(character) => void createSessionForCharacter(character)}
+        onChoose={(character) => void (characterPickerIntent === "new"
+          ? startNewSessionForCharacter(character)
+          : resumeCharacterSession(character))}
         onDraw={() => { setCharacterPickerOpen(false); navigate("draw"); }}
       />
       {toast && <div className="toast" role="status">{toast}</div>}
@@ -3197,7 +3252,7 @@ function App() {
       defaultUserName={userName}
       onBack={() => navigate("modes")}
       onCommitted={(character) => {
-        void loadCharacters().then(() => createSessionForCharacter(character));
+        void loadCharacters().then(() => startNewSessionForCharacter(character));
       }}
     />;
   }
@@ -3205,9 +3260,10 @@ function App() {
   if (appView === "characters") {
     return <CharacterLibrary
       characters={characters}
+      initialCharacterId={activeCharacterId}
       onBack={() => navigate("modes")}
       onRefresh={async () => { await loadCharacters(); }}
-      onChat={(character) => void createSessionForCharacter(character)}
+      onChat={(character) => void resumeCharacterSession(character)}
       onDraw={() => navigate("draw")}
     />;
   }
@@ -3257,7 +3313,23 @@ function App() {
         <MessageList messages={messages} avatars={effectiveAvatars} userName={userName} characterName={characterName} onProfile={setProfileCardRole} onCopy={(text) => { void navigator.clipboard.writeText(text); notify("已复制回复"); }} onSpeak={speakMessage} onRegenerate={(value, targetRound) => void sendMessage(value, "regenerate", targetRound)} onInitiative={(targetRound) => void sendMessage("", "regenerate", targetRound, true)} onDelete={(messageId) => void deleteReply(messageId)} onConfigure={() => openSettings("model")} />
         <div className="conversation-tail" ref={conversationTailRef} aria-hidden="true" />
       </section>
-      <section className="composer-wrap">{generating && <div className="run-strip"><span><i /> 正在回应</span><button onClick={() => void cancelRun()}>停止生成</button></div>}<div className="composer"><textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} placeholder={`对 ${characterName} 说点什么…`} rows={1} /><div className="composer-row"><div className="composer-primary-tools"><button className="voice-entry" onClick={openVoiceEntry}><span>●</span> 实时语音</button><button className={`scene-entry${conversationScene?.scene ? " active" : ""}`} onClick={() => navigate("scenes")}><img src="/assets/archive/icons/activity-scene.svg" alt="" /><span>{conversationScene?.scene?.title || "场景"}</span></button><button className="initiative-inline" disabled={generating} onClick={() => void sendMessage("", "primary", round, true)}>✦ 让 {characterName} 先说</button><details className="composer-menu composer-add-menu"><summary aria-label="更多对话功能"><span className="visually-hidden">更多</span><b aria-hidden="true">＋</b></summary><div><button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showFlow(); }}>会话流程与执行详情</button><button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showContext(); }}>本轮引用 <b>{retrieval.length}</b></button><button onClick={exportSession}>导出当前会话</button><button className={`adult-entry${adultMode ? " active" : ""}`} aria-label="NSFW" aria-pressed={adultMode} onClick={toggleAdultMode}>NSFW <span>{adultMode ? "已开启" : "已关闭"}</span></button>{adultMode && <label className="r18-style-menu-label"><span>成人模式风格</span><select className="r18-style-select" value={r18StyleId} aria-label="R18 风格包" onChange={(event) => { const next = event.target.value; setR18StyleId(next); localStorage.setItem(R18_STYLE_STORAGE_KEY, next); }}><option value="high_intensity">高强度推进</option><option value="immersive_narrative">叙事沉浸</option><option value="dialogue_led">台词主导</option></select></label>}<button className="composer-clear-action" onClick={() => void clearCurrent()}>清空当前上下文</button></div></details></div><button className="send" onClick={() => generating ? void cancelRun() : void sendMessage()} disabled={!generating && !input.trim()} aria-label={generating ? "停止生成" : "发送消息"}>{generating ? "■" : "↑"}</button></div></div><div className="composer-meta"><span>Enter 发送 · Shift+Enter 换行 · Esc 打断</span><span>{adultMode ? "NSFW 已开启" : conversationScene?.scene ? `当前场景：${conversationScene.scene.title}` : "本地 · 私密 · 连续记忆"}</span></div></section>
+      <section className="composer-wrap">
+        {generating && <div className="run-strip"><span><i /> 正在回应</span><button onClick={() => void cancelRun()}>停止生成</button></div>}
+        <div className="composer">
+          <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} placeholder={`对 ${characterName} 说点什么…`} rows={1} />
+          <div className="composer-row">
+            <div className="composer-primary-tools">
+              <button className="voice-entry" onClick={openVoiceEntry}><span>●</span> 实时语音</button>
+              <button className={`scene-entry${conversationScene?.scene ? " active" : ""}`} onClick={() => navigate("scenes")}><img src="/assets/archive/icons/activity-scene.svg" alt="" /><span>{conversationScene?.scene?.title || "场景"}</span></button>
+              <button className={`presentation-entry ${presentationMode}`} aria-label="切换表达方式" title="场景模式只允许必要叙述，不会强制生成动作" onClick={cyclePresentationMode}><span>表达</span><b>{presentationMode === "auto" ? `自动·${resolvedPresentationMode === "scene" ? "场景" : "对话"}` : presentationMode === "scene" ? "场景" : "对话"}</b></button>
+              <button className="initiative-inline" disabled={generating} onClick={() => void sendMessage("", "primary", round, true)}>✦ 让 {characterName} 先说</button>
+              <details className="composer-menu composer-add-menu"><summary aria-label="更多对话功能"><span className="visually-hidden">更多</span><b aria-hidden="true">＋</b></summary><div><button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showFlow(); }}>会话流程与执行详情</button><button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showContext(); }}>本轮引用 <b>{retrieval.length}</b></button><button onClick={exportSession}>导出当前会话</button><button className={`adult-entry${adultMode ? " active" : ""}`} aria-label="NSFW" aria-pressed={adultMode} onClick={toggleAdultMode}>NSFW <span>{adultMode ? "已开启" : "已关闭"}</span></button>{adultMode && <label className="r18-style-menu-label"><span>成人模式风格</span><select className="r18-style-select" value={r18StyleId} aria-label="R18 风格包" onChange={(event) => { const next = event.target.value; setR18StyleId(next); localStorage.setItem(R18_STYLE_STORAGE_KEY, next); }}><option value="high_intensity">高强度推进</option><option value="immersive_narrative">叙事沉浸</option><option value="dialogue_led">台词主导</option></select></label>}<button className="composer-clear-action" onClick={() => void clearCurrent()}>清空当前上下文</button></div></details>
+            </div>
+            <button className="send" onClick={() => generating ? void cancelRun() : void sendMessage()} disabled={!generating && !input.trim()} aria-label={generating ? "停止生成" : "发送消息"}>{generating ? "■" : "↑"}</button>
+          </div>
+        </div>
+        <div className="composer-meta"><span>Enter 发送 · Shift+Enter 换行 · Esc 打断</span><span>{adultMode ? "NSFW 已开启" : `表达：${presentationMode === "auto" ? `自动判断（当前${resolvedPresentationMode === "scene" ? "场景" : "对话"}）` : presentationMode === "scene" ? "场景" : "对话"}`}</span></div>
+      </section>
     </main>
 
     <Inspector open={inspectorOpen} tab={inspectorTab} onTab={setInspectorTab} onClose={() => setInspectorOpen(false)} events={events} retrieval={retrieval} runId={inspectionRunId} />
@@ -3269,7 +3341,7 @@ function App() {
     {modal === "voice-entry" && <VoiceEntryDialog mode={voiceEntryMode} scene={voiceEntryScene} busy={voiceEntryBusy} error={voiceEntryError} onModeChange={(next) => { setVoiceEntryMode(next); setModalDirty(true); }} onSceneChange={(next) => { setVoiceEntryScene(next); setModalDirty(true); }} onClose={closeVoiceEntry} onStart={() => void startVoiceFromEntry()} />}
     {profileCardRole && <ProfileCardDialog characterId={activeCharacterId} role={profileCardRole} avatars={effectiveAvatars} displayName={profileCardRole === "user" ? userName : characterName} onClose={() => setProfileCardRole(null)} onEdit={(role) => { setProfileCardRole(null); setProfileEditorRole(role); setModal("profile"); }} />}
     {voice.open && <VoiceMode state={voice} avatar={effectiveAvatars.assistant} characterName={characterName} context={voiceInteractionRef.current} companion={{ enabled: bool(settings?.interaction?.unlimited_reply_enabled), round: companionRound, limit: Math.max(1, Math.min(50, num(settings?.interaction?.unlimited_reply_max_rounds, 10))) }} onExit={exitVoice} onRetry={retryVoice} onFallback={useBrowserVoiceFallback} />}
-    <CharacterPicker open={characterPickerOpen} characters={pickerCharacters} onClose={() => setCharacterPickerOpen(false)} onChoose={(character) => void createSessionForCharacter(character)} onDraw={() => { setCharacterPickerOpen(false); navigate("draw"); }} />
+    <CharacterPicker open={characterPickerOpen} characters={pickerCharacters} onClose={() => setCharacterPickerOpen(false)} onChoose={(character) => void (characterPickerIntent === "new" ? startNewSessionForCharacter(character) : resumeCharacterSession(character))} onDraw={() => { setCharacterPickerOpen(false); navigate("draw"); }} />
     {nsfwConfirmationOpen && <NsfwAdultConfirmation seconds={nsfwConfirmationSeconds} onCancel={() => setNsfwConfirmationOpen(false)} onConfirm={confirmAdultMode} />}
     {toast && <div className="toast" role="status">{toast}</div>}
   </div>;
@@ -3721,7 +3793,7 @@ function SettingsDialog({ value, avatars, initialTab = "model", onClose, onDirty
       <p className="notice">上线版本默认使用云端流式 TTS，不随安装包分发本地 CosyVoice 模型；本地链路仍可在“实时语音”中切换。</p>
       <div className="form-grid"><Field label="SiliconFlow API 地址" value={draft.audio.tts_siliconflow_base_url} onChange={(next) => update("audio", "tts_siliconflow_base_url", next)} /><Field label="新 TTS API 密钥（留空保持）" value={ttsApiKey} type="password" placeholder={bool(draft.audio.tts_siliconflow_credentials_configured) ? "已配置；输入新密钥可替换" : "输入 SiliconFlow API 密钥"} onChange={(next) => setTtsApiKey(str(next))} /><SelectField label="云端模型" value={draft.audio.tts_siliconflow_model} options={[["fnlp/MOSS-TTSD-v0.5", "MOSS-TTSD v0.5"], ["FunAudioLLM/CosyVoice2-0.5B", "CosyVoice2 0.5B"]]} onChange={(next) => setDraft((current) => ({ ...current, audio: { ...current.audio, tts_siliconflow_model: next, tts_siliconflow_voice: next === "fnlp/MOSS-TTSD-v0.5" ? "fnlp/MOSS-TTSD-v0.5:alex" : "FunAudioLLM/CosyVoice2-0.5B:alex" } }))} /><Field label="音色 ID" value={draft.audio.tts_siliconflow_voice} onChange={(next) => update("audio", "tts_siliconflow_voice", next)} /><SelectField label="PCM 采样率" value={draft.audio.tts_siliconflow_sample_rate} options={[["16000", "16 kHz"], ["24000", "24 kHz（推荐）"], ["32000", "32 kHz"], ["44100", "44.1 kHz"]]} onChange={(next) => update("audio", "tts_siliconflow_sample_rate", Number(next))} /><Field label="增益 dB" value={draft.audio.tts_siliconflow_gain} type="number" min={-10} max={10} step={0.5} onChange={(next) => update("audio", "tts_siliconflow_gain", next)} /></div>
       <button className="inline-action" disabled={Boolean(audioBusy)} onClick={() => void testApiConnections()}>{audioBusy === "api-check" ? "正在自检…" : "自检 LLM + TTS API"}</button>
-      <h3>人物设定</h3><div className="form-grid"><Field label="用户称呼" value={draft.persona.user_name} onChange={(next) => update("persona", "user_name", next)} /><Field label="角色名称" value={draft.persona.character_name} onChange={(next) => update("persona", "character_name", next)} /><Field label="用户设定" value={draft.persona.user_persona} type="textarea" onChange={(next) => update("persona", "user_persona", next)} /><Field label="角色系统提示" value={draft.persona.system_prompt} type="textarea" onChange={(next) => update("persona", "system_prompt", next)} /></div>
+      <h3>人物设定</h3><div className="form-grid"><Field label="用户称呼" value={draft.persona.user_name} onChange={(next) => update("persona", "user_name", next)} /><Field label="角色名称" value={draft.persona.character_name} onChange={(next) => update("persona", "character_name", next)} /><Field label="用户设定" value={draft.persona.user_persona} type="textarea" onChange={(next) => update("persona", "user_persona", next)} /><Field label="角色系统提示" value={draft.persona.system_prompt} type="textarea" onChange={(next) => update("persona", "system_prompt", next)} /><Field label="回复篇幅偏好（留空则自然发挥）" value={draft.persona.reply_length_preference} type="textarea" placeholder="例如：日常简洁，重要话题可以详细；或每次尽量控制在两段内" onChange={(next) => update("persona", "reply_length_preference", next)} /></div>
     </>}
     {tab === "avatar" && <><h3>人物头像</h3><p className="notice">上传图片并调整裁剪。聊天、人物卡和实时语音会立即使用同一份头像配置。</p><div className="avatar-settings-grid">{(["user", "assistant"] as Role[]).map((role) => <AvatarEditor key={role} role={role} entry={avatarDraft[role]} busy={avatarBusy === role} onUpload={(file) => void uploadAvatar(role, file)} onChange={(entry) => setAvatarDraft((current) => ({ ...current, [role]: entry }))} />)}</div></>}
       {tab === "rhythm" && <><h3>时间感知</h3><p className="notice">文字与语音对话都会记录服务端 UTC 时间、当地时区以及与上次真实用户消息的时间差。时间只作为本轮运行事实，不会自行修改人物档案。</p><h3>连续陪伴</h3><div className="toggle-grid"><Field label="无限制回复" value={draft.interaction?.unlimited_reply_enabled} type="checkbox" onChange={(next) => update("interaction", "unlimited_reply_enabled", next)} /></div><div className="form-grid"><Field label="连续陪伴轮次上限" value={draft.interaction?.unlimited_reply_max_rounds} type="number" min={1} max={50} step={1} onChange={(next) => update("interaction", "unlimited_reply_max_rounds", next)} /></div><p className="notice">仅在实时语音中生效，衔接间隔固定为 10 秒。每次 TTS 完整朗读结束后，角色会自主规划并继续话题；默认你只想听，不会催促回复。你随时可以插话，插话会改变后续话题方向，但不会关闭连续陪伴或清零轮次。进度只显示在语音页面，到达上限后自动停止。</p><h3>沉默后主动续接</h3><div className="toggle-grid"><Field label="允许 AI 在沉默后自然续接" value={draft.interaction?.idle_continuation_enabled} type="checkbox" onChange={(next) => update("interaction", "idle_continuation_enabled", next)} /></div><div className="form-grid"><Field label="文字对话等待秒数" value={draft.interaction?.text_idle_seconds} type="number" min={10} max={3600} step={10} onChange={(next) => update("interaction", "text_idle_seconds", next)} /><Field label="语音通话等待秒数" value={draft.interaction?.voice_idle_seconds} type="number" min={5} max={600} step={5} onChange={(next) => update("interaction", "voice_idle_seconds", next)} /></div><p className="notice">普通主动续接每个静默阶段最多说一次；连续陪伴开启时，语音模式优先使用上面的多轮逻辑。</p></>}
@@ -3732,7 +3804,7 @@ function SettingsDialog({ value, avatars, initialTab = "model", onClose, onDirty
         <h3>联网边界</h3><div className="form-grid"><Field label="联网超时秒数" value={draft.capabilities?.web_timeout_seconds} type="number" min={2} max={30} step={1} onChange={(next) => update("capabilities", "web_timeout_seconds", next)} /><Field label="搜索结果上限" value={draft.capabilities?.max_web_results} type="number" min={1} max={20} step={1} onChange={(next) => update("capabilities", "max_web_results", next)} /><Field label="打开原文上限" value={draft.capabilities?.max_web_pages} type="number" min={0} max={10} step={1} onChange={(next) => update("capabilities", "max_web_pages", next)} /><Field label="每页正文字符" value={draft.capabilities?.max_web_content_chars} type="number" min={2000} max={30000} step={1000} onChange={(next) => update("capabilities", "max_web_content_chars", next)} /></div>
         <p className="notice warning">该权限仅允许现有知识检索和公开网页 GET 读取。AI 无权读取本机配置、硬件、进程或服务健康状态，也不能执行命令、修改文件、上传资料、登录网站、发送消息、结束进程或读取密钥。网页内容不能修改人物 JSON，也不能作为用户偏好证据。</p>
       </>}
-    {tab === "rag" && <><h3>检索开关</h3><div className="toggle-grid"><Field label="启用 RAG" value={draft.retrieval.rag_enabled} type="checkbox" onChange={(next) => update("retrieval", "rag_enabled", next)} /><Field label="知识库召回" value={draft.retrieval.knowledge_enabled} type="checkbox" onChange={(next) => update("retrieval", "knowledge_enabled", next)} /><Field label="会话记忆召回" value={draft.retrieval.chat_enabled} type="checkbox" onChange={(next) => update("retrieval", "chat_enabled", next)} /><Field label="JSON 字段记忆" value={draft.retrieval.structured_memory_enabled} type="checkbox" onChange={(next) => update("retrieval", "structured_memory_enabled", next)} /><Field label="BM25+ 词法召回" value={draft.retrieval.bm25_enabled} type="checkbox" onChange={(next) => update("retrieval", "bm25_enabled", next)} /><Field label="向量召回" value={draft.retrieval.vector_enabled} type="checkbox" onChange={(next) => update("retrieval", "vector_enabled", next)} /><Field label="本地精排（需模型）" value={draft.retrieval.reranker_enabled} type="checkbox" onChange={(next) => update("retrieval", "reranker_enabled", next)} /><Field label="公平曝光保护" value={draft.retrieval.fairness_enabled} type="checkbox" onChange={(next) => update("retrieval", "fairness_enabled", next)} /><Field label="时间衰减" value={draft.retrieval.temporal_enabled} type="checkbox" onChange={(next) => update("retrieval", "temporal_enabled", next)} /></div><h3>召回参数</h3><div className="form-grid"><Field label="知识召回数" value={draft.retrieval.knowledge_k} type="number" onChange={(next) => update("retrieval", "knowledge_k", next)} /><Field label="记忆召回数" value={draft.retrieval.chat_k} type="number" onChange={(next) => update("retrieval", "chat_k", next)} /><Field label="相似度阈值" value={draft.retrieval.similarity_threshold} type="number" step={0.05} onChange={(next) => update("retrieval", "similarity_threshold", next)} /><Field label="RRF 常数" value={draft.retrieval.rrf_k} type="number" onChange={(next) => update("retrieval", "rrf_k", next)} /><Field label="候选放大倍数" value={draft.retrieval.candidate_multiplier} type="number" onChange={(next) => update("retrieval", "candidate_multiplier", next)} /><Field label="精排候选数" value={draft.retrieval.reranker_top_n} type="number" onChange={(next) => update("retrieval", "reranker_top_n", next)} /><Field label="轮次衰减" value={draft.retrieval.decay_rounds} type="number" onChange={(next) => update("retrieval", "decay_rounds", next)} /><Field label="低曝光保留比例" value={draft.retrieval.low_exposure_ratio} type="number" step={0.05} onChange={(next) => update("retrieval", "low_exposure_ratio", next)} /><Field label="同字段族上限" value={draft.retrieval.memory_family_limit} type="number" onChange={(next) => update("retrieval", "memory_family_limit", next)} /><Field label="饥饿保护轮次" value={draft.retrieval.starvation_rounds} type="number" onChange={(next) => update("retrieval", "starvation_rounds", next)} /></div><p className="notice">BM25+ 与向量先独立排序，再由 RRF 融合；Boost 有总上限。本地精排模型缺失时会安全退回 RRF，不会在线下载。无 JSON 标签文本只进入限额候选池。</p><h3>知识分块</h3><div className="form-grid"><Field label="子块长度" value={draft.knowledge.child_size} type="number" onChange={(next) => update("knowledge", "child_size", next)} /><Field label="父块长度" value={draft.knowledge.parent_size} type="number" onChange={(next) => update("knowledge", "parent_size", next)} /><Field label="重叠字符" value={draft.knowledge.overlap} type="number" onChange={(next) => update("knowledge", "overlap", next)} /></div></>}
+    {tab === "rag" && <><h3>检索开关</h3><div className="toggle-grid"><Field label="启用 RAG" value={draft.retrieval.rag_enabled} type="checkbox" onChange={(next) => update("retrieval", "rag_enabled", next)} /><Field label="知识库召回" value={draft.retrieval.knowledge_enabled} type="checkbox" onChange={(next) => update("retrieval", "knowledge_enabled", next)} /><Field label="会话记忆召回" value={draft.retrieval.chat_enabled} type="checkbox" onChange={(next) => update("retrieval", "chat_enabled", next)} /><Field label="JSON 字段记忆" value={draft.retrieval.structured_memory_enabled} type="checkbox" onChange={(next) => update("retrieval", "structured_memory_enabled", next)} /><Field label="BM25+ 词法召回" value={draft.retrieval.bm25_enabled} type="checkbox" onChange={(next) => update("retrieval", "bm25_enabled", next)} /><Field label="向量召回" value={draft.retrieval.vector_enabled} type="checkbox" onChange={(next) => update("retrieval", "vector_enabled", next)} /><Field label="本地精排（需模型）" value={draft.retrieval.reranker_enabled} type="checkbox" onChange={(next) => update("retrieval", "reranker_enabled", next)} /><Field label="公平曝光保护" value={draft.retrieval.fairness_enabled} type="checkbox" onChange={(next) => update("retrieval", "fairness_enabled", next)} /><Field label="时间衰减" value={draft.retrieval.temporal_enabled} type="checkbox" onChange={(next) => update("retrieval", "temporal_enabled", next)} /></div><h3>召回参数</h3><div className="form-grid"><Field label="知识库上限" value={draft.retrieval.knowledge_k} type="number" onChange={(next) => update("retrieval", "knowledge_k", next)} /><Field label="原始对话上限" value={draft.retrieval.chat_k} type="number" onChange={(next) => update("retrieval", "chat_k", next)} /><Field label="结构化历史上限" value={draft.retrieval.history_k} type="number" onChange={(next) => update("retrieval", "history_k", next)} /><Field label="相似度阈值" value={draft.retrieval.similarity_threshold} type="number" step={0.05} onChange={(next) => update("retrieval", "similarity_threshold", next)} /><Field label="RRF 常数" value={draft.retrieval.rrf_k} type="number" onChange={(next) => update("retrieval", "rrf_k", next)} /><Field label="候选放大倍数" value={draft.retrieval.candidate_multiplier} type="number" onChange={(next) => update("retrieval", "candidate_multiplier", next)} /><Field label="精排候选数" value={draft.retrieval.reranker_top_n} type="number" onChange={(next) => update("retrieval", "reranker_top_n", next)} /><Field label="轮次衰减" value={draft.retrieval.decay_rounds} type="number" onChange={(next) => update("retrieval", "decay_rounds", next)} /><Field label="低曝光保留比例" value={draft.retrieval.low_exposure_ratio} type="number" step={0.05} onChange={(next) => update("retrieval", "low_exposure_ratio", next)} /><Field label="同字段族上限" value={draft.retrieval.memory_family_limit} type="number" onChange={(next) => update("retrieval", "memory_family_limit", next)} /><Field label="饥饿保护轮次" value={draft.retrieval.starvation_rounds} type="number" onChange={(next) => update("retrieval", "starvation_rounds", next)} /></div><p className="notice">前15轮默认只构建索引，不自动召回；之后按知识库2、原始对话3、结构化历史3的来源上限编排，低于阈值时不强行凑满。</p><h3>知识分块</h3><div className="form-grid"><Field label="子块长度" value={draft.knowledge.child_size} type="number" onChange={(next) => update("knowledge", "child_size", next)} /><Field label="父块长度" value={draft.knowledge.parent_size} type="number" onChange={(next) => update("knowledge", "parent_size", next)} /><Field label="重叠字符" value={draft.knowledge.overlap} type="number" onChange={(next) => update("knowledge", "overlap", next)} /></div></>}
     {tab === "protocol" && <><h3>生成与 JSON 写回</h3><div className="form-grid"><Field label="协议模式" value={draft.protocol.mode} onChange={(next) => update("protocol", "mode", next)} /><Field label="角色审计模型（留空复用主模型）" value={draft.llm.role_audit_model} onChange={(next) => update("llm", "role_audit_model", next)} /></div><div className="toggle-grid"><Field label="自动结构修复" value={draft.protocol.auto_repair} type="checkbox" onChange={(next) => update("protocol", "auto_repair", next)} /><Field label="显示写回诊断" value={draft.protocol.diagnostics} type="checkbox" onChange={(next) => update("protocol", "diagnostics", next)} /><Field label="复杂角色异步审计" value={draft.llm.role_audit_enabled} type="checkbox" onChange={(next) => update("llm", "role_audit_enabled", next)} /></div><p className="notice">回复立即流式展示；JSON 每轮最多写入三个经过路径、证据和 revision 校验的叶子 Patch。复杂角色审计只在本轮完成后运行，不能替换已显示或已朗读的内容，严重偏移只影响下一轮。</p></>}
     {tab === "audio" && <>
       <h3>语音合成</h3>
@@ -3744,7 +3816,7 @@ function SettingsDialog({ value, avatars, initialTab = "model", onClose, onDirty
       {ttsProvider === "browser" && <p className="notice">当前关闭声音，只保留文字对话。启动器与应用内会显示相同状态，也不会加载本地 TTS 或占用额外显存。</p>}
       {ttsProvider === "siliconflow" && <p className="notice">云端 API 参数已集中到“模型与角色”。此处只选择链路与播放速度；逐句流式播放、首句抢跑和插话打断与本地链路一致，实时语音只输出可直接朗读的自然口语。</p>}
       <div className="row-actions"><button className="primary" disabled={Boolean(audioBusy)} onClick={() => void testTts()}>{audioBusy === "test" ? "生成中…" : "生成并试听 TTS"}</button></div>
-      <Field label="回复时自动朗读" value={draft.audio.auto_tts} type="checkbox" onChange={(next) => update("audio", "auto_tts", next)} />
+      <Field label="实时语音中自动朗读" value={draft.audio.auto_tts} type="checkbox" onChange={(next) => update("audio", "auto_tts", next)} />
       <h3>实时识别与环境噪声</h3>
       <div className="toggle-grid"><Field label="启用人物与 JSON 动态词表" value={draft.audio.asr_hotwords_enabled} type="checkbox" onChange={(next) => update("audio", "asr_hotwords_enabled", next)} /><Field label="含糊停顿动态断句" value={draft.audio.asr_dynamic_endpointing} type="checkbox" onChange={(next) => update("audio", "asr_dynamic_endpointing", next)} /><Field label="Nano 整句复核" value={draft.audio.asr_final_refinement_enabled} type="checkbox" onChange={(next) => update("audio", "asr_final_refinement_enabled", next)} /></div>
       <div className="form-grid"><Field label="ASR 提供方" value={draft.audio.asr_provider} onChange={(next) => update("audio", "asr_provider", next)} /><Field label="ASR 模型" value={draft.audio.asr_model} onChange={(next) => update("audio", "asr_model", next)} /><Field label="静音断句毫秒" value={draft.audio.asr_silence_ms} type="number" min={250} max={3000} onChange={(next) => update("audio", "asr_silence_ms", next)} /><Field label="多段话合并窗口毫秒" value={draft.audio.asr_utterance_merge_ms} type="number" min={300} max={3000} step={50} onChange={(next) => update("audio", "asr_utterance_merge_ms", next)} /></div><p className="notice">语音入口不再等待环境噪声校准；浏览器只保留回声消除和自动增益，FunASR VAD 负责判断真实人声。Paraformer 保持实时字幕，Nano 仅在整句结束时低优先级复核。</p>
@@ -3868,7 +3940,7 @@ function ProfileFieldEditor({ fieldKey, value, path, onChange }: { fieldKey: str
     return <label className="profile-form-field profile-form-check"><input aria-label={label} type="checkbox" checked={value} onChange={(event) => onChange(path, event.target.checked)} /><span>{label}</span></label>;
   }
   if (fieldKey === "gender" && path.includes("identity")) {
-    return <label className="profile-form-field"><span>{label}</span><select aria-label={label} value={String(value)} onChange={(event) => onChange(path, event.target.value)}><option value="男">男</option><option value="女">女</option></select><small>用户手动保存后作为模型最高优先级身份；AI 不能自行改写。</small></label>;
+    return <label className="profile-form-field"><span>{label}</span><select aria-label={label} value={String(value)} onChange={(event) => onChange(path, event.target.value)}><option value="男">男</option><option value="女">女</option><option value="不指定">不指定</option></select><small>用户手动保存后作为模型最高优先级身份；AI 不能自行改写。通用代词始终使用TA。</small></label>;
   }
   return <label className="profile-form-field"><span>{label}</span><input aria-label={label} type={typeof value === "number" ? "number" : "text"} value={value == null ? "" : String(value)} onChange={(event) => onChange(path, typeof value === "number" ? Number(event.target.value) : event.target.value)} /></label>;
 }

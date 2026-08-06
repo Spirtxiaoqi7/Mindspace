@@ -59,6 +59,54 @@ def test_character_structured_generation_records_compatible_usage_kind():
     client.close()
 
 
+def test_compaction_disables_thinking_and_requests_json():
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "choices": [{"message": {"content": '{"summary":"完成"}'}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 8, "total_tokens": 18},
+            },
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    model = OpenAICompatibleLanguageModel(client=client)
+
+    result = model.compact(
+        [{"role": "user", "content": "压缩"}],
+        ApiConfig(api_key="test", max_tokens=1200),
+    )
+
+    assert json.loads(result)["summary"] == "完成"
+    assert bodies[0]["thinking"] == {"type": "disabled"}
+    assert bodies[0]["response_format"] == {"type": "json_object"}
+    assert model.take_usage().request_kind == "compaction"
+    client.close()
+
+
+def test_role_audit_uses_structured_compatibility_ladder():
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "thinking" in body:
+            return httpx.Response(400, json={"error": "unknown field"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    model = OpenAICompatibleLanguageModel(client=client)
+
+    assert model.audit_role([], ApiConfig(api_key="test", max_tokens=1000)) == "{}"
+    assert len(bodies) == 3
+    assert "thinking" not in bodies[-1]
+    assert "response_format" not in bodies[-1]
+    client.close()
+
+
 def test_private_structured_calls_fall_back_for_generic_compatible_servers():
     bodies = []
 

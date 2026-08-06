@@ -30,8 +30,9 @@ class RetrievalSettings(BaseModel):
     chat_enabled: bool = True
     structured_memory_enabled: bool = True
     temporal_enabled: bool = True
-    knowledge_k: int = Field(default=5, ge=1, le=20)
-    chat_k: int = Field(default=10, ge=1, le=30)
+    knowledge_k: int = Field(default=2, ge=1, le=20)
+    chat_k: int = Field(default=3, ge=1, le=30)
+    history_k: int = Field(default=3, ge=1, le=30)
     similarity_threshold: float = Field(default=0.5, ge=0, le=1)
     decay_rounds: float = Field(default=20, ge=1, le=500)
     decay_hours: float = Field(default=168, ge=1, le=8760)
@@ -152,6 +153,7 @@ class ChatRequest(BaseModel):
     round: int = Field(default=1, ge=1)
     mode: Literal["primary", "regenerate"] = "primary"
     interaction_mode: Literal["text", "voice"] = "text"
+    presentation_mode: Literal["auto", "dialogue", "scene"] = "auto"
     voice_tts_provider: Literal[
         "browser", "mock", "cosyvoice", "siliconflow", "gpt-sovits", "qwen3-vllm"
     ] = "browser"
@@ -180,6 +182,7 @@ class ChatRequest(BaseModel):
     input_evidence: InputEvidence | None = None
     user_name: str = "用户"
     user_persona: str = ""
+    reply_length_preference: str = Field(default="", max_length=300)
     character_name: str = "AI助手"
     system_prompt: str = ""
     api: ApiConfig = Field(default_factory=ApiConfig)
@@ -338,6 +341,7 @@ class ChatResponse(BaseModel):
     status: Literal["success", "error"]
     reply: str = ""
     assistant_message_id: str = ""
+    presentation_mode: Literal["dialogue", "scene"] = "dialogue"
     writeback_applied: bool = False
     retrieval_counts: dict[str, int] = Field(default_factory=dict)
     errors: list[str] = Field(default_factory=list)

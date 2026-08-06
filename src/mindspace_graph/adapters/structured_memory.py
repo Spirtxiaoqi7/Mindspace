@@ -24,6 +24,7 @@ from mindspace_graph.entity_registry import EntityRegistry
 from mindspace_graph.memory_registry import DEFAULT_MEMORY_REGISTRY, MemoryRegistry
 from mindspace_graph.models import ChatRequest, JsonWriteReceipt, RetrievedChunk
 from mindspace_graph.product_database import ProductDatabase
+from mindspace_graph.roleplay import companion_lane
 
 
 def _now() -> str:
@@ -136,6 +137,8 @@ class StructuredMemoryStore:
             "user_message_id": persisted["user_message_id"],
             "assistant_message_id": persisted["assistant_message_id"],
             "text": text,
+            "adult_mode": request.adult_mode,
+            "companion_lane": companion_lane(request),
             "created_at": timestamp,
         }
 

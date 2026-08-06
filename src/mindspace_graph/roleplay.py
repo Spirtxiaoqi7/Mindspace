@@ -65,6 +65,27 @@ _APPEARANCE_CONTEXT = re.compile(
 _LIFE_CONTEXT = re.compile(
     r"(?:工作|上班|职业|零工|收银|传单|大学|学历|医学|医生|收入|工资|钱|住哪|家里)"
 )
+_SCENE_LOCATION = re.compile(
+    r"(?:(?:我们|咱们|两个人|我和你|你和我)(?:现在|此刻)?(?:正)?在|"
+    r"当前(?:场景|地点)(?:是|在)|场景(?:切到|来到))"
+    r"[^。！？!?]{0,18}(?:家里|客厅|卧室|厨房|房间|办公室|学校|教室|"
+    r"咖啡馆|咖啡厅|餐厅|酒吧|公园|商场|车里|车上|街上|海边|酒店)"
+)
+_DISCUSSION_TURN = re.compile(
+    r"(?:怎么看|怎么想|觉得|为什么|是否|会不会|聊聊|说说|解释|分析|意见|问题|什么意思|吗[？?]?$)"
+)
+_SCENE_ACTION = re.compile(
+    r"(?:我(?:走|坐|躺|靠|抱|吻|拉|推|伸手|转身|进|回|把|将|拿|递|指|放|端|打开|关上)|"
+    r"你(?:走|坐|躺|靠|抱|吻|拉|推|伸手|转身|过来)|"
+    r"抱住我|吻我|亲我|继续刚才|接着刚才|然后呢)"
+)
+_CONTINUATION = re.compile(r"^\s*(?:继续|接着|然后呢|再来|别停|嗯+|好+)[。！!？?~～…]*\s*$")
+_QUESTION_END = re.compile(r"[？?][”’\"']?\s*$")
+_ACTION_DIRECTION = re.compile(r"^[\s\n]*[（(]([^）)]{1,120})[）)]")
+_LEGACY_STAGE_ACTION = re.compile(
+    r"(?:我|TA|他|她)?(?:抬眼|低头|转身|靠近|坐下|起身|伸手|放下|拿起|推开|"
+    r"抱住|吻|看向|望向|摩挲|握住|皱眉|笑了|沉默)"
+)
 
 
 def _nonempty(value: Any) -> Any:
@@ -94,6 +115,124 @@ def classify_roleplay_turn(request: ChatRequest) -> str:
     if _INTIMATE.search(message):
         return "intimate"
     return "casual"
+
+
+def companion_lane(request: ChatRequest) -> str:
+    """Three-state companion route; adult content requires the explicit hard switch."""
+
+    if request.adult_mode:
+        return "ADULT"
+    if _INTIMATE.search(request.message):
+        return "ROMANCE"
+    return "DAILY"
+
+
+def resolve_presentation_mode(
+    request: ChatRequest,
+    history: list[dict[str, Any]],
+) -> str:
+    """Resolve dialogue versus enacted scene without changing the content lane."""
+
+    if request.interaction_mode == "voice":
+        return "dialogue"
+    if request.presentation_mode != "auto":
+        return request.presentation_mode
+    if (
+        _SCENE_TRANSITION.search(request.message)
+        or _SCENE_LOCATION.search(request.message)
+        or _SCENE_ACTION.search(request.message)
+    ):
+        return "scene"
+    if _DISCUSSION_TURN.search(request.message):
+        return "dialogue"
+    recent = [
+        item
+        for item in history
+        if item.get("role") == "assistant" and not item.get("hidden")
+    ]
+    if _CONTINUATION.fullmatch(request.message) and recent:
+        return str(recent[-1].get("presentation_mode") or "dialogue")
+    return "dialogue"
+
+
+def effective_roleplay_temperature(
+    request: ChatRequest,
+    history: list[dict[str, Any]],
+) -> float:
+    """Cap sampling by lane so factual scene turns are less improvisational."""
+
+    requested = float(request.api.temperature)
+    if request.adult_mode:
+        return min(requested, 0.65)
+    if request.initiative or resolve_presentation_mode(request, history) == "scene":
+        return min(requested, 0.25)
+    return min(requested, 0.45)
+
+
+def project_history_for_presentation(
+    messages: list[dict[str, Any]],
+    mode: str,
+) -> list[dict[str, str]]:
+    """Keep normal prose while preventing legacy stage openers from becoming style examples."""
+
+    projected: list[dict[str, str]] = []
+    for item in messages:
+        role = str(item.get("role") or "")
+        content = str(item.get("content") or "")
+        if mode == "dialogue" and role == "assistant":
+            opener = _ACTION_DIRECTION.match(content)
+            if opener and _LEGACY_STAGE_ACTION.search(opener.group(1)):
+                content = content[opener.end() :].lstrip()
+        projected.append({"role": role, "content": content})
+    return projected
+
+
+def build_presentation_plan(
+    request: ChatRequest,
+    history: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build deterministic pacing and anti-repetition constraints for one text turn."""
+
+    mode = resolve_presentation_mode(request, history)
+    recent_assistant = [
+        str(item.get("content") or "")
+        for item in history
+        if item.get("role") == "assistant" and not item.get("hidden")
+    ][-4:]
+    question_budget = 0 if recent_assistant and _QUESTION_END.search(recent_assistant[-1]) else 1
+    if request.initiative:
+        question_budget = 0
+    return _nonempty(
+        {
+            "preference": request.presentation_mode,
+            "resolved": mode,
+            "question_budget": question_budget,
+            "required_reply_handles": (
+                ["回应当前内容", "给出角色自己的判断或自我披露", "留下无需问句也能承接的话题支点"]
+                if mode == "dialogue"
+                else [
+                    "承接用户已经确认的场景事实",
+                    "用角色的台词、判断或选择推进当前内容",
+                    "不为表现沉浸而强制增加动作",
+                ]
+            ),
+            "agency_budget": {
+                "allowed": ["角色自己的观点", "角色自己的情绪", "与当前话题相关的一个选择"],
+                "requires_user_or_server_evidence": [
+                    "当前地点与时间",
+                    "当前衣着与随身物品",
+                    "角色当前动作与活动",
+                    "用户动作、反应与动机",
+                    "共同事件与环境物件",
+                ],
+                "forbidden": [
+                    "替用户补动作或身体反应",
+                    "替用户推断意图、动机或内心结论",
+                    "把假设、建议或偏好写成正在发生的事实",
+                ],
+            },
+        }
+    )
 
 
 def select_roleplay_examples(
@@ -149,7 +288,8 @@ def build_roleplay_layer(
     for item in reversed(history):
         if item.get("role") != "assistant":
             continue
-        if item.get("role_quality") == "drift":
+        same_adult_lane = bool(item.get("adult_mode")) == bool(request.adult_mode)
+        if item.get("role_quality") == "drift" and same_adult_lane:
             previous_correction = str(item.get("role_quality_correction") or "")
         break
     conditional: dict[str, Any] = {}
@@ -173,12 +313,14 @@ def build_roleplay_layer(
             }
     result = _nonempty(
         {
+            "companion_lane": companion_lane(request),
             "turn_style": category,
             "scene": build_scene_packet(request, profiles),
             "conditional_character_context": conditional,
             "selected_examples": select_roleplay_examples(profiles.ai_profile, category, limit=2),
             "post_history_note": roleplay.get("post_history_note", ""),
             "previous_turn_correction": previous_correction,
+            "presentation": build_presentation_plan(request, history),
         }
     )
     if request.adult_mode:
@@ -243,6 +385,17 @@ def normalize_voice_response(response: str, request: ChatRequest) -> str:
     if request.interaction_mode != "voice":
         return spoken
     return _strip_parenthetical_content(spoken)
+
+
+def normalize_presentation_response(
+    response: str,
+    request: ChatRequest,
+    history: list[dict[str, Any]],
+) -> str:
+    """Keep text-mode prose intact; voice retains its speakable-text boundary."""
+
+    del history
+    return normalize_voice_response(response, request).strip()
 
 
 def chat_message_retrieval_eligible(item: dict[str, Any]) -> bool:
@@ -318,17 +471,17 @@ def evaluate_roleplay_quality(
     )
     if maximum_similarity >= 0.72 and len(response.strip()) >= 16:
         reasons.append("repeats_recent_assistant")
-        correction_parts.append("换一个具体推进方向，不复写上一轮的动作、照料或开场")
+        correction_parts.append("换一个具体回应方向，不复写上一轮的措辞、照料安排或开场")
 
     caretaker_hits = len(_CARETAKER_OUTPUT.findall(response))
     if caretaker_hits >= 2 and not _CARE_CONTEXT.search(request.message):
         reasons.append("unsolicited_caretaker_loop")
-        correction_parts.append("从角色自己的兴趣、判断或行动推进，不默认安排吃饭、休息和家务")
+        correction_parts.append("从角色自己的兴趣或判断回应，不默认安排吃饭、休息和家务")
 
     outsourcing_hits = len(_OUTSOURCE_OUTPUT.findall(response))
     if outsourcing_hits >= 2:
         reasons.append("outsources_every_decision")
-        correction_parts.append("角色先作出自己的一个决定或动作，再给用户回应空间")
+        correction_parts.append("角色先表达自己的一个判断或选择，再给用户回应空间")
 
     if _GENERIC_ASSISTANT.search(response):
         reasons.append("generic_assistant_voice")
@@ -359,14 +512,6 @@ def evaluate_roleplay_quality(
                 "R18 语音必须使用符合角色口吻的直白淫语、器官或性行为俗称，"
                 "不能只用文明、医学化或含糊表达"
             )
-        chinese_characters = len(re.findall(r"[\u3400-\u9fff]", response))
-        if chinese_characters < 180:
-            reasons.append("r18_response_too_short")
-            correction_parts.append(
-                "R18 语音回复写成180至250个中文字符的完整口语回合，"
-                "保持实质推进，不用重复或旁白凑长度"
-            )
-
     if request.interaction_mode == "voice" and _VOICE_STAGE_DIRECTION.search(response):
         reasons.append("voice_stage_direction")
         correction_parts.append("语音正文只写亲口说出的口语，删除动作、神态、括号和第一人称动作播报")

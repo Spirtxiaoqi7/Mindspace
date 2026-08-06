@@ -25,7 +25,9 @@ from mindspace_graph.product_database import ProductDatabase
 from mindspace_graph.profile_schema import DEFAULT_PROFILE_SCHEMA, ProfileSchemaRegistry
 from mindspace_graph.roleplay import (
     chat_message_retrieval_eligible,
+    companion_lane,
     evaluate_roleplay_quality,
+    resolve_presentation_mode,
 )
 
 DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
@@ -41,7 +43,7 @@ DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
         },
         "communication_preferences": {
             "preferred_tone": "自然",
-            "response_length": "适中",
+            "response_length": "",
             "explanation_depth": "清晰",
             "preferred_names": [],
             "disliked_expressions": [],
@@ -62,7 +64,7 @@ DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
         },
         "personality": {"core_traits": ["可靠", "克制"], "speech_style": ["自然"]},
         "relationship_rules": {
-            "relationship_definition": "尊重用户边界",
+            "relationship_definition": "按当前角色卡与用户要求互动",
             "preferred_interactions": [],
             "conflict_behavior": [],
             "repair_behavior": [],
@@ -795,6 +797,7 @@ class JsonSessionRepository:
             user_message_id = uuid4().hex
             assistant_message_id = uuid4().hex
             role_quality = evaluate_roleplay_quality(reply, request, messages)
+            presentation_mode = resolve_presentation_mode(request, messages)
             messages.extend(
                 [
                     {
@@ -818,6 +821,9 @@ class JsonSessionRepository:
                         "retrieval_class": (
                             "initiative_signal" if request.initiative else "user_dialogue"
                         ),
+                        "adult_mode": request.adult_mode,
+                        "companion_lane": companion_lane(request),
+                        "presentation_mode": presentation_mode,
                     },
                     {
                         "message_id": assistant_message_id,
@@ -835,6 +841,9 @@ class JsonSessionRepository:
                         "retrieval_class": (
                             "raw_initiative" if request.initiative else "raw_assistant"
                         ),
+                        "adult_mode": request.adult_mode,
+                        "companion_lane": companion_lane(request),
+                        "presentation_mode": presentation_mode,
                         "role_quality": role_quality["quality"],
                         "role_quality_reasons": role_quality["reasons"],
                         "role_quality_correction": role_quality["correction"],
@@ -1097,6 +1106,8 @@ class JsonSessionRepository:
                         "role": message.get("role", "unknown"),
                         "text": message.get("content", ""),
                         "created_at": message.get("timestamp", ""),
+                        "adult_mode": bool(message.get("adult_mode")),
+                        "companion_lane": str(message.get("companion_lane") or "DAILY"),
                     }
                 )
         return chunks

@@ -212,16 +212,22 @@ class DeterministicLanguageModel:
 
     def compact(self, messages: list[dict[str, str]], config: ApiConfig) -> str:
         prompt = "\n".join(message["content"] for message in messages)
-        cutoff_match = re.search(r'"cutoff_sequence"\s*:\s*(\d+)', prompt)
-        cutoff = int(cutoff_match.group(1)) if cutoff_match else 0
+        message_ids = re.findall(r'"message_id"\s*:\s*"([^"]+)"', prompt)
+        evidence = message_ids[:1] or ["deterministic-source"]
         return json.dumps(
             {
-                "summary_version": 1,
-                "cutoff_sequence": cutoff,
+                "summary_version": 2,
                 "dialogue_summary": "已完成对话历史的确定性压缩。",
+                "current_scene": {"location": "", "time_anchor": "", "activity": ""},
+                "events": [
+                    {"text": "对话按原始消息形成了新的连续性片段", "evidence_ids": evidence}
+                ],
                 "open_threads": [],
                 "commitments": [],
-                "relationship_events": [],
+                "relationship_deltas": [],
+                "confirmed_facts": [],
+                "temporary_cues": [],
+                "lane": "DAILY",
             },
             ensure_ascii=False,
         )
