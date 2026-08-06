@@ -38,7 +38,7 @@ AUDIT_ONLY_KINDS = {
     "role_correction",
 }
 EPHEMERAL_KINDS = {"research_plan", "emotion_state", "asr_uncertain_evidence"}
-MODEL_HISTORY_ROUNDS = 8
+MODEL_HISTORY_ROUNDS = 3
 MODEL_DIALOGUE_KINDS = {
     "current_user",
     "user_message",
@@ -106,6 +106,7 @@ def _recent_dialogue_events(
     events: list[sqlite3.Row],
     *,
     max_rounds: int = MODEL_HISTORY_ROUNDS,
+    allow_adult: bool = False,
 ) -> list[sqlite3.Row]:
     """Return only visible user/assistant dialogue from the latest round window.
 
@@ -126,6 +127,11 @@ def _recent_dialogue_events(
             metadata = json.loads(str(row["metadata_json"] or "{}"))
         except json.JSONDecodeError:
             metadata = {}
+        if not allow_adult and (
+            bool(metadata.get("adult_mode"))
+            or str(metadata.get("companion_lane") or "") == "ADULT"
+        ):
+            continue
         try:
             round_num = int(metadata.get("round") or 0)
         except (TypeError, ValueError):
@@ -145,6 +151,8 @@ class ContextSnapshot:
     rewrite_version: int
     head_sequence: int
     messages: list[dict[str, str]]
+    prefix_messages: list[dict[str, str]]
+    dialogue_messages: list[dict[str, str]]
     estimated_tokens: int
     emergency_truncated: bool = False
 
@@ -705,6 +713,8 @@ class ContextLedger:
                 metadata={
                     "message_id": item.get("message_id"),
                     "round": item.get("round"),
+                    "adult_mode": bool(item.get("adult_mode")),
+                    "companion_lane": str(item.get("companion_lane") or "DAILY"),
                     "migrated": True,
                 },
                 ui_visible=True,
@@ -719,6 +729,7 @@ class ContextLedger:
         static_messages: list[dict[str, str]],
         profiles: ProfileBundle,
         history: list[dict[str, Any]],
+        adult_mode: bool = False,
     ) -> ContextSnapshot:
         expected_base = [*static_messages, authoritative_profile_message(profiles)]
         expected_system_hash = _hash_messages(static_messages)
@@ -757,12 +768,13 @@ class ContextLedger:
                 """,
                 (epoch["epoch_id"],),
             ).fetchall()
-            dialogue_events = _recent_dialogue_events(events)
-            messages = json.loads(epoch["base_messages_json"])
-            messages.extend(
+            dialogue_events = _recent_dialogue_events(events, allow_adult=adult_mode)
+            prefix_messages = json.loads(epoch["base_messages_json"])
+            dialogue_messages = [
                 {"role": row["role"], "content": row["content"]}
                 for row in dialogue_events
-            )
+            ]
+            messages = [*prefix_messages, *dialogue_messages]
             head = max((int(row["sequence"]) for row in events), default=0)
             estimated_tokens = self.estimate_tokens(messages)
             emergency_truncated = bool(
@@ -774,7 +786,10 @@ class ContextLedger:
                 # so an already queued compaction can still activate later.
                 bounded_base = expected_base
                 old_base = json.loads(epoch["base_messages_json"])
-                if len(old_base) > 3 and "【历史压缩摘要】" in old_base[3].get("content", ""):
+                if len(old_base) > 3 and any(
+                    label in old_base[3].get("content", "")
+                    for label in ("【历史压缩摘要】", "【当前连续性包】")
+                ):
                     bounded_base = [*expected_base, old_base[3]]
                 warning = {
                     "role": "user",
@@ -797,13 +812,17 @@ class ContextLedger:
                         break
                     selected.append(item)
                     used += item_tokens
-                messages = [*bounded_base, warning, *reversed(selected)]
+                prefix_messages = [*bounded_base, warning]
+                dialogue_messages = list(reversed(selected))
+                messages = [*prefix_messages, *dialogue_messages]
                 estimated_tokens = self.estimate_tokens(messages)
             return ContextSnapshot(
                 epoch_id=int(epoch["epoch_id"]),
                 rewrite_version=int(epoch["rewrite_version"]),
                 head_sequence=head,
                 messages=messages,
+                prefix_messages=prefix_messages,
+                dialogue_messages=dialogue_messages,
                 estimated_tokens=estimated_tokens,
                 emergency_truncated=emergency_truncated,
             )
@@ -863,6 +882,14 @@ class ContextLedger:
                 )
                 if sequence:
                     sequences.append(sequence)
+            turn_metadata = next(
+                (
+                    dict(item.get("metadata") or {})
+                    for item in pending_events
+                    if item.get("kind") == "current_user"
+                ),
+                {},
+            )
             sequences.append(
                 self._insert_event(
                     db,
@@ -871,7 +898,14 @@ class ContextLedger:
                     kind="assistant_message",
                     role="assistant",
                     content=response,
-                    metadata={"message_id": assistant_message_id, "round": round_num},
+                    metadata={
+                        "message_id": assistant_message_id,
+                        "round": round_num,
+                        "adult_mode": bool(turn_metadata.get("adult_mode")),
+                        "companion_lane": str(
+                            turn_metadata.get("companion_lane") or "DAILY"
+                        ),
+                    },
                     ui_visible=True,
                     retrieval_eligible=False,
                 )
@@ -958,6 +992,8 @@ class ContextLedger:
         patch_limit: int,
         retain_recent_turns: int,
         delay_seconds: float,
+        bootstrap_rounds: int = 15,
+        segment_turns: int = 6,
     ) -> str | None:
         with self._connect() as db:
             if not db.in_transaction:
@@ -968,22 +1004,56 @@ class ContextLedger:
             if session is None or session["active_epoch_id"] is None:
                 return None
             epoch_id = int(session["active_epoch_id"])
-            base = json.loads(
-                db.execute(
-                    "SELECT base_messages_json FROM context_epochs WHERE epoch_id = ?",
-                    (epoch_id,),
-                ).fetchone()[0]
-            )
+            epoch = db.execute(
+                "SELECT base_messages_json, compacted_summary_json FROM context_epochs "
+                "WHERE epoch_id = ?",
+                (epoch_id,),
+            ).fetchone()
+            base = json.loads(epoch["base_messages_json"])
             rows = db.execute(
-                "SELECT sequence, kind, role, content FROM context_events "
+                "SELECT sequence, kind, role, content, metadata_json FROM context_events "
                 "WHERE epoch_id = ? AND model_visible = 1 ORDER BY sequence",
                 (epoch_id,),
             ).fetchall()
             messages = [*base, *({"role": row["role"], "content": row["content"]} for row in rows)]
             patch_count = sum(row["kind"] == "authoritative_json_patch" for row in rows)
-            if self.estimate_tokens(messages) < int(context_window * soft_ratio) and (
-                patch_count < patch_limit
-            ):
+            user_rows = [row for row in rows if row["kind"] == "current_user"]
+            user_rounds: list[int] = []
+            lanes: list[str] = []
+            for row in user_rows:
+                try:
+                    metadata = json.loads(row["metadata_json"] or "{}")
+                except json.JSONDecodeError:
+                    metadata = {}
+                try:
+                    user_rounds.append(int(metadata.get("round") or 0))
+                except (TypeError, ValueError):
+                    user_rounds.append(0)
+                lanes.append(str(metadata.get("companion_lane") or "DAILY"))
+            maximum_round = max(user_rounds, default=0)
+            has_summary = bool(epoch["compacted_summary_json"])
+            bootstrap_due = bool(
+                not has_summary
+                and maximum_round >= bootstrap_rounds
+                and len(user_rows) > retain_recent_turns
+            )
+            segment_due = bool(
+                has_summary
+                and len(user_rows) >= retain_recent_turns + max(1, segment_turns)
+            )
+            lane_transition_due = bool(
+                has_summary
+                and maximum_round >= bootstrap_rounds
+                and len(user_rows)
+                >= retain_recent_turns + max(3, max(1, segment_turns) // 2)
+                and len(lanes) >= 2
+                and lanes[-1] != lanes[-2]
+            )
+            capacity_due = bool(
+                self.estimate_tokens(messages) >= int(context_window * soft_ratio)
+                or patch_count >= patch_limit
+            )
+            if not (bootstrap_due or segment_due or lane_transition_due or capacity_due):
                 return None
             existing = db.execute(
                 "SELECT job_id FROM compaction_jobs "
@@ -992,7 +1062,7 @@ class ContextLedger:
             ).fetchone()
             if existing:
                 return str(existing["job_id"])
-            user_sequences = [int(row["sequence"]) for row in rows if row["kind"] == "current_user"]
+            user_sequences = [int(row["sequence"]) for row in user_rows]
             if len(user_sequences) <= retain_recent_turns:
                 return None
             cutoff = user_sequences[-retain_recent_turns] - 1
@@ -1102,8 +1172,21 @@ class ContextLedger:
                         "sequence": row["sequence"],
                         "role": row["role"],
                         "content": row["content"],
+                        "message_id": metadata.get("message_id"),
+                        "round": metadata.get("round"),
+                        "companion_lane": metadata.get("companion_lane", "DAILY"),
                     }
                 )
+            message_ids = [
+                str(item["message_id"])
+                for item in dialogue
+                if str(item.get("message_id") or "").strip()
+            ]
+            rounds = [
+                int(item["round"])
+                for item in dialogue
+                if str(item.get("round") or "").isdigit()
+            ]
             return {
                 "previous_summary": (
                     json.loads(epoch["compacted_summary_json"])
@@ -1111,6 +1194,16 @@ class ContextLedger:
                     else None
                 ),
                 "cutoff_sequence": job.cutoff_sequence,
+                "source": {
+                    "session_id": job.session_id,
+                    "from_round": min(rounds, default=0),
+                    "to_round": max(rounds, default=0),
+                    "message_ids": message_ids,
+                    "source_hash": hashlib.sha256(
+                        _json(dialogue).encode("utf-8")
+                    ).hexdigest(),
+                    "rewrite_version": job.source_rewrite_version,
+                },
                 "dialogue": dialogue,
             }
 
@@ -1147,7 +1240,7 @@ class ContextLedger:
                 "content": (
                     "以下是已压缩的历史对话状态，只用于延续语境；"
                     "权威 JSON 与后续原始消息拥有更高优先级。\n\n"
-                    f"【历史压缩摘要】\n{_json(summary)}"
+                    f"【当前连续性包】\n{_json(summary)}"
                 ),
             }
             new_base = [
@@ -1221,7 +1314,11 @@ class ContextLedger:
 
     def fail_compaction(self, job_id: str, error: str, *, retry: bool = True) -> None:
         with self._connect() as db:
-            status = "queued" if retry else "failed"
+            row = db.execute(
+                "SELECT attempts FROM compaction_jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            terminal = row is not None and int(row["attempts"]) >= 3
+            status = "queued" if retry and not terminal else "failed"
             retry_at = (datetime.now(UTC) + timedelta(seconds=30)).isoformat()
             db.execute(
                 "UPDATE compaction_jobs SET status = ?, not_before = ?, lease_until = NULL, "

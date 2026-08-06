@@ -12,7 +12,11 @@ export interface Message {
   initiative_trigger?: InitiativeTrigger;
   voice_cue?: string;
   hidden?: boolean;
+  presentation_mode?: PresentationModeResolved;
 }
+
+export type PresentationModePreference = "auto" | "dialogue" | "scene";
+export type PresentationModeResolved = "dialogue" | "scene";
 
 export type InitiativeTrigger = "none" | "manual" | "idle_continuation" | "continuous_companionship";
 export type VoiceInteractionMode = "call" | "face_to_face";
@@ -52,7 +56,7 @@ export interface CharacterSummary {
   source: CharacterSource;
   status: "active" | "archived";
   display_name: string;
-  gender: "男" | "女";
+  gender: "男" | "女" | "不指定";
   user_alias: string;
   relationship_label: string;
   avatar: AvatarEntry;
@@ -92,17 +96,42 @@ export interface CharacterDraft {
   status: string;
   input: {
     ai_name: string;
-    ai_gender: "男" | "女";
+    ai_gender: "男" | "女" | "不指定";
     core_traits: string[];
     flaw: string;
-    relationship: string;
-    user_name: string;
-    user_alias: string;
+      relationship: string;
+      user_name: string;
+      user_alias: string;
+      fate_forge?: Record<string, unknown>;
   };
   profile: Record<string, unknown>;
+  blueprint: {
+    schema_version: string;
+    dimensions: string[];
+    blocks: Record<string, {
+      title: string;
+      dimension: string;
+      content: string;
+      examples?: string[];
+    }>;
+    quality: {
+      effective_tokens: number;
+      block_tokens: Record<string, number>;
+      complete: boolean;
+      warnings: string[];
+    };
+  };
   avatar: AvatarEntry | Record<string, never>;
   generation_mode: "llm" | "local_template";
   model_call_count: number;
+  rewrite_call_count: number;
+  rewrite_history: Array<{
+    revision: number;
+    block_ids: string[];
+    instruction: string;
+    accepted_blocks: number;
+    created_at: string;
+  }>;
   warnings: string[];
 }
 

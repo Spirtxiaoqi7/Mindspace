@@ -1,57 +1,87 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DrawWorkshop } from "./CharacterExperience";
 
+const fateSlots = Array.from({ length: 12 }, (_, index) => {
+  const isGold = index === 7;
+  return {
+    id: `slot-${index + 1}`,
+    index: index + 1,
+    title: `命格槽位 ${index + 1}`,
+    short_title: `槽${index + 1}`,
+    icon: "命",
+    description: `第 ${index + 1} 条人物维度`,
+  };
+});
+
+const generatedOptions = Object.fromEntries(fateSlots.map((slot, index) => {
+  const isGold = index === 7;
+  return [slot.id, [{
+      id: `fate-${index + 1}`,
+      rarity: isGold ? "gold" : "blue",
+      title: `命格 ${index + 1}`,
+      summary: `命格方向 ${index + 1}`,
+      ...(isGold ? {
+        question: "你喜欢一个会主动守护关系的 AI 吗？",
+        yes_direction: "主动守护",
+        no_direction: "尊重距离",
+      } : {}),
+    }]];
+}));
+
 const options = {
-  core_traits: [
-    { id: "gentle", label: "温柔", conflicts: [] },
-    { id: "strong", label: "强势", conflicts: [] },
-    { id: "rational", label: "理性", conflicts: [] },
-  ],
-  flaws: [{ id: "stubborn", label: "有些固执", conflicts: [] }],
+  core_traits: [],
+  flaws: [],
   relationships: ["朋友"],
-  gender: ["女", "男"],
+  gender: ["女", "男", "不指定"],
+  fate_system: {
+    schema_version: "2.0.0",
+    rarities: {
+      red: { label: "红色", meaning: "带有代价" },
+      blue: { label: "蓝色", meaning: "稳定底色" },
+      gold: { label: "金色", meaning: "深度定义" },
+    },
+    slots: fateSlots,
+  },
 };
 
 beforeEach(() => {
   vi.restoreAllMocks();
-  vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(options), {
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(
+    String(input).endsWith("/api/v1/characters/fate-options")
+      ? { schema_version: "2.0.0", options: generatedOptions }
+      : options,
+  ), {
     status: 200,
     headers: { "Content-Type": "application/json" },
   })));
 });
 
-it("never evicts a selected core trait when a custom trait is added at the limit", async () => {
+it("requires all twelve fates and an explicit gold answer before continuing", async () => {
   const user = userEvent.setup();
   render(<DrawWorkshop defaultUserName="用户" onBack={vi.fn()} onCommitted={vi.fn()} />);
 
   await waitFor(() => expect(screen.getByLabelText("AI 名称")).toBeInTheDocument());
+  await screen.findByRole("button", { name: "不指定" });
   await user.type(screen.getByLabelText("AI 名称"), "林见月");
   await user.click(screen.getByRole("button", { name: "继续" }));
 
-  const gentle = await screen.findByRole("button", { name: /温柔/ });
-  const strong = screen.getByRole("button", { name: /强势/ });
-  await user.click(gentle);
-  await user.click(strong);
-  expect(gentle).toHaveClass("selected");
-  expect(strong).toHaveClass("selected");
+  expect(await screen.findByRole("heading", { name: "先把关系和你想要的TA说清楚" })).toBeInTheDocument();
+  await user.type(screen.getByLabelText("你想要一个怎样的角色"), "TA很依赖我，平时百依百顺，受到冷落时会明显不安。");
+  await user.click(screen.getByRole("button", { name: "继续" }));
 
-  const custom = screen.getByPlaceholderText("自定义核心性格");
-  await user.type(custom, "毒舌");
-  await user.click(screen.getByRole("button", { name: "加入选择" }));
+  expect(await screen.findByRole("heading", { name: "选择这次实时生成的命格" })).toBeInTheDocument();
+  await waitFor(() => expect(document.querySelectorAll(".fate-candidates button")).toHaveLength(12));
+  for (const button of document.querySelectorAll<HTMLButtonElement>(".fate-candidates button")) {
+    await user.click(button);
+  }
+  expect(document.querySelector(".fate-forge-summary")).toHaveTextContent("12/12 已定");
 
-  expect(gentle).toHaveClass("selected");
-  expect(strong).toHaveClass("selected");
-  expect(custom).toHaveValue("毒舌");
-  expect(screen.getByRole("status")).toHaveTextContent("已经选满 2 项");
-  expect(screen.queryByLabelText("已选择的自定义核心性格")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "继续" }));
+  expect(screen.getByText("请完成全部金色命格的是、否或自定义问命")).toBeInTheDocument();
 
-  await user.click(gentle);
-  fireEvent.keyDown(custom, { key: "Enter", code: "Enter" });
-
-  expect(strong).toHaveClass("selected");
-  expect(gentle).not.toHaveClass("selected");
-  expect(custom).toHaveValue("");
-  expect(screen.getByLabelText("已选择的自定义核心性格")).toHaveTextContent("毒舌");
+  await user.click(screen.getByRole("button", { name: "否" }));
+  await user.click(screen.getByRole("button", { name: "继续" }));
+  expect(await screen.findByRole("heading", { name: "合相定格" })).toBeInTheDocument();
 });

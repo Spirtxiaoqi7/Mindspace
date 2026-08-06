@@ -94,13 +94,13 @@ def test_next_turn_keeps_confirmed_messages_but_excludes_audit_context(tmp_path)
     snapshot_contents = [
         item["content"] for item in round_thirteen.context_snapshot.messages
     ]
-    assert any("用户第5轮" in value for value in snapshot_contents)
+    assert any("用户第10轮" in value for value in snapshot_contents)
     assert any("角色第12轮" in value for value in snapshot_contents)
-    assert not any("用户第4轮" in value for value in snapshot_contents)
-    assert not any("角色第4轮" in value for value in snapshot_contents)
+    assert not any("用户第9轮" in value for value in snapshot_contents)
+    assert not any("角色第9轮" in value for value in snapshot_contents)
     assert round_thirteen.messages[
-        : len(round_thirteen.context_snapshot.messages)
-    ] == round_thirteen.context_snapshot.messages
+        : len(round_thirteen.context_snapshot.prefix_messages)
+    ] == round_thirteen.context_snapshot.prefix_messages
     restored_contents = [item["content"] for item in round_thirteen.context_snapshot.messages]
     assert not any("【低可信召回】" in value for value in restored_contents)
     assert not any("【本轮可用工具、Skill 与 MCP】" in value for value in restored_contents)
@@ -108,10 +108,10 @@ def test_next_turn_keeps_confirmed_messages_but_excludes_audit_context(tmp_path)
     assert diagnostics["event_count"] > diagnostics["model_visible_event_count"]
 
 
-def test_compatibility_split_keeps_exactly_the_latest_eight_rounds():
+def test_compatibility_split_keeps_exactly_the_latest_three_rounds():
     base, tail = split_history_for_cache(history_through(15), 16)
-    assert {item["round"] for item in base} == set(range(8, 16))
-    assert len(base) == 16
+    assert {item["round"] for item in base} == {13, 14, 15}
+    assert len(base) == 6
     assert tail == []
 
 
@@ -187,7 +187,7 @@ def test_json_baseline_precedes_history_and_post_history_calibration_is_last(tmp
     json_index = next(
         index for index, value in enumerate(contents) if "【权威 JSON 基线】" in value
     )
-    history_index = next(index for index, value in enumerate(contents) if "用户第4轮" in value)
+    history_index = next(index for index, value in enumerate(contents) if "用户第9轮" in value)
     retrieval_index = next(
         index for index, value in enumerate(contents) if "【低可信召回】" in value
     )
@@ -198,7 +198,7 @@ def test_json_baseline_precedes_history_and_post_history_calibration_is_last(tmp
         index for index, value in enumerate(contents) if "【本轮角色演绎校准｜最后执行】" in value
     )
 
-    assert json_index < history_index < retrieval_index < input_index
+    assert json_index < retrieval_index < history_index < input_index
     assert input_index < calibration_index
     assert not any(item["kind"] == "tool_context" for item in built.pending_events)
     assert calibration_index == len(built.messages) - 1
@@ -314,6 +314,7 @@ def test_adult_roleplay_context_activates_profile_rules_in_final_calibration():
             message="不会的，来吧。",
             session_id="adult-roleplay",
             round=3,
+            adult_mode=True,
             interaction_mode="voice",
             user_name="林澈",
             character_name="弦月",
@@ -356,11 +357,10 @@ def test_r18_sexual_action_mode_is_explicit_and_does_not_replace_normal_adult_de
     )
 
     calibration = built.messages[-1]
-    assert "【R18 性行为推进模式｜用户已明确开启｜硬性执行】" in calibration["content"]
-    assert "通用 R18 Director（产品级规则，不属于任何单角色）" in calibration["content"]
-    assert "本轮质量目标" in calibration["content"]
-    assert "用户明确承接时兑现下一拍" in calibration["content"]
-    assert "私有 overlay 仅是本机写法素材" in calibration["content"]
+    assert "【R18 状态机｜用户已明确开启】" in calibration["content"]
+    assert "当前 R18 Director（产品级规则，不属于任何单角色）" in calibration["content"]
+    assert "主动或被动、顺从或控制" in calibration["content"]
+    assert "本轮质量目标" not in calibration["content"]
     turn_control = next(item for item in built.pending_events if item["kind"] == "turn_control")
     assert turn_control["metadata"]["adult_mode"] is True
 
@@ -386,11 +386,11 @@ def test_r18_final_directive_detects_repeated_foreplay_and_forces_progress():
 
     calibration = built.messages[-1]["content"]
     assert '"consecutive_foreplay_only_assistant_turns":2' in calibration
-    assert "本轮必须结束拖延" in calibration
+    assert "按 Director 当前阶段维持连续性" in calibration
     assert "最近 R18 推进状态" in calibration
 
 
-def test_private_r18_protocol_is_verbatim_and_absent_when_switch_is_off():
+def test_private_r18_output_protocol_is_not_injected_into_generation():
     bundle = profiles()
     bundle.ai_profile["roleplay"]["r18_protocol"] = [
         "原文规则A：必须保留这个句子。",
@@ -423,10 +423,9 @@ def test_private_r18_protocol_is_verbatim_and_absent_when_switch_is_off():
 
     adult_text = adult.messages[-1]["content"]
     ordinary_text = "\n".join(item["content"] for item in ordinary.messages)
-    assert "通用 R18 Director（产品级规则，不属于任何单角色）" in adult_text
-    assert "原文规则B：符号♡与括号()也保持。" in adult_text
+    assert "【R18 状态机｜用户已明确开启】" in adult_text
     assert "原文规则A：必须保留这个句子。" not in adult_text
-    assert "原文规则B：符号♡与括号()也保持。" in adult_text
+    assert "原文规则B：符号♡与括号()也保持。" not in adult_text
     assert "原文规则A：必须保留这个句子。" not in ordinary_text
 
 
@@ -439,10 +438,29 @@ def test_gender_identity_is_the_first_high_priority_system_content():
 
     first = built.messages[0]
     assert first["role"] == "system"
-    assert first["content"].startswith("【最高优先级：第一认同性别】")
-    assert "用户的第一认同性别是“男”" in first["content"]
-    assert "你的第一认同性别是“女”" in first["content"]
-    assert "模型不得自行推断、修改、淡化、重新定义或用其他身份覆盖" in first["content"]
+    assert first["content"].startswith("【身份状态】")
+    assert "用户性别：男；角色性别：女" in first["content"]
+    assert "性格与关系表现取自角色卡和用户当前要求" in first["content"]
+
+
+def test_reply_length_is_only_added_from_explicit_user_setting():
+    bundle = profiles()
+    bundle.user_profile["communication_preferences"]["response_length"] = "固定两百字"
+    natural = build_prompt(request(1), bundle, [], [], [])
+    natural_text = "\n".join(item["content"] for item in natural.messages)
+
+    assert "【用户设定的回复篇幅】" not in natural_text
+    assert "固定两百字" not in natural_text
+    assert "target_characters" not in natural_text
+    assert "minimum_content_beats" not in natural_text
+
+    explicit_request = request(1).model_copy(
+        update={"reply_length_preference": "日常简洁，重要话题可以自然展开"}
+    )
+    explicit = build_prompt(explicit_request, bundle, [], [], [])
+    explicit_text = "\n".join(item["content"] for item in explicit.messages)
+
+    assert "【用户设定的回复篇幅】\n日常简洁，重要话题可以自然展开" in explicit_text
 
 
 def test_face_to_face_scene_stays_after_the_stable_prefix_and_is_not_persistable():

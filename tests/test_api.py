@@ -767,12 +767,16 @@ def test_settings_profiles_knowledge_and_destructive_confirmations(tmp_path):
         "/api/v1/settings",
         json={
             "llm": {"api_key": "secret", "temperature": 1.2},
-            "persona": {"character_name": "弦月"},
+            "persona": {
+                "character_name": "弦月",
+                "reply_length_preference": "日常简洁，重要话题自然展开",
+            },
         },
     )
     public = client.get("/api/v1/settings")
     assert saved.status_code == 200
     assert public.json()["persona"]["character_name"] == "弦月"
+    assert public.json()["persona"]["reply_length_preference"] == "日常简洁，重要话题自然展开"
     assert "secret" not in public.text
     assert "api_key" not in public.text
     assert settings.llm_api_key == "secret"

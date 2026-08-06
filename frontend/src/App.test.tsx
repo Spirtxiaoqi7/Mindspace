@@ -12,6 +12,7 @@ import App, {
   shouldSkipSpeechSegmentFailure,
   shouldSynthesizeStreamEvent,
   shouldBufferQwenReplyForSinglePass,
+  shouldAutomaticallyQueueSpeech,
   shouldFollowConversationScroll,
   voiceReconnectDelay,
   voiceMergeDelay,
@@ -38,10 +39,15 @@ it("never turns recovered SSE history into a fresh TTS request", () => {
 
 it("buffers one complete Qwen reply for a single acoustic request", () => {
   const audio = (tts_provider: string, auto_tts: boolean) => ({ audio: { tts_provider, auto_tts } } as never);
-  expect(shouldBufferQwenReplyForSinglePass(audio("qwen3-vllm", true), false)).toBe(true);
+  expect(shouldBufferQwenReplyForSinglePass(audio("qwen3-vllm", true), false)).toBe(false);
   expect(shouldBufferQwenReplyForSinglePass(audio("qwen3-vllm", false), true)).toBe(true);
   expect(shouldBufferQwenReplyForSinglePass(audio("qwen3-vllm", false), false)).toBe(false);
   expect(shouldBufferQwenReplyForSinglePass(audio("gpt-sovits", true), true)).toBe(false);
+});
+
+it("never starts automatic TTS outside a live voice session", () => {
+  expect(shouldAutomaticallyQueueSpeech(false)).toBe(false);
+  expect(shouldAutomaticallyQueueSpeech(true)).toBe(true);
 });
 
 it("follows streamed conversation only while the user remains near the active turn", () => {
@@ -173,7 +179,7 @@ function initiativeStream() {
   return new Response([
     envelope("run.accepted", { request_id: "initiative-run" }, 1),
     envelope("response.delta", { delta: "那我就陪你安静一会儿。" }, 2),
-    envelope("run.completed", { response: { assistant_message_id: "a-initiative", reply: "那我就陪你安静一会儿。" } }, 3),
+    envelope("run.completed", { response: { assistant_message_id: "a-initiative", reply: "那我就陪你安静一会儿。", presentation_mode: "dialogue" } }, 3),
   ].join(""), { headers: { "Content-Type": "text/event-stream" } });
 }
 
@@ -266,6 +272,69 @@ function installFetchMock(settingsOverride: Record<string, unknown> = {}) {
   }));
 }
 
+function installCharacterLifecycleMock(initialSessions: Array<Record<string, unknown>> = []) {
+  installFetchMock();
+  const fallback = vi.mocked(fetch);
+  const character = { ...defaultCharacter, source: "draw" as const };
+  const sessions = initialSessions.map((item) => ({ ...item }));
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const url = String(input);
+    const path = url.split("?")[0];
+    if (path === "/api/v1/characters") {
+      return json({
+        items: [{
+          ...character,
+          session_count: sessions.length,
+          latest_session_id: String(sessions[0]?.session_id || ""),
+        }],
+      });
+    }
+    if (path === `/api/v1/characters/${character.character_id}`) {
+      return json({
+        ...character,
+        schema_version: "1.0.0",
+        ai_profile: {
+          identity: { name: character.display_name, self_description: "可靠的本地伙伴" },
+        },
+        runtime_state: {},
+        created_at: "2026-07-30T00:00:00Z",
+      });
+    }
+    if (path === `/api/v1/characters/${character.character_id}/history`) {
+      return json({ items: [] });
+    }
+    if (path === "/api/v1/sessions" && init.method === "POST") {
+      const payload = JSON.parse(String(init.body));
+      const created = {
+        session_id: payload.session_id,
+        title: "新对话",
+        character_id: payload.character_id,
+        mode: "draw",
+        updated_at: new Date().toISOString(),
+        message_count: 0,
+        messages: [],
+      };
+      sessions.unshift(created);
+      return json(created);
+    }
+    if (path === "/api/v1/sessions") return json({ sessions });
+    const sessionMatch = path.match(/^\/api\/v1\/sessions\/([^/]+)$/);
+    if (sessionMatch && init.method === "DELETE") {
+      const index = sessions.findIndex((item) => item.session_id === sessionMatch[1]);
+      if (index < 0) return json({ detail: "session not found" }, 404);
+      sessions.splice(index, 1);
+      return json({ success: true });
+    }
+    if (sessionMatch) {
+      const session = sessions.find((item) => item.session_id === sessionMatch[1]);
+      return session ? json(session) : json({ detail: "session not found" }, 404);
+    }
+    return fallback(input, init);
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return { character, fetchMock, sessions };
+}
+
 async function renderReady() {
   render(<App />);
   await waitFor(() => {
@@ -322,9 +391,75 @@ describe("Mindspace product interactions", () => {
     render(<App />);
     expect(await screen.findByRole("heading", { name: "用户 × Mindspace" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /人设\s*1/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /再遇见一位角色/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /命定系统/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /人物与关系/ })).toBeInTheDocument();
     expect(document.querySelector(".app-shell")).not.toBeInTheDocument();
+  });
+
+  it("asks whether to create a new character when re-encounter already has one", async () => {
+    installCharacterLifecycleMock();
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /命定系统/ }));
+
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent("是否继续创建一位新角色");
+    fireEvent.click(document.querySelector<HTMLButtonElement>(".confirmation-accept")!);
+
+    expect(await screen.findByText("FATE SYSTEM · DESTINY FORGE")).toBeInTheDocument();
+    expect(document.querySelector(".app-shell")).not.toBeInTheDocument();
+  });
+
+  it("shows every existing character from the shared people-and-relationships entry", async () => {
+    installCharacterLifecycleMock();
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /人物与关系/ }));
+
+    const picker = await screen.findByRole("dialog", { name: "选择本次对话的角色" });
+    expect(picker).toHaveTextContent("Mindspace");
+    expect(picker).toHaveTextContent("助手 · 命定系统");
+  });
+
+  it("returns to the existing character chat when re-encounter creation is cancelled", async () => {
+    const { character, fetchMock } = installCharacterLifecycleMock();
+    render(<App />);
+    fireEvent.click(await screen.findByRole("button", { name: /命定系统/ }));
+    await screen.findByRole("alertdialog");
+    fireEvent.click(document.querySelector<HTMLButtonElement>(".confirmation-cancel")!);
+
+    await waitFor(() => expect(document.querySelector(".app-shell")).toBeTruthy());
+    const createCall = fetchMock.mock.calls.find(([url, init]) =>
+      String(url) === "/api/v1/sessions" && init?.method === "POST"
+    );
+    expect(JSON.parse(String(createCall?.[1]?.body))).toMatchObject({
+      character_id: character.character_id,
+    });
+  });
+
+  it("keeps the character card reachable after its last chat is deleted", async () => {
+    const { character, fetchMock } = installCharacterLifecycleMock([{
+      session_id: "only-session",
+      title: "唯一会话",
+      character_id: defaultCharacter.character_id,
+      mode: "draw",
+      updated_at: "2026-08-05T00:00:00Z",
+      message_count: 0,
+      messages: [],
+    }]);
+    render(<App />);
+    await waitFor(() => expect(document.querySelector(".app-shell")).toBeTruthy());
+    fireEvent.click(await screen.findByRole("button", { name: "删除会话：唯一会话" }));
+    await screen.findByRole("alertdialog");
+    fireEvent.click(document.querySelector<HTMLButtonElement>(".confirmation-accept")!);
+
+    expect(await screen.findByRole("heading", { name: "人设管理" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: character.display_name })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "开始对话" })).toBeInTheDocument();
+    expect(localStorage.getItem("mindspace.session")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "开始对话" }));
+    await waitFor(() => expect(document.querySelector(".app-shell")).toBeTruthy());
+    expect(fetchMock.mock.calls.filter(([url, init]) =>
+      String(url) === "/api/v1/sessions" && init?.method === "POST"
+    )).toHaveLength(1);
   });
 
   it("binds every rendered button to explicit behavior", () => {
@@ -470,11 +605,29 @@ describe("Mindspace product interactions", () => {
     expect(payload.initiative).toBe(true);
     expect(payload.initiative_trigger).toBe("manual");
     expect(payload.interaction_mode).toBe("text");
+    expect(payload.presentation_mode).toBe("auto");
     expect(payload.adult_mode).toBe(false);
     expect(payload.client_sent_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(typeof payload.client_timezone).toBe("string");
     expect(document.querySelectorAll(".message.user")).toHaveLength(0);
     expect(document.querySelectorAll(".message.assistant")).toHaveLength(1);
+  });
+
+  it("exposes an observable three-state presentation control and sends the override", async () => {
+    const user = userEvent.setup();
+    await renderReady();
+    const camera = screen.getByRole("button", { name: "切换表达方式" });
+    expect(camera).toHaveTextContent("自动·对话");
+    await user.click(camera);
+    expect(camera).toHaveTextContent("对话");
+    await user.click(camera);
+    expect(camera).toHaveTextContent("场景");
+    await user.click(document.querySelector(".stage-speak")!);
+    const call = vi.mocked(fetch).mock.calls.find(
+      ([url, init]) => String(url) === "/api/v1/chat/stream" && init?.method === "POST",
+    );
+    expect(JSON.parse(String(call?.[1]?.body)).presentation_mode).toBe("scene");
+    expect(localStorage.getItem("mindspace.presentation_mode")).toBe("scene");
   });
 
   it("jumps the conversation viewport to the active turn after sending", async () => {

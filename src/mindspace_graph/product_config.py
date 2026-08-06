@@ -138,6 +138,7 @@ class ProductConfigStore:
                 "user_persona": "",
                 "character_name": "Mindspace",
                 "system_prompt": "",
+                "reply_length_preference": "",
             },
             "retrieval": {
                 "rag_enabled": True,
@@ -147,8 +148,9 @@ class ProductConfigStore:
                 "temporal_enabled": True,
                 "bm25_enabled": True,
                 "vector_enabled": True,
-                "knowledge_k": 5,
-                "chat_k": 10,
+                "knowledge_k": 2,
+                "chat_k": 3,
+                "history_k": 3,
                 "similarity_threshold": 0.5,
                 "decay_rounds": 20,
                 "decay_hours": 168,
@@ -347,6 +349,10 @@ class ProductConfigStore:
         return self.snapshot(redact=True)
 
     def _validate(self) -> None:
+        persona = self._config["persona"]
+        persona["reply_length_preference"] = str(
+            persona.get("reply_length_preference") or ""
+        ).strip()[:300]
         llm = self._config["llm"]
         llm["mode"] = str(llm["mode"]).strip().lower()
         if llm["mode"] not in {"demo", "openai"}:
@@ -368,6 +374,7 @@ class ProductConfigStore:
         retrieval = self._config["retrieval"]
         retrieval["knowledge_k"] = max(1, min(50, int(retrieval["knowledge_k"])))
         retrieval["chat_k"] = max(1, min(100, int(retrieval["chat_k"])))
+        retrieval["history_k"] = max(1, min(100, int(retrieval.get("history_k", 3))))
         retrieval["similarity_threshold"] = max(
             0.0, min(1.0, float(retrieval["similarity_threshold"]))
         )
@@ -405,7 +412,8 @@ class ProductConfigStore:
             "qwen3-vllm",
         }:
             raise ValueError(
-                "audio.tts_provider must be browser, mock, cosyvoice, siliconflow, gpt-sovits, or qwen3-vllm"
+                "audio.tts_provider must be browser, mock, cosyvoice, siliconflow, "
+                "gpt-sovits, or qwen3-vllm"
             )
         audio["tts_speed"] = max(0.5, min(2.0, float(audio["tts_speed"])))
         audio["tts_siliconflow_base_url"] = (
@@ -435,7 +443,9 @@ class ProductConfigStore:
         audio["tts_qwen3_vllm_task_type"] = (
             "Base" if task_type.lower() == "base" else "CustomVoice"
         )
-        audio["tts_qwen3_vllm_language"] = str(audio["tts_qwen3_vllm_language"]).strip() or "Chinese"
+        audio["tts_qwen3_vllm_language"] = (
+            str(audio["tts_qwen3_vllm_language"]).strip() or "Chinese"
+        )
         if not audio["tts_qwen3_vllm_model"] or not audio["tts_qwen3_vllm_voice"]:
             raise ValueError("Qwen3-TTS model and voice must not be blank")
         audio["asr_silence_ms"] = max(250, min(3000, int(audio["asr_silence_ms"])))

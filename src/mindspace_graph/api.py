@@ -40,7 +40,14 @@ from mindspace_graph.characters import (
     FLAWS,
     RELATIONSHIPS,
     CharacterDraftInput,
+    CharacterRewriteInput,
     generate_draft_once,
+    rewrite_draft_blocks_once,
+)
+from mindspace_graph.fate_forge import (
+    FateOptionsRequest,
+    generate_fate_options_once,
+    public_fate_catalog,
 )
 from mindspace_graph.gpt_sovits import public_voice_catalog, voice_definition
 from mindspace_graph.memory_registry import DEFAULT_MEMORY_REGISTRY
@@ -275,9 +282,7 @@ def _voice_energy_threshold_db(
     """
 
     base_key = (
-        "asr_barge_in_energy_threshold_db"
-        if playing
-        else "asr_listening_energy_threshold_db"
+        "asr_barge_in_energy_threshold_db" if playing else "asr_listening_energy_threshold_db"
     )
     threshold = float(audio_config[base_key])
     if playing:
@@ -472,8 +477,24 @@ def create_app(
             "core_traits": CORE_TRAITS,
             "flaws": FLAWS,
             "relationships": RELATIONSHIPS,
-            "gender": ["女", "男"],
+            "gender": ["女", "男", "不指定"],
+            "fate_system": public_fate_catalog(),
         }
+
+    @app.post("/api/v1/characters/fate-options")
+    async def generate_character_fate_options(payload: FateOptionsRequest):
+        try:
+            return await generate_fate_options_once(
+                payload,
+                llm=container.conversation.dependencies.llm,
+                settings=settings,
+            )
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except (asyncio.TimeoutError, httpx.HTTPError) as exc:
+            raise HTTPException(status_code=502, detail=f"AI 命格选项生成失败：{exc}") from exc
+        except Exception as exc:  # noqa: BLE001 - provider errors are user-facing here
+            raise HTTPException(status_code=502, detail=f"AI 命格选项生成失败：{exc}") from exc
 
     @app.get("/api/v1/characters")
     async def list_characters(include_archived: bool = Query(default=False)):
@@ -557,9 +578,7 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/api/v1/characters/{character_id}/journal")
-    async def list_journal(
-        character_id: str, include_archived: bool = Query(default=False)
-    ):
+    async def list_journal(character_id: str, include_archived: bool = Query(default=False)):
         try:
             items = container.chapters.list_journals(
                 character_id, include_archived=include_archived
@@ -590,9 +609,7 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.put("/api/v1/characters/{character_id}/journal/{entry_id}")
-    async def update_journal(
-        character_id: str, entry_id: str, payload: JournalUpdate
-    ):
+    async def update_journal(character_id: str, entry_id: str, payload: JournalUpdate):
         try:
             return container.chapters.update_journal(character_id, entry_id, payload)
         except KeyError as exc:
@@ -607,13 +624,9 @@ def create_app(
         return {"success": True}
 
     @app.get("/api/v1/characters/{character_id}/moments")
-    async def list_moments(
-        character_id: str, include_archived: bool = Query(default=False)
-    ):
+    async def list_moments(character_id: str, include_archived: bool = Query(default=False)):
         try:
-            items = container.chapters.list_moments(
-                character_id, include_archived=include_archived
-            )
+            items = container.chapters.list_moments(character_id, include_archived=include_archived)
             return {"items": items, "count": len(items)}
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -626,9 +639,7 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.put("/api/v1/characters/{character_id}/moments/{moment_id}")
-    async def update_moment(
-        character_id: str, moment_id: str, payload: MomentUpdate
-    ):
+    async def update_moment(character_id: str, moment_id: str, payload: MomentUpdate):
         try:
             return container.chapters.update_moment(character_id, moment_id, payload)
         except KeyError as exc:
@@ -692,13 +703,9 @@ def create_app(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.post("/api/v1/activity-sessions/{activity_session_id}/actions")
-    async def apply_activity_action(
-        activity_session_id: str, payload: ActivityAction
-    ):
+    async def apply_activity_action(activity_session_id: str, payload: ActivityAction):
         try:
-            return container.chapters.apply_activity_action(
-                activity_session_id, payload
-            )
+            return container.chapters.apply_activity_action(activity_session_id, payload)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
@@ -777,9 +784,7 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.get("/api/v1/characters/{character_id}/history")
-    async def character_history(
-        character_id: str, limit: int = Query(default=20, ge=1, le=100)
-    ):
+    async def character_history(character_id: str, limit: int = Query(default=20, ge=1, le=100)):
         try:
             container.characters.get(character_id)
             return {"items": container.characters.history(character_id, limit)}
@@ -805,9 +810,9 @@ def create_app(
             record = container.characters.get(character_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        profile_bytes = json.dumps(
-            record["ai_profile"], ensure_ascii=False, indent=2
-        ).encode("utf-8")
+        profile_bytes = json.dumps(record["ai_profile"], ensure_ascii=False, indent=2).encode(
+            "utf-8"
+        )
         files: dict[str, bytes] = {"ai-profile.json": profile_bytes}
         avatar_src = str((record.get("avatar") or {}).get("src") or "")
         prefix = "/api/v1/character/files/"
@@ -847,7 +852,7 @@ def create_app(
             media_type="application/vnd.mindspace.character+zip",
             headers={
                 "Content-Disposition": (
-                    f"attachment; filename=\"mindspace-card.mindspace-card\"; "
+                    f'attachment; filename="mindspace-card.mindspace-card"; '
                     f"filename*=UTF-8''{quote(filename)}"
                 )
             },
@@ -906,9 +911,7 @@ def create_app(
                     if hashlib.sha256(content).hexdigest() != expected.get("sha256"):
                         raise ValueError("character package checksum mismatch")
                 profile = json.loads(archive.read("ai-profile.json"))
-                avatar_name = next(
-                    (name for name in names if name.startswith("avatar.")), ""
-                )
+                avatar_name = next((name for name in names if name.startswith("avatar.")), "")
                 avatar_data = archive.read(avatar_name) if avatar_name else b""
             record = container.characters.create(
                 ai_profile=profile,
@@ -965,17 +968,22 @@ def create_app(
             if "input" in payload:
                 selected = CharacterDraftInput.model_validate(payload["input"])
                 from mindspace_graph.characters import (
-                    local_profile_from_draft,
+                    compile_blueprint_profile,
+                    local_blueprint_from_draft,
                     validate_character_combination,
                 )
 
                 conflicts = validate_character_combination(selected)
                 if conflicts:
                     raise ValueError("；".join(conflicts))
+                blueprint = local_blueprint_from_draft(selected)
                 updates["input"] = selected.model_dump(mode="json")
-                updates["profile"] = local_profile_from_draft(selected)
+                updates["blueprint"] = blueprint
+                updates["profile"] = compile_blueprint_profile(selected, blueprint)
                 updates["generation_mode"] = "local_template"
                 updates["model_call_count"] = 0
+                updates["rewrite_call_count"] = 0
+                updates["rewrite_history"] = []
                 updates["warnings"] = []
             if "profile" in payload:
                 updates["profile"] = payload["profile"]
@@ -1013,10 +1021,23 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    @app.post("/api/v1/character-drafts/{draft_id}/rewrite")
+    async def rewrite_character_draft(draft_id: str, payload: CharacterRewriteInput):
+        try:
+            return await rewrite_draft_blocks_once(
+                container.characters,
+                draft_id,
+                payload,
+                llm=container.conversation.dependencies.llm,
+                settings=settings,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.post("/api/v1/character-drafts/{draft_id}/avatar")
-    async def upload_character_draft_avatar(
-        draft_id: str, file: Annotated[UploadFile, File()]
-    ):
+    async def upload_character_draft_avatar(draft_id: str, file: Annotated[UploadFile, File()]):
         try:
             container.characters.get_draft(draft_id)
             data = await file.read()
@@ -1193,9 +1214,7 @@ def create_app(
         character_id = str(session.get("character_id") or "")
         if character_id:
             try:
-                session["character"] = _character_summary(
-                    container.characters.get(character_id)
-                )
+                session["character"] = _character_summary(container.characters.get(character_id))
             except KeyError:
                 session["character_missing"] = True
         return session
@@ -1366,9 +1385,7 @@ def create_app(
             raise HTTPException(status_code=422, detail="confirmation must be REBUILD")
         return {
             "success": True,
-            **container.memory_service.rebuild(
-                dry_run=payload.dry_run, character_id=character_id
-            ),
+            **container.memory_service.rebuild(dry_run=payload.dry_run, character_id=character_id),
         }
 
     @app.get("/api/v1/chat/chunks")
@@ -1430,9 +1447,7 @@ def create_app(
         return {"success": True}
 
     @app.get("/api/v1/profiles/{name}")
-    async def get_profile(
-        name: str, character_id: str = Query(default="", max_length=64)
-    ):
+    async def get_profile(name: str, character_id: str = Query(default="", max_length=64)):
         return container.profiles.load_document(_profile_key(name), character_id)
 
     @app.put("/api/v1/profiles/{name}")
@@ -1445,12 +1460,8 @@ def create_app(
             with container.database.transaction(
                 operation="user_direct_profile_edit", details={"profile": name}
             ):
-                value = container.profiles.save_document(
-                    _profile_key(name), payload, character_id
-                )
-                rebuilt = container.memory_service.rebuild(
-                    dry_run=False, character_id=character_id
-                )
+                value = container.profiles.save_document(_profile_key(name), payload, character_id)
+                rebuilt = container.memory_service.rebuild(dry_run=False, character_id=character_id)
                 container.audit.record(
                     "user_direct_profile_edit",
                     {
@@ -1501,9 +1512,7 @@ def create_app(
                         payload.version_id,
                         expected_revision=payload.expected_revision,
                     )
-                rebuilt = container.memory_service.rebuild(
-                    dry_run=False, character_id=character_id
-                )
+                rebuilt = container.memory_service.rebuild(dry_run=False, character_id=character_id)
                 container.audit.record(
                     "user_direct_profile_restore",
                     {
@@ -1519,9 +1528,7 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     @app.get("/api/v1/profiles/{name}/card")
-    async def profile_card(
-        name: str, character_id: str = Query(default="", max_length=64)
-    ):
+    async def profile_card(name: str, character_id: str = Query(default="", max_length=64)):
         document = container.profiles.load_document(_profile_key(name), character_id)
         return {
             "name": name,
@@ -1810,9 +1817,7 @@ def create_app(
                 stream_state["playing"] = playing
                 backoff_level = max(0, min(2, int(control.get("barge_backoff_level") or 0)))
                 minimum_key = (
-                    "asr_barge_in_min_speech_ms"
-                    if playing
-                    else "asr_listening_min_speech_ms"
+                    "asr_barge_in_min_speech_ms" if playing else "asr_listening_min_speech_ms"
                 )
                 noise_floor = stream_state.get("noise_floor_db")
                 control["energy_threshold_db"] = _voice_energy_threshold_db(
@@ -1932,18 +1937,13 @@ def create_app(
         audio_config = container.config.snapshot(redact=False)["audio"]
         options = ASRSessionOptions(
             silence_ms=int(audio_config["asr_silence_ms"]),
-            energy_threshold=10
-            ** (float(audio_config["asr_listening_energy_threshold_db"]) / 20),
+            energy_threshold=10 ** (float(audio_config["asr_listening_energy_threshold_db"]) / 20),
             min_speech_ms=int(audio_config["asr_listening_min_speech_ms"]),
             candidate_release_ms=int(audio_config["asr_candidate_release_ms"]),
             auto_send=bool(audio_config["asr_auto_send"]),
-            deferred_during_playback=bool(
-                audio_config.get("asr_deferred_during_playback", True)
-            ),
+            deferred_during_playback=bool(audio_config.get("asr_deferred_during_playback", True)),
             dynamic_endpointing=bool(audio_config.get("asr_dynamic_endpointing", True)),
-            final_refinement_enabled=bool(
-                audio_config.get("asr_final_refinement_enabled", True)
-            ),
+            final_refinement_enabled=bool(audio_config.get("asr_final_refinement_enabled", True)),
             final_refinement_timeout_ms=int(
                 audio_config.get("asr_final_refinement_timeout_ms", 1400)
             ),
@@ -1988,9 +1988,7 @@ def create_app(
                             else "asr_listening_min_speech_ms"
                         )
                         noise_floor = control.get("noise_floor_db")
-                        backoff_level = max(
-                            0, min(2, int(control.get("barge_backoff_level") or 0))
-                        )
+                        backoff_level = max(0, min(2, int(control.get("barge_backoff_level") or 0)))
                         session.configure_playback(
                             playing=playing,
                             energy_threshold=10
@@ -2011,9 +2009,7 @@ def create_app(
                             ),
                             min_speech_ms=int(audio_config[minimum_key])
                             + (120 * backoff_level if playing else 0),
-                            candidate_release_ms=int(
-                                audio_config["asr_candidate_release_ms"]
-                            ),
+                            candidate_release_ms=int(audio_config["asr_candidate_release_ms"]),
                             playback_text=str(control.get("playback_text") or ""),
                         )
                     elif action == "input_gate":

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections import deque
 from collections.abc import AsyncIterator
@@ -42,9 +43,14 @@ from mindspace_graph.product_config import ProductConfigStore
 from mindspace_graph.product_database import ProductDatabase
 from mindspace_graph.prompt_inspection import PromptInspectionStore
 from mindspace_graph.role_audit import RoleAuditService
+from mindspace_graph.roleplay import effective_roleplay_temperature
 from mindspace_graph.settings import AppSettings
 from mindspace_graph.shared_chapters import SharedChapterService
 
+RETRIEVAL_INDEX_ONLY_ROUNDS = 15
+_EXPLICIT_RECALL = re.compile(
+    r"(?:查(?:一下)?知识库|检索知识库|回忆(?:一下)?|你还记得|帮我想起|找回以前)"
+)
 NODE_LABELS = {
     "validate_request": "校验请求",
     "load_context": "加载会话与档案",
@@ -273,17 +279,30 @@ class ConversationService:
             api_key=self.settings.llm_api_key,
             base_url=self.settings.llm_base_url,
             model=self.settings.llm_model,
-            temperature=request.api.temperature,
+            temperature=effective_roleplay_temperature(
+                request,
+                self.dependencies.sessions.load_all(request.session_id),
+            ),
             max_tokens=request.api.max_tokens,
         )
         retrieval_key = (request.session_id, character_id)
-        retrieval_ready = (
-            not request.retrieval.rag_enabled or retrieval_key in self._retrieval_ready
+        explicit_recall = bool(_EXPLICIT_RECALL.search(request.message))
+        default_retrieval_open = request.round > RETRIEVAL_INDEX_ONLY_ROUNDS
+        index_ready = retrieval_key in self._retrieval_ready
+        retrieval_ready = bool(
+            not request.retrieval.rag_enabled
+            or (index_ready and (default_retrieval_open or explicit_recall))
         )
+        if retrieval_ready:
+            deferred_reason = ""
+        elif request.round <= RETRIEVAL_INDEX_ONLY_ROUNDS:
+            deferred_reason = "index_build_only_first_15_rounds"
+        else:
+            deferred_reason = "index_warmup_pending"
         retrieval = request.retrieval.model_copy(
             update={
                 "ready": retrieval_ready,
-                "deferred_reason": "" if retrieval_ready else "index_warmup_pending",
+                "deferred_reason": deferred_reason,
             }
         )
         return request.model_copy(

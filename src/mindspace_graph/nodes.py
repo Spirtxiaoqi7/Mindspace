@@ -23,7 +23,12 @@ from mindspace_graph.ports import Dependencies
 from mindspace_graph.profile_bootstrap import evaluate_profile_bootstrap
 from mindspace_graph.prompting import build_prompt, resolve_initiative_request
 from mindspace_graph.protocol import IncrementalResponseParser, ProtocolParser
-from mindspace_graph.roleplay import allow_raw_chat_retrieval, normalize_voice_response
+from mindspace_graph.roleplay import (
+    allow_raw_chat_retrieval,
+    normalize_presentation_response,
+    normalize_voice_response,
+    resolve_presentation_mode,
+)
 from mindspace_graph.state import TurnState
 from mindspace_graph.voice_render import VoiceCueStream, extract_voice_cue, normalize_voice_cue
 
@@ -203,13 +208,14 @@ class NodeFactory:
             chunks = self.deps.retriever.search_chat(
                 query,
                 request.session_id,
-                settings.chat_k * settings.candidate_multiplier,
+                (settings.chat_k + settings.history_k) * settings.candidate_multiplier,
                 character_id=request.character_id,
                 settings=settings,
                 user_name=request.user_name,
                 character_name=request.character_name,
                 messages=state.get("recent_history", []),
                 include_raw_chat=allow_raw_chat_retrieval(request),
+                adult_mode=request.adult_mode,
             )
             chunks = [item for item in chunks if item.score >= settings.similarity_threshold]
             if self.deps.activities is not None:
@@ -231,8 +237,20 @@ class NodeFactory:
         self._check_cancelled(state)
         combined = state.get("knowledge_chunks", []) + state.get("chat_chunks", [])
         request = state["request"]
-        limit = request.retrieval.knowledge_k + request.retrieval.chat_k
-        ranked = rank_with_temporal_decay(combined, request, limit=limit)
+        quotas = {
+            "knowledge": request.retrieval.knowledge_k,
+            "chat": request.retrieval.chat_k,
+            "memory": request.retrieval.history_k,
+        }
+        ranked: list[Any] = []
+        # Source quotas are upper bounds, not a demand to fill the prompt with
+        # irrelevant material.  The order is also the prompt order: external
+        # reference, raw dialogue evidence, then concise structured history.
+        for source in ("knowledge", "chat", "memory"):
+            source_chunks = [item for item in combined if item.source == source]
+            ranked.extend(
+                rank_with_temporal_decay(source_chunks, request, limit=quotas[source])
+            )
         self.deps.retriever.record_retrieval(combined, ranked, request.round)
         writer(
             {
@@ -240,6 +258,11 @@ class NodeFactory:
                 "data": {
                     "knowledge": len(state.get("knowledge_chunks", [])),
                     "chat": len(state.get("chat_chunks", [])),
+                    "selected_counts": {
+                        "knowledge": sum(item.source == "knowledge" for item in ranked),
+                        "dialogue": sum(item.source == "chat" for item in ranked),
+                        "history": sum(item.source == "memory" for item in ranked),
+                    },
                     "ranked": [item.model_dump(mode="json") for item in ranked],
                     "ready": request.retrieval.ready,
                     "deferred_reason": request.retrieval.deferred_reason,
@@ -782,10 +805,23 @@ class NodeFactory:
         if visible_response:
             update["fallback_response"] = visible_response
         if protocol is not None:
-            normalized_response = normalize_voice_response(protocol.response, request)
+            normalized_response = normalize_presentation_response(
+                protocol.response,
+                request,
+                state.get("recent_history", []),
+            )
             if normalized_response != protocol.response:
                 protocol = protocol.model_copy(update={"response": normalized_response})
                 update["fallback_response"] = normalized_response
+                writer(
+                    {
+                        "event": "response.replace",
+                        "data": {
+                            "content": normalized_response,
+                            "reason": "presentation_boundary",
+                        },
+                    }
+                )
             guarded_response, capability_violations = enforce_capability_claims(
                 protocol.response,
                 plan=state.get("capability_plan"),
@@ -959,6 +995,9 @@ class NodeFactory:
                 status="success",
                 reply=reply,
                 assistant_message_id=assistant_id,
+                presentation_mode=resolve_presentation_mode(
+                    request, state.get("recent_history", [])
+                ),
                 trace=[*state.get("trace", []), "persist_turn_idempotent"],
                 llm_call_count=state.get("llm_call_count", 0),
                 model_usage=state.get("model_usage", []),
@@ -1089,13 +1128,15 @@ class NodeFactory:
             status="success",
             reply=protocol.response,
             assistant_message_id=persisted["assistant_message_id"],
+            presentation_mode=resolve_presentation_mode(request, state.get("recent_history", [])),
             writeback_applied=receipt.applied,
             retrieval_counts={
                 "knowledge": sum(
                     item.source == "knowledge" for item in state.get("ranked_context", [])
                 ),
-                "chat": sum(
-                    item.source in {"chat", "memory"} for item in state.get("ranked_context", [])
+                "chat": sum(item.source == "chat" for item in state.get("ranked_context", [])),
+                "history": sum(
+                    item.source == "memory" for item in state.get("ranked_context", [])
                 ),
             },
             errors=validation.errors,
