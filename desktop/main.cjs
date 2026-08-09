@@ -42,6 +42,14 @@ const {
   resolveWorkspaceRoot,
 } = require("./bootstrap-core.cjs");
 
+// Chromium GPU composition has caused a Windows LiveKernelEvent 141 on the
+// supported desktop path. Keep CUDA model workers independent, but render the
+// Electron shell in software unless a developer explicitly opts back in.
+const softwareDesktopRendering = process.env.MINDSPACE_ENABLE_HARDWARE_ACCELERATION !== "1";
+if (softwareDesktopRendering) {
+  app.disableHardwareAcceleration();
+}
+
 function resolvePowerShell() {
   const privateMarker = layout && readJson(path.join(layout.state, "components", "powershell.json"));
   const candidates = [
@@ -89,6 +97,49 @@ let qwenPreflightCache = { expiresAt: 0, value: { eligible: false, code: "CHECKI
 let qwenPreflightTask = null;
 let ttsTransition = { state: "idle", target: "", error: "", startedAt: "" };
 let ttsTransitionTask = null;
+
+function recordStabilityEvent(kind, details = {}) {
+  try {
+    const target = path.join(app.getPath("userData"), "mindspace-stability.log");
+    fs.appendFileSync(target, `${JSON.stringify({
+      timestamp: new Date().toISOString(),
+      kind,
+      ...details,
+    })}\n`, "utf8");
+  } catch {
+    // A diagnostic write must never become a second crash source.
+  }
+}
+
+function showStabilityFallback(title, detail) {
+  launcherWindow?.show();
+  launcherWindow?.focus();
+  const options = {
+    type: "error",
+    title,
+    message: "聊天窗口已安全关闭，服务控制中心仍可使用",
+    detail,
+    buttons: ["知道了"],
+    noLink: true,
+  };
+  const task = launcherWindow && !launcherWindow.isDestroyed()
+    ? dialog.showMessageBox(launcherWindow, options)
+    : dialog.showMessageBox(options);
+  void task.catch(() => undefined);
+}
+
+function recoverProductWindow(kind, details = {}) {
+  recordStabilityEvent(kind, details);
+  const failedWindow = productWindow;
+  productWindow = undefined;
+  setImmediate(() => {
+    if (failedWindow && !failedWindow.isDestroyed()) failedWindow.destroy();
+    showStabilityFallback(
+      "Mindspace 聊天窗口已恢复",
+      "检测到界面渲染异常。Mindspace 已停止该窗口，避免异常继续影响桌面；重新进入聊天会创建干净窗口。",
+    );
+  });
+}
 let voiceBackgroundTask = null;
 let voiceBackgroundState = { state: "idle", currentId: "", currentName: "", message: "", error: "" };
 let voiceBackgroundGeneration = 0;
@@ -2053,9 +2104,16 @@ async function openProductWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      backgroundThrottling: false,
+      backgroundThrottling: true,
     },
   });
+  const currentProductWindow = productWindow;
+  let productReady = false;
+  const loadTimeout = setTimeout(() => {
+    if (productReady || currentProductWindow.isDestroyed()) return;
+    recoverProductWindow("product-load-timeout", { timeoutMs: 15_000 });
+  }, 15_000);
+  loadTimeout.unref();
   productWindow.setMenuBarVisibility(false);
   // The product is served only by the loopback Core. Resolve microphone checks
   // synchronously for that exact origin so Chromium never stalls a trusted
@@ -2066,11 +2124,44 @@ async function openProductWindow() {
     return { action: "deny" };
   });
   productWindow.loadURL("http://127.0.0.1:8765/");
+  productWindow.webContents.on("did-finish-load", () => {
+    if (!softwareDesktopRendering) return;
+    void currentProductWindow.webContents.insertCSS(`
+      * { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+      .voice-background { filter: none !important; opacity: .35 !important; }
+    `).catch((error) => {
+      recordStabilityEvent("software-rendering-css-failed", {
+        error: String(error?.message || error),
+      });
+    });
+  });
   productWindow.once("ready-to-show", () => {
+    productReady = true;
+    clearTimeout(loadTimeout);
     productWindow.show();
     launcherWindow?.hide();
   });
-  productWindow.on("closed", () => { productWindow = undefined; });
+  productWindow.webContents.on(
+    "did-fail-load",
+    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame || currentProductWindow.isDestroyed()) return;
+      recoverProductWindow("product-load-failed", {
+        errorCode,
+        errorDescription,
+        url: validatedURL,
+      });
+    },
+  );
+  productWindow.on("unresponsive", () => {
+    recordStabilityEvent("product-window-unresponsive");
+  });
+  productWindow.on("responsive", () => {
+    recordStabilityEvent("product-window-responsive");
+  });
+  productWindow.on("closed", () => {
+    clearTimeout(loadTimeout);
+    if (productWindow === currentProductWindow) productWindow = undefined;
+  });
   return { ok: true };
 }
 
@@ -2298,7 +2389,38 @@ ipcMain.handle("runtime:proxy", async (_, { proxy = "" } = {}) => {
 const singleInstance = captureArg || captureCompanionArg || captureCompanionBlankArg ? true : app.requestSingleInstanceLock();
 if (!singleInstance) app.quit();
 if (!captureArg) app.on("second-instance", () => { launcherWindow?.show(); launcherWindow?.focus(); });
+app.on("render-process-gone", (_event, webContents, details) => {
+  if (quitting || details.reason === "clean-exit") return;
+  const productGone = Boolean(
+    productWindow
+    && !productWindow.isDestroyed()
+    && productWindow.webContents.id === webContents.id,
+  );
+  recordStabilityEvent("render-process-gone", {
+    product: productGone,
+    reason: details.reason,
+    exitCode: details.exitCode,
+  });
+  if (productGone) recoverProductWindow("product-render-process-gone", details);
+});
+app.on("child-process-gone", (_event, details) => {
+  if (quitting || details.reason === "clean-exit") return;
+  recordStabilityEvent("child-process-gone", {
+    type: details.type,
+    reason: details.reason,
+    exitCode: details.exitCode,
+    serviceName: details.serviceName || "",
+    name: details.name || "",
+  });
+  if (details.type === "GPU" && productWindow && !productWindow.isDestroyed()) {
+    recoverProductWindow("gpu-process-gone", details);
+  }
+});
 app.whenReady().then(async () => {
+  recordStabilityEvent("desktop-ready", {
+    hardwareAcceleration: app.isHardwareAccelerationEnabled(),
+    electron: process.versions.electron,
+  });
   if (captureCompanionArg || captureCompanionBlankArg) {
     const outputArgument = captureCompanionArg || captureCompanionBlankArg;
     const outputPrefix = captureCompanionArg ? "--capture-companion=" : "--capture-companion-blank=";

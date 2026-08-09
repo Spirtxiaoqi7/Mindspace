@@ -25,6 +25,8 @@ current_scene 只记录用户原话明确确认的地点、时间和正在进行
 严格控制输出体积：dialogue_summary 不超过120个中文字符；current_scene 每项不超过30字；
 events 最多6项，open_threads/commitments/relationship_deltas 各最多4项，
 confirmed_facts 最多6项，temporary_cues 最多3项；每个 text 不超过80个中文字符。
+成人段可额外输出 adult_facts：只写已经发生且以后可能被追问的事实结果，禁止文学化复述；
+该字段由服务端按成人模式隔离，不得把成人偏好推断成人物档案。
 只保留对后续连续性有用的增量，不逐轮复述，不输出空占位项。
 只输出一个 JSON 对象，不要 Markdown，不要标签。"""
 
@@ -44,6 +46,7 @@ def build_compaction_messages(payload: dict[str, Any]) -> list[dict[str, str]]:
         "commitments": [{"text": "80字内；最多4项", "evidence_ids": ["消息ID"]}],
         "relationship_deltas": [{"text": "80字内；最多4项", "evidence_ids": ["消息ID"]}],
         "confirmed_facts": [{"text": "80字内；最多6项", "evidence_ids": ["消息ID"]}],
+        "adult_facts": [{"text": "80字内；最多6项；仅ADULT段", "evidence_ids": ["消息ID"]}],
         "temporary_cues": [{"text": "80字内；最多3项", "evidence_ids": ["消息ID"]}],
         "lane": "DAILY|ROMANCE|ADULT",
     }
@@ -69,6 +72,7 @@ def _evidenced_items(
     required_role: str,
     limit: int,
     lane: str,
+    allow_adult_detail: bool = False,
 ) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
@@ -94,7 +98,7 @@ def _evidenced_items(
         # The shared continuity packet is visible again when adult mode is off.
         # Explicit anatomy/actions therefore never enter it, even if a provider
         # mislabels a mixed segment as DAILY or ROMANCE.
-        if _ADULT_DETAIL.search(text):
+        if _ADULT_DETAIL.search(text) and not allow_adult_detail:
             continue
         result.append(
             {
@@ -214,6 +218,7 @@ def parse_compaction_output(raw: str, payload: dict[str, Any]) -> dict[str, Any]
         "relationship_deltas": 12,
         "confirmed_facts": 20,
         "temporary_cues": 8,
+        "adult_facts": 24,
     }
     input_keys = {
         "recent_events": "events",
@@ -222,6 +227,7 @@ def parse_compaction_output(raw: str, payload: dict[str, Any]) -> dict[str, Any]
         "relationship_deltas": "relationship_deltas",
         "confirmed_facts": "confirmed_facts",
         "temporary_cues": "temporary_cues",
+        "adult_facts": "adult_facts",
     }
     for output_key, input_key in input_keys.items():
         delta_items = _evidenced_items(
@@ -231,7 +237,10 @@ def parse_compaction_output(raw: str, payload: dict[str, Any]) -> dict[str, Any]
             required_role="assistant" if output_key == "commitments" else "user",
             limit=limits[output_key],
             lane=lane,
+            allow_adult_detail=bool(output_key == "adult_facts" and lane == "ADULT"),
         )
+        if output_key == "adult_facts" and lane != "ADULT":
+            delta_items = []
         result[output_key] = _merge_items(
             previous.get(output_key), delta_items, limit=limits[output_key]
         )

@@ -325,14 +325,18 @@ class JsonProfileRepository:
             user_profile=user,
             ai_profile=ai,
             runtime_state=runtime,
+            character_memory={"preferences": [], "tasks": []},
             revisions={
                 "user_profile": int(user.get("revision", 0)),
                 "ai_profile": int(ai.get("revision", 0)),
                 "runtime_state": int(runtime.get("revision", 0)),
+                "character_memory": 0,
             },
         )
 
     def load_document(self, key: str, character_id: str = "") -> dict[str, Any]:
+        if character_id and self.characters is not None and key == "character_memory":
+            return self.characters.memory_document(character_id)
         if key not in TARGET_FILES:
             raise KeyError(f"unknown profile document: {key}")
         if (
@@ -340,13 +344,19 @@ class JsonProfileRepository:
             and self.characters is not None
             and key in {"ai_profile", "runtime_state"}
         ):
-            return deepcopy(self.characters.get(character_id)[key])
+            record = self.characters.get(character_id)
+            if isinstance(record.get("card"), dict):
+                bundle = self.characters.profile_bundle(character_id, self._load("user_profile"))
+                return deepcopy(bundle.ai_profile if key == "ai_profile" else bundle.runtime_state)
+            return deepcopy(record[key])
         with self._lock:
             return deepcopy(self._load(key))
 
     def save_document(
         self, key: str, document: dict[str, Any], character_id: str = ""
     ) -> dict[str, Any]:
+        if character_id and self.characters is not None and key == "character_memory":
+            return self.characters.save_memory_document(character_id, document)
         if key not in TARGET_FILES:
             raise KeyError(f"unknown profile document: {key}")
         if not isinstance(document, dict):
@@ -448,7 +458,7 @@ class JsonProfileRepository:
             character_patches = [
                 patch
                 for patch in plan.patches
-                if patch.target in {"ai_profile", "runtime_state"}
+                if patch.target in {"ai_profile", "runtime_state", "character_memory"}
             ]
             if character_patches:
                 character_receipt = self.characters.apply_profile_plan(
@@ -630,6 +640,7 @@ class JsonSessionRepository:
         *,
         character_id: str,
         mode: str,
+        role_state: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create or authoritatively bind an empty session to one character."""
 
@@ -645,7 +656,10 @@ class JsonSessionRepository:
                 raise ValueError("session is already bound to another character")
             if exists and session.get("messages") and not bound:
                 raise ValueError("legacy session must be migrated before it can be used")
-            changed = not exists or not bound or str(session.get("mode") or "") != mode
+            should_snapshot = bool(role_state) and (
+                not isinstance(session.get("role_state"), dict) or not session.get("messages")
+            )
+            changed = not exists or not bound or str(session.get("mode") or "") != mode or should_snapshot
             if changed:
                 now = _now()
                 session["session_id"] = session_id
@@ -655,6 +669,8 @@ class JsonSessionRepository:
                 session.setdefault("created_at", now)
                 session["updated_at"] = str(session.get("updated_at") or now)
                 session.setdefault("messages", [])
+                if should_snapshot:
+                    session["role_state"] = deepcopy(role_state)
                 self._store_session(session_id, session)
             return deepcopy(session)
 

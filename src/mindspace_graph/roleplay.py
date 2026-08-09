@@ -169,6 +169,26 @@ def effective_roleplay_temperature(
     return min(requested, 0.45)
 
 
+def effective_roleplay_max_tokens(
+    request: ChatRequest,
+    history: list[dict[str, Any]],
+) -> int:
+    """Bound ordinary replies so smaller models do not default to narration."""
+
+    del history
+    requested = max(64, int(request.api.max_tokens))
+    if request.adult_mode:
+        return min(requested, 700)
+    message = re.sub(r"\s+", "", request.message)
+    if re.search(r"(?:只回答|一句话|称呼|提醒.*(?:什么|几点)|什么.*提醒)", message):
+        return min(requested, 160)
+    if len(message) <= 12:
+        return min(requested, 200)
+    if resolve_presentation_mode(request, []) == "scene":
+        return min(requested, 360)
+    return min(requested, 420)
+
+
 def project_history_for_presentation(
     messages: list[dict[str, Any]],
     mode: str,

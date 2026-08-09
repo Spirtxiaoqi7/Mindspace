@@ -26,6 +26,14 @@ from mindspace_graph.adapters.file_storage import (
     _atomic_json,
     _read_pointer,
 )
+from mindspace_graph.character_card import (
+    card_summary,
+    empty_memory,
+    legacy_profile_to_card,
+    normalize_card,
+    normalize_memory,
+    prompt_profile_from_card,
+)
 from mindspace_graph.fate_forge import (
     fate_block_additions,
     fate_generation_packet,
@@ -35,8 +43,9 @@ from mindspace_graph.models import ApiConfig, JsonUpdatePlan, JsonWriteReceipt, 
 from mindspace_graph.product_database import ProductDatabase
 from mindspace_graph.profile_schema import DEFAULT_PROFILE_SCHEMA
 
-CHARACTER_SCHEMA_VERSION = "1.0.0"
+CHARACTER_SCHEMA_VERSION = "2.0.0"
 MIGRATION_KEY = "migration:characters:0.6.0"
+V2_MIGRATION_KEY = "migration:characters:v2-card"
 LEGACY_CHARACTER_ID = str(uuid5(NAMESPACE_URL, "mindspace:legacy-character"))
 SAFE_ID = re.compile(r"^[0-9a-fA-F-]{36}$")
 SOURCES = {"draw", "custom", "imported", "migrated"}
@@ -870,6 +879,7 @@ class CharacterRepository:
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / "drafts").mkdir(parents=True, exist_ok=True)
         self._migrate_legacy()
+        self._migrate_v2_records()
 
     @staticmethod
     def _key(character_id: str) -> str:
@@ -1019,6 +1029,37 @@ class CharacterRepository:
             shutil.rmtree(staging, ignore_errors=True)
             raise
 
+    def _migrate_v2_records(self) -> None:
+        """Compact existing character records once; keep revision snapshots recoverable."""
+
+        if self.database.has_document(V2_MIGRATION_KEY):
+            return
+        with self.database.transaction(operation="migrate_characters_to_v2"):
+            if self.database.has_document(V2_MIGRATION_KEY):
+                return
+            migrated = 0
+            for _key, raw in self.database.list_documents("character:"):
+                if not isinstance(raw, dict) or isinstance(raw.get("card"), dict):
+                    continue
+                self._backup(raw)
+                profile = raw.get("ai_profile") if isinstance(raw.get("ai_profile"), dict) else {}
+                compact = {
+                    key: deepcopy(raw.get(key))
+                    for key in (
+                        "character_id", "source", "status", "user_alias", "avatar",
+                        "created_at", "updated_at", "last_used_at",
+                    )
+                }
+                compact["revision"] = int(raw.get("revision", 0)) + 1
+                compact["card"] = legacy_profile_to_card(profile)
+                compact["memory"] = empty_memory()
+                self._store(self._validate_record(compact))
+                migrated += 1
+            self.database.put_document(
+                V2_MIGRATION_KEY,
+                {"schema_version": "1.0.0", "completed_at": _now(), "migrated": migrated},
+            )
+
     def _validate_record(
         self, raw: dict[str, Any], *, current: dict[str, Any] | None = None
     ) -> dict[str, Any]:
@@ -1032,6 +1073,25 @@ class CharacterRepository:
             raise ValueError("invalid character source")
         if status not in STATUSES:
             raise ValueError("invalid character status")
+        if isinstance(record.get("card"), dict):
+            card = normalize_card(record["card"])
+            summary = card_summary(card)
+            record.update(
+                {
+                    "schema_version": CHARACTER_SCHEMA_VERSION,
+                    "display_name": summary["display_name"],
+                    "gender": summary["gender"],
+                    "user_alias": str(record.get("user_alias") or "")[:80],
+                    "relationship_label": str(record.get("relationship_label") or summary["relationship_label"])[:100],
+                    "card": card,
+                    "memory": normalize_memory(record.get("memory")),
+                    "avatar": deepcopy(record.get("avatar") or {}),
+                }
+            )
+            record.pop("ai_profile", None)
+            record.pop("runtime_state", None)
+            record.pop("system_prompt", None)
+            return record
         display_name = re.sub(r"\s+", " ", str(record.get("display_name") or "")).strip()
         if not display_name or len(display_name) > 80:
             raise ValueError("character display_name must be 1-80 characters")
@@ -1096,8 +1156,9 @@ class CharacterRepository:
     def create(
         self,
         *,
-        ai_profile: dict[str, Any],
         source: str,
+        card: dict[str, Any] | None = None,
+        ai_profile: dict[str, Any] | None = None,
         runtime_state: dict[str, Any] | None = None,
         avatar: dict[str, Any] | None = None,
         user_alias: str = "",
@@ -1106,6 +1167,31 @@ class CharacterRepository:
     ) -> dict[str, Any]:
         now = _now()
         character_id = str(uuid4())
+        if card is not None:
+            record = self._validate_record(
+                {
+                    "character_id": character_id,
+                    "schema_version": CHARACTER_SCHEMA_VERSION,
+                    "revision": 1,
+                    "source": source,
+                    "status": "active",
+                    "user_alias": user_alias,
+                    "relationship_label": relationship_label,
+                    "card": card,
+                    "memory": empty_memory(),
+                    "avatar": avatar
+                    or {
+                        "src": "/assets/avatar-ai-default.webp",
+                        "aspect": "2 / 3", "scale": 1.0, "x": 0, "y": 0,
+                    },
+                    "created_at": now, "updated_at": now, "last_used_at": now,
+                }
+            )
+            with self.database.transaction(operation="create_character_v2"):
+                self._store(record)
+            return deepcopy(record)
+        if not isinstance(ai_profile, dict):
+            raise ValueError("card is required for new characters")
         profile = DEFAULT_PROFILE_SCHEMA.validate_document("ai_profile", ai_profile)
         runtime = DEFAULT_PROFILE_SCHEMA.validate_document(
             "runtime_state", runtime_state or deepcopy(DEFAULT_PROFILES["runtime_state"])
@@ -1145,6 +1231,20 @@ class CharacterRepository:
     def update(self, character_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         with self.database.transaction(operation="update_character"):
             current = self.get(character_id)
+            if isinstance(current.get("card"), dict):
+                expected = payload.get("revision")
+                if expected is not None and int(expected) != int(current.get("revision", 0)):
+                    raise ValueError("stale character revision")
+                candidate = deepcopy(current)
+                for key in ("card", "memory", "avatar", "status", "user_alias", "relationship_label"):
+                    if key in payload:
+                        candidate[key] = deepcopy(payload[key])
+                candidate["revision"] = int(current.get("revision", 0)) + 1
+                candidate["updated_at"] = _now()
+                candidate = self._validate_record(candidate)
+                self._backup(current)
+                self._store(candidate)
+                return deepcopy(candidate)
             expected = payload.get("revision")
             if expected is not None and int(expected) != int(current.get("revision", 0)):
                 raise ValueError("stale character revision")
@@ -1256,6 +1356,16 @@ class CharacterRepository:
 
     def clone(self, character_id: str) -> dict[str, Any]:
         current = self.get(character_id)
+        if isinstance(current.get("card"), dict):
+            card = deepcopy(current["card"])
+            card["data"]["name"] = f"{current['display_name']} 副本"
+            return self.create(
+                card=card,
+                source="draw" if current.get("source") == "draw" else "custom",
+                avatar=deepcopy(current.get("avatar") or {}),
+                user_alias=str(current.get("user_alias") or ""),
+                relationship_label=str(current.get("relationship_label") or ""),
+            )
         profile = deepcopy(current["ai_profile"])
         profile["identity"]["name"] = f"{current['display_name']} 副本"
         return self.create(
@@ -1270,6 +1380,20 @@ class CharacterRepository:
 
     def profile_bundle(self, character_id: str, user_profile: dict[str, Any]) -> ProfileBundle:
         record = self.get(character_id)
+        if isinstance(record.get("card"), dict):
+            card_profile = prompt_profile_from_card(record["card"])
+            return ProfileBundle(
+                user_profile=deepcopy(user_profile),
+                ai_profile=card_profile,
+                runtime_state=deepcopy(DEFAULT_PROFILES["runtime_state"]),
+                character_memory=deepcopy(record["memory"]),
+                revisions={
+                    "user_profile": int(user_profile.get("revision", 0)),
+                    "ai_profile": int(record.get("revision", 0)),
+                    "runtime_state": 0,
+                    "character_memory": int(record.get("revision", 0)),
+                },
+            )
         return ProfileBundle(
             user_profile=deepcopy(user_profile),
             ai_profile=deepcopy(record["ai_profile"]),
@@ -1283,6 +1407,22 @@ class CharacterRepository:
 
     def apply_profile_plan(self, character_id: str, plan: JsonUpdatePlan) -> JsonWriteReceipt:
         record = self.get(character_id)
+        if isinstance(record.get("card"), dict):
+            patches = [patch for patch in plan.patches if patch.target == "character_memory"]
+            if not patches:
+                return JsonWriteReceipt(turn_id=plan.turn_id)
+            candidate = deepcopy(record)
+            receipt_patches: list[dict[str, Any]] = []
+            for patch in patches:
+                before = None if patch.op == "add" and patch.path.endswith("/-") else _read_pointer(candidate["memory"], patch.path)
+                _apply_patch(candidate["memory"], patch.op, patch.path, deepcopy(patch.value))
+                receipt_patches.append({"target": patch.target, "op": patch.op, "path": patch.path, "before": before, "after": None if patch.op == "remove" else deepcopy(patch.value), "evidence_ids": patch.evidence_ids})
+            candidate["revision"] = int(record.get("revision", 0)) + 1
+            candidate["updated_at"] = _now()
+            candidate = self._validate_record(candidate)
+            self._backup(record)
+            self._store(candidate)
+            return JsonWriteReceipt(turn_id=plan.turn_id, applied=True, patches=receipt_patches)
         candidate = deepcopy(record)
         receipt_patches: list[dict[str, Any]] = []
         changed: set[str] = set()
@@ -1320,6 +1460,19 @@ class CharacterRepository:
         self._backup(record)
         self._store(candidate)
         return JsonWriteReceipt(turn_id=plan.turn_id, applied=True, patches=receipt_patches)
+
+    def memory_document(self, character_id: str) -> dict[str, Any]:
+        record = self.get(character_id)
+        if not isinstance(record.get("card"), dict):
+            return empty_memory()
+        return deepcopy(record["memory"])
+
+    def save_memory_document(self, character_id: str, memory: dict[str, Any]) -> dict[str, Any]:
+        record = self.get(character_id)
+        return self.update(
+            character_id,
+            {"revision": record["revision"], "memory": memory},
+        )["memory"]
 
     def touch(self, character_id: str) -> None:
         record = self.get(character_id)

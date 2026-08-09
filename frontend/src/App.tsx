@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { DrawWorkshop } from "./DestinyCanvas";
 import type { CSSProperties, ReactNode } from "react";
 import { consumeResumableEventStream, request } from "./api";
 import {
@@ -10,7 +11,6 @@ import {
 import {
   CharacterLibrary,
   CharacterPicker,
-  DrawWorkshop,
   ModeLobby,
 } from "./CharacterExperience";
 import type { AppView } from "./CharacterExperience";
@@ -46,6 +46,14 @@ import type {
   CharacterSummary,
   ConversationScene,
 } from "./types";
+
+function appViewFromHash(hash = window.location.hash): AppView {
+  if (hash.startsWith("#/characters")) return "characters";
+  if (hash.startsWith("#/fate")) return "draw";
+  if (hash.startsWith("#/modes")) return "modes";
+  if (/^#\/chat\/[^/]+\/scenes/.test(hash)) return "scenes";
+  return "chat";
+}
 
 type ModalName = "settings" | "knowledge" | "memory" | "profile" | "diagnostics" | "voice-entry" | null;
 
@@ -590,7 +598,8 @@ function PortraitAvatar({ role, avatars, label, onClick, className = "" }: {
   className?: string;
 }) {
   const entry = avatars[role];
-  return <button type="button" className={`portrait-avatar ${className}`} style={avatarStyle(entry)} onClick={onClick} title={`查看${label}人物卡`} aria-label={`查看${label}人物卡`}><img src={entry.src} alt={`${label}头像`} /></button>;
+  const fallback = DEFAULT_AVATARS[role].src;
+  return <button type="button" className={`portrait-avatar ${className}`} style={avatarStyle(entry)} onClick={onClick} title={`查看${label}人物卡`} aria-label={`查看${label}人物卡`}><img src={entry.src} alt={`${label}头像`} onError={(event) => { if (!event.currentTarget.src.endsWith(fallback)) event.currentTarget.src = fallback; }} /></button>;
 }
 
 function NsfwAdultConfirmation({ seconds, onCancel, onConfirm }: {
@@ -620,7 +629,7 @@ function App() {
   const [activeCharacterId, setActiveCharacterId] = useState("");
   const [activeActivitySessionId, setActiveActivitySessionId] = useState("");
   const [conversationScene, setConversationScene] = useState<ConversationScene | null>(null);
-  const [appView, setAppView] = useState<AppView>("modes");
+  const [appView, setAppView] = useState<AppView>(() => appViewFromHash());
   const [characterPickerOpen, setCharacterPickerOpen] = useState(false);
   const [characterPickerIntent, setCharacterPickerIntent] = useState<"resume" | "new">("resume");
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -1059,13 +1068,27 @@ function App() {
       const usableSessions = sessionResult.sessions.filter((item) =>
         !item.character_id || activeCharacterIds.has(item.character_id),
       );
+      const requestedView = appViewFromHash();
+      const routeSessionId = window.location.hash.match(/^#\/chat\/([^/]+)/)?.[1] || "";
       const rememberedId = localStorage.getItem("mindspace.session");
-      const preferred = usableSessions.find((item) => item.session_id === rememberedId)
+      const preferred = usableSessions.find((item) => item.session_id === routeSessionId)
+        || usableSessions.find((item) => item.session_id === rememberedId)
         || usableSessions[0];
       if (preferred) await openSession(preferred.session_id);
       else {
         setAppView("modes");
         window.history.replaceState(null, "", "#/modes");
+      }
+      if (requestedView !== "chat") {
+        setAppView(requestedView);
+        const restoredPath = requestedView === "modes"
+          ? "/modes"
+          : requestedView === "draw"
+            ? "/fate"
+            : requestedView === "characters"
+              ? "/characters"
+              : `/chat/${preferred?.session_id || sessionId}/scenes`;
+        window.history.replaceState(null, "", `#${restoredPath}`);
       }
       setInitialDataLoaded(true);
     }).catch((error: Error) => notify(error.message));
@@ -3198,24 +3221,7 @@ function App() {
   const pickerCharacters = characters;
   const interruptedSession = sessions.find((item) => Boolean((item as SessionSummary & { interrupted?: boolean }).interrupted));
 
-  const enterDrawMode = async () => {
-    const recent = characters.find((item) => item.status === "active");
-    if (!recent) {
-      navigate("draw");
-      return;
-    }
-    const createAnother = await styledConfirm({
-      title: "再遇见一位新角色？",
-      message: `你已经创建了“${recent.display_name}”。是否继续创建一位新角色？`,
-      detail: "选择取消会直接回到现有角色的最近对话。",
-      confirmLabel: "创建新角色",
-    });
-    if (createAnother) {
-      navigate("draw");
-      return;
-    }
-    await resumeCharacterSession(recent);
-  };
+  const enterDrawMode = () => navigate("draw");
 
   const enterCustomMode = () => {
     setCharacterPickerIntent("resume");
@@ -3251,8 +3257,9 @@ function App() {
     return <DrawWorkshop
       defaultUserName={userName}
       onBack={() => navigate("modes")}
-      onCommitted={(character) => {
-        void loadCharacters().then(() => startNewSessionForCharacter(character));
+      onCommitted={async (character) => {
+        await loadCharacters();
+        await startNewSessionForCharacter(character);
       }}
     />;
   }
@@ -3264,6 +3271,7 @@ function App() {
       onBack={() => navigate("modes")}
       onRefresh={async () => { await loadCharacters(); }}
       onChat={(character) => void resumeCharacterSession(character)}
+      onNewChat={(character) => void startNewSessionForCharacter(character)}
       onDraw={() => navigate("draw")}
     />;
   }
@@ -3281,12 +3289,12 @@ function App() {
 
   return <div className={`app-shell ${inspectorOpen ? "inspector-visible" : "inspector-hidden"}`}>
     <aside className={`sidebar ${sidebarOpen ? "mobile-open" : ""}`}>
-      <div className="brand-row"><button className="brand-mark" onClick={() => navigate("modes")} title="返回主页" aria-label="Mindspace 主页"><img src="/assets/mindspace-brand-icon.png" alt="" /></button><div><strong>Mindspace</strong><small>PRIVATE COMPANION</small></div><button className="icon-button mobile-only" onClick={() => setSidebarOpen(false)} aria-label="关闭会话栏">×</button></div>
+      <div className="brand-row"><button className="brand-mark" onClick={() => navigate("modes")} title="返回主页" aria-label="Mindspace 主页"><img src="/assets/assets/mindspace-brand-icon.png" alt="" /></button><div><strong>Mindspace</strong><small>PRIVATE COMPANION</small></div><button className="icon-button mobile-only" onClick={() => setSidebarOpen(false)} aria-label="关闭会话栏">×</button></div>
       <button className="new-chat home-entry" onClick={() => navigate("modes")}><span>⌂</span> 主页</button>
       <label className="search-box"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索会话" aria-label="搜索会话" /></label>
       <div className="session-heading"><span>最近会话</span><small>{filteredSessions.length}</small></div>
       <nav className="session-list">
-        {filteredSessions.length ? filteredSessions.map((item) => <div className={`session-item ${item.session_id === sessionId ? "active" : ""}`} key={item.session_id}><button className="session-open" onClick={() => void openSession(item.session_id)}>{item.character_avatar?.src ? <img className="session-avatar" src={item.character_avatar.src} alt="" /> : <span className="session-glyph">◌</span>}<span><strong>{item.character_name || item.title}</strong><small>{item.message_count} 条 · {formatTime(item.updated_at)}</small></span></button><button className="session-delete" aria-label={`删除会话：${item.character_name || item.title}`} title="删除会话" onClick={() => void deleteSession(item.session_id)}>×</button></div>) : <div className="empty-mini">没有匹配的会话</div>}
+        {filteredSessions.length ? filteredSessions.map((item) => <div className={`session-item ${item.session_id === sessionId ? "active" : ""}`} key={item.session_id}><button className="session-open" onClick={() => void openSession(item.session_id)}>{item.character_avatar?.src ? <img className="session-avatar" src={item.character_avatar.src} alt="" onError={(event) => { event.currentTarget.src = DEFAULT_AVATARS.assistant.src; }} /> : <span className="session-glyph">◌</span>}<span><strong>{item.character_name || item.title}</strong><small>{item.message_count} 条 · {formatTime(item.updated_at)}</small></span></button><button className="session-delete" aria-label={`删除会话：${item.character_name || item.title}`} title="删除会话" onClick={() => void deleteSession(item.session_id)}>×</button></div>) : <div className="empty-mini">没有匹配的会话</div>}
       </nav>
       <div className="sidebar-tools hub-navigation">
         <button className="sidebar-memory-entry" onClick={() => openModal("memory")}><span>◇</span><b>记忆</b><i>查看与修订长期记忆</i></button>
@@ -3783,9 +3791,9 @@ function SettingsDialog({ value, avatars, initialTab = "model", onClose, onDirty
           {activeGroup.id === "advanced" && <button onClick={onOpenDiagnostics}>系统诊断 ↗</button>}
         </div>
     {tab === "model" && <>
-      <h3>人物与状态档案</h3>
-      <p className="notice">这里同时管理人物设定和 API。完整结构化档案可单独编辑，保存后会继续沿用当前人物的长期关系与状态。</p>
-      <div className="persona-config-actions"><button type="button" onClick={() => onOpenProfile("user")}>编辑用户档案</button><button type="button" onClick={() => onOpenProfile("assistant")}>编辑 AI 人设档案</button></div>
+      <h3>用户资料</h3>
+      <p className="notice">角色设定已收缩为 V2 角色卡；请在角色库编辑基础资料，在记忆中心维护偏好与任务。</p>
+      <div className="persona-config-actions"><button type="button" onClick={() => onOpenProfile("user")}>编辑用户资料</button></div>
       <h3>语言模型 API</h3>
       <p className={`notice ${bool(draft.llm.credentials_configured) ? "" : "warning"}`}>{bool(draft.llm.credentials_configured) ? "真实 LLM API 已启用；保存后立即用于下一轮对话。" : "尚未配置 LLM API 密钥。未配置时会阻止发送，不会生成演示回复。"}</p>
       <div className="form-grid"><SelectField label="运行模式" value="openai" disabled options={[["openai", "真实 API（OpenAI 兼容）"]]} onChange={() => undefined} /><Field label="模型" value={draft.llm.model} onChange={(next) => update("llm", "model", next)} /><Field label="API 地址" value={draft.llm.base_url} onChange={(next) => update("llm", "base_url", next)} /><Field label="新 API 密钥（留空保持）" value={llmApiKey} type="password" placeholder={bool(draft.llm.credentials_configured) ? "已配置；输入新密钥可替换" : "输入 API 密钥"} onChange={(next) => setLlmApiKey(str(next))} /><Field label="温度" value={draft.llm.temperature} type="number" min={0} max={2} step={0.05} onChange={(next) => update("llm", "temperature", next)} /><Field label="最大 token" value={draft.llm.max_tokens} type="number" min={64} max={32768} onChange={(next) => update("llm", "max_tokens", next)} /></div>
@@ -3793,7 +3801,7 @@ function SettingsDialog({ value, avatars, initialTab = "model", onClose, onDirty
       <p className="notice">上线版本默认使用云端流式 TTS，不随安装包分发本地 CosyVoice 模型；本地链路仍可在“实时语音”中切换。</p>
       <div className="form-grid"><Field label="SiliconFlow API 地址" value={draft.audio.tts_siliconflow_base_url} onChange={(next) => update("audio", "tts_siliconflow_base_url", next)} /><Field label="新 TTS API 密钥（留空保持）" value={ttsApiKey} type="password" placeholder={bool(draft.audio.tts_siliconflow_credentials_configured) ? "已配置；输入新密钥可替换" : "输入 SiliconFlow API 密钥"} onChange={(next) => setTtsApiKey(str(next))} /><SelectField label="云端模型" value={draft.audio.tts_siliconflow_model} options={[["fnlp/MOSS-TTSD-v0.5", "MOSS-TTSD v0.5"], ["FunAudioLLM/CosyVoice2-0.5B", "CosyVoice2 0.5B"]]} onChange={(next) => setDraft((current) => ({ ...current, audio: { ...current.audio, tts_siliconflow_model: next, tts_siliconflow_voice: next === "fnlp/MOSS-TTSD-v0.5" ? "fnlp/MOSS-TTSD-v0.5:alex" : "FunAudioLLM/CosyVoice2-0.5B:alex" } }))} /><Field label="音色 ID" value={draft.audio.tts_siliconflow_voice} onChange={(next) => update("audio", "tts_siliconflow_voice", next)} /><SelectField label="PCM 采样率" value={draft.audio.tts_siliconflow_sample_rate} options={[["16000", "16 kHz"], ["24000", "24 kHz（推荐）"], ["32000", "32 kHz"], ["44100", "44.1 kHz"]]} onChange={(next) => update("audio", "tts_siliconflow_sample_rate", Number(next))} /><Field label="增益 dB" value={draft.audio.tts_siliconflow_gain} type="number" min={-10} max={10} step={0.5} onChange={(next) => update("audio", "tts_siliconflow_gain", next)} /></div>
       <button className="inline-action" disabled={Boolean(audioBusy)} onClick={() => void testApiConnections()}>{audioBusy === "api-check" ? "正在自检…" : "自检 LLM + TTS API"}</button>
-      <h3>人物设定</h3><div className="form-grid"><Field label="用户称呼" value={draft.persona.user_name} onChange={(next) => update("persona", "user_name", next)} /><Field label="角色名称" value={draft.persona.character_name} onChange={(next) => update("persona", "character_name", next)} /><Field label="用户设定" value={draft.persona.user_persona} type="textarea" onChange={(next) => update("persona", "user_persona", next)} /><Field label="角色系统提示" value={draft.persona.system_prompt} type="textarea" onChange={(next) => update("persona", "system_prompt", next)} /><Field label="回复篇幅偏好（留空则自然发挥）" value={draft.persona.reply_length_preference} type="textarea" placeholder="例如：日常简洁，重要话题可以详细；或每次尽量控制在两段内" onChange={(next) => update("persona", "reply_length_preference", next)} /></div>
+      <h3>用户设定</h3><div className="form-grid"><Field label="用户称呼" value={draft.persona.user_name} onChange={(next) => update("persona", "user_name", next)} /><Field label="用户设定" value={draft.persona.user_persona} type="textarea" onChange={(next) => update("persona", "user_persona", next)} /><Field label="回复篇幅偏好（留空则自然发挥）" value={draft.persona.reply_length_preference} type="textarea" placeholder="例如：日常简洁，重要话题可以详细；或每次尽量控制在两段内" onChange={(next) => update("persona", "reply_length_preference", next)} /></div>
     </>}
     {tab === "avatar" && <><h3>人物头像</h3><p className="notice">上传图片并调整裁剪。聊天、人物卡和实时语音会立即使用同一份头像配置。</p><div className="avatar-settings-grid">{(["user", "assistant"] as Role[]).map((role) => <AvatarEditor key={role} role={role} entry={avatarDraft[role]} busy={avatarBusy === role} onUpload={(file) => void uploadAvatar(role, file)} onChange={(entry) => setAvatarDraft((current) => ({ ...current, [role]: entry }))} />)}</div></>}
       {tab === "rhythm" && <><h3>时间感知</h3><p className="notice">文字与语音对话都会记录服务端 UTC 时间、当地时区以及与上次真实用户消息的时间差。时间只作为本轮运行事实，不会自行修改人物档案。</p><h3>连续陪伴</h3><div className="toggle-grid"><Field label="无限制回复" value={draft.interaction?.unlimited_reply_enabled} type="checkbox" onChange={(next) => update("interaction", "unlimited_reply_enabled", next)} /></div><div className="form-grid"><Field label="连续陪伴轮次上限" value={draft.interaction?.unlimited_reply_max_rounds} type="number" min={1} max={50} step={1} onChange={(next) => update("interaction", "unlimited_reply_max_rounds", next)} /></div><p className="notice">仅在实时语音中生效，衔接间隔固定为 10 秒。每次 TTS 完整朗读结束后，角色会自主规划并继续话题；默认你只想听，不会催促回复。你随时可以插话，插话会改变后续话题方向，但不会关闭连续陪伴或清零轮次。进度只显示在语音页面，到达上限后自动停止。</p><h3>沉默后主动续接</h3><div className="toggle-grid"><Field label="允许 AI 在沉默后自然续接" value={draft.interaction?.idle_continuation_enabled} type="checkbox" onChange={(next) => update("interaction", "idle_continuation_enabled", next)} /></div><div className="form-grid"><Field label="文字对话等待秒数" value={draft.interaction?.text_idle_seconds} type="number" min={10} max={3600} step={10} onChange={(next) => update("interaction", "text_idle_seconds", next)} /><Field label="语音通话等待秒数" value={draft.interaction?.voice_idle_seconds} type="number" min={5} max={600} step={5} onChange={(next) => update("interaction", "voice_idle_seconds", next)} /></div><p className="notice">普通主动续接每个静默阶段最多说一次；连续陪伴开启时，语音模式优先使用上面的多轮逻辑。</p></>}
@@ -3980,9 +3988,9 @@ function ProfileDialog({ characterId, initialName, onClose, onDirty, onOpenConne
 
 function ProfileCardDialog({ characterId, role, avatars, displayName, onClose, onEdit }: { characterId: string; role: Role; avatars: AvatarConfig; displayName: string; onClose: () => void; onEdit: (role: Role) => void }) {
   const [card, setCard] = useState<ProfileCardData | null>(null); const [error, setError] = useState("");
-  useEffect(() => { const query = role === "user" || !characterId ? "" : `?character_id=${encodeURIComponent(characterId)}`; request<ProfileCardData>(`/api/v1/profiles/${role}/card${query}`).then(setCard).catch((reason: Error) => setError(reason.message)); }, [characterId, role]);
+  useEffect(() => { if (role === "assistant" && characterId) { request<{ data: Record<string, unknown> }>(`/api/v1/characters/${encodeURIComponent(characterId)}/card`).then((value) => { const data = value.data || {}; setCard({ name: "assistant", identity: { name: data.name, description: data.description }, personality: { personality: data.personality }, relationship: { scenario: data.scenario }, roleplay: { first_mes: data.first_mes, alternate_greetings: data.alternate_greetings, mes_example: data.mes_example }, revision: 0, updated_at: "" }); }).catch((reason: Error) => setError(reason.message)); return; } const query = role === "user" || !characterId ? "" : `?character_id=${encodeURIComponent(characterId)}`; request<ProfileCardData>(`/api/v1/profiles/${role}/card${query}`).then(setCard).catch((reason: Error) => setError(reason.message)); }, [characterId, role]);
   const blocks: [string, Record<string, unknown>][] = card ? [["身份信息", card.identity], ["人物性格", card.personality], ["角色演绎", card.roleplay || {}], ["近期关系", card.relationship]] : [];
-  return <Modal title={`${displayName} · 人物卡`} kicker="CHARACTER PROFILE" onClose={onClose} compact footer={<button className="primary" onClick={() => onEdit(role)}>编辑这份档案</button>}><div className="profile-card-hero"><PortraitAvatar role={role} avatars={avatars} label={displayName} /><div><h3>{displayName}</h3><p>{role === "assistant" ? "AI 角色设定与当前关系状态" : "用户设定与偏好"}</p></div></div>{error ? <div className="profile-card-empty">{error}</div> : !card ? <div className="profile-card-empty">正在读取人物关键字段…</div> : <div className="profile-card-blocks">{blocks.map(([title, value]) => <section className="profile-card-block" key={title}><h3>{title}</h3>{Object.keys(value).length ? Object.entries(value).map(([key, item]) => <div className="profile-card-row" key={key}><span>{key}</span><strong>{friendlyValue(item)}</strong></div>) : <div className="profile-card-empty">暂无记录</div>}</section>)}<small className="profile-revision">修订 {card.revision} · {formatTime(card.updated_at)}</small></div>}</Modal>;
+  return <Modal title={`${displayName} · 人物卡`} kicker="CHARACTER CARD V2" onClose={onClose} compact footer={role === "user" ? <button className="primary" onClick={() => onEdit(role)}>编辑用户资料</button> : undefined}><div className="profile-card-hero"><PortraitAvatar role={role} avatars={avatars} label={displayName} /><div><h3>{displayName}</h3><p>{role === "assistant" ? "V2 角色卡；基础资料请在角色库编辑。" : "用户设定与偏好"}</p></div></div>{error ? <div className="profile-card-empty">{error}</div> : !card ? <div className="profile-card-empty">正在读取人物关键字段…</div> : <div className="profile-card-blocks">{blocks.map(([title, value]) => <section className="profile-card-block" key={title}><h3>{title}</h3>{Object.keys(value).length ? Object.entries(value).map(([key, item]) => <div className="profile-card-row" key={key}><span>{key}</span><strong>{friendlyValue(item)}</strong></div>) : <div className="profile-card-empty">暂无记录</div>}</section>)}</div>}</Modal>;
 }
 
 function DiagnosticsDialog({ onClose, notify, onCleared }: { onClose: () => void; notify: (message: string) => void; onCleared: () => void }) {

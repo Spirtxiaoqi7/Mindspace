@@ -369,34 +369,25 @@ def test_session_character_binding_rejects_silent_rebind(tmp_path):
 
 def test_card_export_import_generates_new_id_and_excludes_private_data(tmp_path):
     client = TestClient(create_app(make_settings(tmp_path)))
-    draft = client.post("/api/v1/character-drafts", json=draft_payload()).json()
-    character = client.post(f"/api/v1/character-drafts/{draft['draft_id']}/commit").json()[
-        "character"
-    ]
+    card = {
+        "spec": "chara_card_v2", "spec_version": "2.0",
+        "data": {"name": "林澈", "description": "独立的同行者", "personality": "冷静直接", "scenario": "日常陪伴", "first_mes": "你好。", "mes_example": "{{user}} 嗨\n{{char}} 我在。"},
+    }
+    character = client.post("/api/v1/characters", json={"source": "custom", "card": card}).json()["character"]
 
     exported = client.get(f"/api/v1/characters/{character['character_id']}/export")
     assert exported.status_code == 200
-    with zipfile.ZipFile(io.BytesIO(exported.content)) as archive:
-        assert set(archive.namelist()) <= {
-            "manifest.json",
-            "ai-profile.json",
-            "avatar.webp",
-            "avatar.png",
-            "avatar.jpg",
-            "avatar.gif",
-        }
-        manifest = json.loads(archive.read("manifest.json"))
-        assert manifest["format"] == "mindspace-card"
-        assert "user_profile" not in json.dumps(manifest)
-        assert "api_key" not in json.dumps(manifest)
+    exported_card = exported.json()
+    assert exported_card["spec"] == "chara_card_v2"
+    assert "api_key" not in json.dumps(exported_card)
 
     imported = client.post(
         "/api/v1/characters/import",
         files={
             "file": (
-                "card.mindspace-card",
+                "card.json",
                 exported.content,
-                "application/vnd.mindspace.character+zip",
+                "application/json",
             )
         },
     )

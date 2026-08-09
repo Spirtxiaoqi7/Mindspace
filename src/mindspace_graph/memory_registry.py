@@ -651,4 +651,34 @@ class MemoryRegistry:
         return [field.public() for field in self.fields]
 
 
-DEFAULT_MEMORY_REGISTRY = MemoryRegistry()
+V2_FIELDS = (
+    _field(
+        "character.memory.preferences",
+        "character_memory",
+        "/preferences",
+        "偏好",
+        "偏好",
+        "list",
+        "unique_set",
+        "agent",
+        "persistent",
+        100,
+    ),
+    _field(
+        "character.memory.tasks",
+        "character_memory",
+        "/tasks",
+        "任务",
+        "任务",
+        "list",
+        "lifecycle",
+        "agent",
+        "persistent",
+        100,
+    ),
+)
+
+
+# Legacy user fields remain readable for old user-profile migration and ASR vocabulary
+# indexing. New role creation and automatic writeback only target V2_FIELDS.
+DEFAULT_MEMORY_REGISTRY = MemoryRegistry((*FIELDS, *V2_FIELDS))

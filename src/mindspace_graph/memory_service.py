@@ -79,7 +79,14 @@ class StructuredMemoryService:
         if character_id and character_id not in character_ids:
             raise KeyError("character not found")
         for field in self.registry.fields:
-            owners = [""] if field.target == "user_profile" else character_ids or [""]
+            if field.target == "user_profile":
+                owners = [""]
+            elif field.target == "character_memory":
+                owners = character_ids
+            else:
+                # V2 characters no longer project personality, boundary, or runtime
+                # fields into structured memory.
+                continue
             for owner in owners:
                 document = self.profiles.load_document(field.target, owner)
                 value = deepcopy(_read(document, field.path))

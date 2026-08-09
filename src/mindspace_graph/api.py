@@ -27,7 +27,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
@@ -43,6 +43,12 @@ from mindspace_graph.characters import (
     CharacterRewriteInput,
     generate_draft_once,
     rewrite_draft_blocks_once,
+)
+from mindspace_graph.destiny import (
+    DestinySeed,
+    DestinySelectionRequest,
+    DestinyService,
+    public_destiny_definition,
 )
 from mindspace_graph.fate_forge import (
     FateOptionsRequest,
@@ -154,7 +160,7 @@ class JournalGenerateRequest(BaseModel):
 
 
 def _character_summary(record: dict[str, Any]) -> dict[str, Any]:
-    return {
+    summary = {
         key: record.get(key)
         for key in (
             "character_id",
@@ -166,12 +172,22 @@ def _character_summary(record: dict[str, Any]) -> dict[str, Any]:
             "gender",
             "user_alias",
             "relationship_label",
-            "avatar",
             "created_at",
             "updated_at",
             "last_used_at",
         )
     }
+    avatar = dict(record.get("avatar") or {})
+    if str(avatar.get("src") or "").startswith("blob:"):
+        avatar = {
+            "src": "/assets/avatar-ai-default.webp",
+            "aspect": "2 / 3",
+            "scale": 1.0,
+            "x": 0,
+            "y": 0,
+        }
+    summary["avatar"] = avatar
+    return summary
 
 
 def _avatar_suffix(filename: str, data: bytes) -> str:
@@ -300,6 +316,13 @@ def create_app(
     container = container or build_container(settings)
     settings = container.settings
     audio = AudioService(settings)
+    destiny = DestinyService(
+        container.database,
+        characters=container.characters,
+        profiles=container.profiles,
+        llm=container.conversation.dependencies.llm,
+        settings=settings,
+    )
     shared_http = httpx.AsyncClient(
         timeout=httpx.Timeout(15.0, connect=5.0),
         limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
@@ -322,6 +345,7 @@ def create_app(
     )
     app.state.container = container
     app.state.audio = audio
+    app.state.destiny = destiny
 
     web_root = Path(__file__).resolve().parent / "web"
     avatar_root = settings.runtime_dir / "data" / "avatars"
@@ -370,7 +394,18 @@ def create_app(
     async def put_settings(payload: dict[str, Any]):
         try:
             result = container.config.update(payload)
+            persona = result.get("persona") if isinstance(result.get("persona"), dict) else {}
+            configured_name = str(persona.get("user_name") or "").strip()
+            if configured_name:
+                user_profile = container.profiles.load_document("user_profile")
+                identity = user_profile.setdefault("identity", {})
+                if str(identity.get("preferred_name") or "") != configured_name:
+                    identity["preferred_name"] = configured_name
+                    container.profiles.save_document("user_profile", user_profile)
             container.conversation.refresh_language_model()
+            # Destiny keeps a concrete model instance for its staged generation
+            # workflow, so it must follow the live settings refresh as well.
+            destiny.llm = container.conversation.dependencies.llm
             return {"success": True, "settings": result}
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -481,6 +516,120 @@ def create_app(
             "fate_system": public_fate_catalog(),
         }
 
+    @app.get("/api/v1/destiny/definition")
+    async def destiny_definition():
+        return public_destiny_definition()
+
+    @app.post("/api/v1/destiny/avatars")
+    async def upload_destiny_avatar(file: Annotated[UploadFile, File()]):
+        """Store a journey-local avatar without touching global avatar settings."""
+        data = await file.read()
+        if not data or len(data) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=422, detail="avatar must be between 1 byte and 5 MiB")
+        try:
+            suffix = _avatar_suffix(file.filename or "avatar.webp", data)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        filename = f"destiny-{uuid4().hex}{suffix}"
+        (avatar_root / filename).write_bytes(data)
+        return {
+            "success": True,
+            "avatar": {
+                "src": f"/api/v1/avatar/files/{filename}",
+                "aspect": "2 / 3",
+                "scale": 1.0,
+                "x": 0,
+                "y": 0,
+            },
+        }
+
+    @app.post("/api/v1/destiny/journeys")
+    async def create_destiny_journey(payload: DestinySeed):
+        return destiny.create(payload)
+
+    @app.get("/api/v1/destiny/journeys/{journey_id}")
+    async def get_destiny_journey(journey_id: str):
+        try:
+            return destiny.get(journey_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/api/v1/destiny/journeys/{journey_id}/archetypes")
+    async def generate_destiny_archetypes(journey_id: str):
+        try:
+            return await destiny.generate_archetypes(journey_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (TimeoutError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - provider errors are surfaced for retry
+            raise HTTPException(status_code=502, detail=f"人物原型生成失败：{exc}") from exc
+
+    @app.post("/api/v1/destiny/journeys/{journey_id}/cards")
+    async def generate_destiny_cards(journey_id: str):
+        try:
+            return await destiny.generate_cards(journey_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (TimeoutError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - provider errors are surfaced for retry
+            raise HTTPException(status_code=502, detail=f"人物命格拆分失败：{exc}") from exc
+
+    @app.post("/api/v1/destiny/journeys/{journey_id}/cards/{archetype_id}")
+    async def legacy_generate_destiny_cards(journey_id: str, archetype_id: str):
+        del journey_id, archetype_id
+        raise HTTPException(status_code=410, detail="旧版逐角色命签接口已废弃，请使用全量 cards 接口")
+
+    @app.put("/api/v1/destiny/journeys/{journey_id}/selections/{slot_id}")
+    async def select_destiny_card(
+        journey_id: str, slot_id: str, payload: DestinySelectionRequest
+    ):
+        try:
+            return destiny.select(journey_id, slot_id, payload)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (TypeError, ValueError) as exc:
+            status = 409 if "stale" in str(exc) else 422
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+    @app.delete("/api/v1/destiny/journeys/{journey_id}/selections")
+    async def clear_destiny_selections(journey_id: str, expected_revision: int | None = None):
+        try:
+            return destiny.clear_selections(journey_id, expected_revision=expected_revision)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (TypeError, ValueError) as exc:
+            status = 409 if "stale" in str(exc) else 422
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+    @app.post("/api/v1/destiny/journeys/{journey_id}/synthesize")
+    async def synthesize_destiny_journey(journey_id: str):
+        try:
+            return await destiny.synthesize(journey_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (TimeoutError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - provider errors are surfaced for retry
+            raise HTTPException(status_code=502, detail=f"最终人物合成失败：{exc}") from exc
+
+    @app.post("/api/v1/destiny/journeys/{journey_id}/commit")
+    async def commit_destiny_journey(journey_id: str):
+        try:
+            with container.database.transaction(
+                operation="api_commit_destiny_journey", details={"journey_id": journey_id}
+            ):
+                record = destiny.commit(journey_id)
+                container.memory_service.rebuild(dry_run=False)
+            return {"success": True, "character": record}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.post("/api/v1/characters/fate-options")
     async def generate_character_fate_options(payload: FateOptionsRequest):
         try:
@@ -491,7 +640,7 @@ def create_app(
             )
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except (asyncio.TimeoutError, httpx.HTTPError) as exc:
+        except (TimeoutError, httpx.HTTPError) as exc:
             raise HTTPException(status_code=502, detail=f"AI 命格选项生成失败：{exc}") from exc
         except Exception as exc:  # noqa: BLE001 - provider errors are user-facing here
             raise HTTPException(status_code=502, detail=f"AI 命格选项生成失败：{exc}") from exc
@@ -658,6 +807,10 @@ def create_app(
             return container.chapters.get_session_scene(session_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            message = str(exc)
+            status = 410 if "archived" in message else 409
+            raise HTTPException(status_code=status, detail=message) from exc
 
     @app.put("/api/v1/sessions/{session_id}/scene")
     async def set_session_scene(session_id: str, payload: SceneSelectionUpdate):
@@ -721,17 +874,15 @@ def create_app(
     @app.post("/api/v1/characters")
     async def create_character(payload: dict[str, Any]):
         try:
-            profile = payload.get("ai_profile")
-            if not isinstance(profile, dict):
-                raise ValueError("ai_profile is required")
+            card = payload.get("card")
+            if not isinstance(card, dict):
+                raise ValueError("card must be a Character Card V2 object")
             record = container.characters.create(
-                ai_profile=profile,
+                card=card,
                 source=str(payload.get("source") or "custom"),
-                runtime_state=payload.get("runtime_state"),
                 avatar=payload.get("avatar"),
                 user_alias=str(payload.get("user_alias") or ""),
                 relationship_label=str(payload.get("relationship_label") or ""),
-                system_prompt=str(payload.get("system_prompt") or ""),
             )
             container.memory_service.rebuild(dry_run=False)
             return {"success": True, "character": record}
@@ -810,6 +961,15 @@ def create_app(
             record = container.characters.get(character_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        if isinstance(record.get("card"), dict):
+            payload = json.dumps(record["card"], ensure_ascii=False, indent=2).encode("utf-8")
+            filename = f"{_safe_archive_name(str(record['display_name']))}.json"
+            return Response(
+                content=payload,
+                media_type="application/json; charset=utf-8",
+                headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+            )
         profile_bytes = json.dumps(record["ai_profile"], ensure_ascii=False, indent=2).encode(
             "utf-8"
         )
@@ -858,6 +1018,18 @@ def create_app(
             },
         )
 
+    @app.get("/api/v1/characters/{character_id}/card")
+    async def get_character_card(character_id: str):
+        try:
+            card = container.characters.get(character_id).get("card")
+            if not isinstance(card, dict):
+                raise ValueError("character is awaiting V2 migration")
+            return card
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
     @app.post("/api/v1/characters/import")
     async def import_character(file: Annotated[UploadFile, File()]):
         data = await file.read()
@@ -865,6 +1037,14 @@ def create_app(
             raise HTTPException(
                 status_code=413, detail="character package must be between 1 byte and 10 MiB"
             )
+        try:
+            decoded = json.loads(data.decode("utf-8"))
+            if isinstance(decoded, dict) and decoded.get("spec") == "chara_card_v2":
+                record = container.characters.create(card=decoded, source="imported")
+                container.memory_service.rebuild(dry_run=False)
+                return {"success": True, "character": record}
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            pass
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as archive:
                 infos = archive.infolist()
@@ -1116,6 +1296,7 @@ def create_app(
                 payload.session_id,
                 character_id=payload.character_id,
                 mode=mode,
+                role_state=container.conversation.session_role_state(payload.character_id),
             )
             container.characters.touch(payload.character_id)
             return session

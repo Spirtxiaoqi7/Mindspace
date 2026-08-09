@@ -175,6 +175,11 @@ class StructuredMemoryStore:
         )
         suffix = f":{entity_id or _digest(normalized)}" if has_item_identity else ""
         memory_key = f"{owner_prefix}:{family_key}{suffix}"
+        expires_at = None
+        if field.lifecycle == "session":
+            expires_at = (datetime.fromisoformat(timestamp) + timedelta(days=1)).isoformat()
+        elif field.lifecycle == "temporal":
+            expires_at = (datetime.fromisoformat(timestamp) + timedelta(days=30)).isoformat()
         return {
             "memory_key": memory_key,
             "family_key": family_key,
@@ -204,6 +209,9 @@ class StructuredMemoryStore:
             "entity_id": entity_id,
             "created_at": timestamp,
             "updated_at": timestamp,
+            "last_confirmed_at": timestamp,
+            "confirmation_count": 1,
+            "expires_at": expires_at,
             "recall_count": 0,
             "selection_count": 0,
             "eligible_misses": 0,
@@ -227,6 +235,9 @@ class StructuredMemoryStore:
             data = self._load()
             if patches:
                 data["episodes"][episode_id] = episode
+                data["untagged"] = [
+                    item for item in data["untagged"] if item.get("episode_id") != episode_id
+                ]
                 bindings = [
                     self._binding(
                         raw_patch,
@@ -256,6 +267,9 @@ class StructuredMemoryStore:
                             binding["eligible_misses"] = int(previous.get("eligible_misses", 0))
                             binding["last_selected_round"] = int(
                                 previous.get("last_selected_round", 0)
+                            )
+                            binding["confirmation_count"] = (
+                                int(previous.get("confirmation_count", 1)) + 1
                             )
                             self._invalidate(data, memory_key, episode_id, timestamp, "superseded")
                         data["active"][memory_key] = binding
@@ -337,6 +351,13 @@ class StructuredMemoryStore:
         )
 
     def _prune(self, data: dict[str, Any], *, now: datetime) -> None:
+        expired_keys = [
+            key
+            for key, item in data["active"].items()
+            if item.get("expires_at") and self._parse_time(item.get("expires_at")) <= now
+        ]
+        for key in expired_keys:
+            self._invalidate(data, key, "", now.isoformat(), "expired")
         untagged = [
             item for item in data["untagged"] if self._parse_time(item.get("expires_at")) > now
         ]
@@ -547,6 +568,7 @@ class StructuredMemoryStore:
                     record["selection_count"] = int(record.get("selection_count", 0)) + 1
                     record["eligible_misses"] = 0
                     record["last_selected_round"] = current_round
+                    record["last_used_at"] = _now()
                 else:
                     record["eligible_misses"] = min(100, int(record.get("eligible_misses", 0)) + 1)
             self._save(data)

@@ -21,7 +21,7 @@ from mindspace_graph.models import (
 from mindspace_graph.profile_bootstrap import ProfileBootstrap
 
 MAX_PATCHES_PER_TURN = 3
-REVISION_KEYS = {"user_profile", "ai_profile", "runtime_state"}
+REVISION_KEYS = {"user_profile", "ai_profile", "runtime_state", "character_memory"}
 
 
 def rank_with_temporal_decay(
@@ -153,6 +153,7 @@ def _document_for(profiles: ProfileBundle, target: str) -> dict[str, Any]:
         "user_profile": profiles.user_profile,
         "ai_profile": profiles.ai_profile,
         "runtime_state": profiles.runtime_state,
+        "character_memory": profiles.character_memory,
     }[target]
 
 
@@ -387,9 +388,11 @@ def validate_json_update(
     pending_deletion_ids = pending_deletion_ids or set()
     bootstrap = bootstrap or ProfileBootstrap.inactive()
 
-    if set(plan.base_revisions) != REVISION_KEYS:
-        errors.append("base_revisions must contain exactly user_profile, ai_profile, runtime_state")
-    for key in REVISION_KEYS:
+    supplied_keys = set(plan.base_revisions)
+    legacy_keys = REVISION_KEYS - {"character_memory"}
+    if supplied_keys != REVISION_KEYS and supplied_keys != legacy_keys:
+        errors.append("base_revisions must contain user_profile, ai_profile, runtime_state and optional character_memory")
+    for key in supplied_keys:
         expected = plan.base_revisions.get(key)
         current = profiles.revisions.get(key)
         if expected != current:

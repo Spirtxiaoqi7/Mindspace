@@ -91,9 +91,7 @@ class LocalKnowledgeRetriever:
             if chat_message_retrieval_eligible(item) and str(item.get("content") or "")
         ]
         memory_records = (
-            self.memory_store.list_active(character_id)
-            if self.memory_store is not None
-            else []
+            self.memory_store.list_active(character_id) if self.memory_store is not None else []
         )
         missing_memory: list[tuple[str, str]] = []
         for record in memory_records:
@@ -445,6 +443,8 @@ class LocalKnowledgeRetriever:
                             "timestamp": item.get("created_at", ""),
                             "session_id": item.get("session_id", ""),
                             "character_id": character_id,
+                            "adult_mode": bool(item.get("adult_mode")),
+                            "companion_lane": item.get("companion_lane", "DAILY"),
                             "retrieval_class": "historical_dialogue",
                         },
                     )
@@ -501,6 +501,8 @@ class LocalKnowledgeRetriever:
                         "role": item.get("role", "unknown"),
                         "retrieval_class": item.get("retrieval_class", "user_dialogue"),
                         "character_id": character_id,
+                        "adult_mode": bool(item.get("adult_mode")),
+                        "companion_lane": item.get("companion_lane", "DAILY"),
                     },
                 )
             )
@@ -508,9 +510,7 @@ class LocalKnowledgeRetriever:
             boosts.append(
                 {
                     "current_session": (
-                        settings.chat_session_boost
-                        if item_session_id == session_id
-                        else 0.0
+                        settings.chat_session_boost if item_session_id == session_id else 0.0
                     ),
                     "exact_phrase": settings.chat_exact_boost
                     if query.casefold() in content.casefold()
@@ -526,9 +526,9 @@ class LocalKnowledgeRetriever:
                 if isinstance(stored_vector, list):
                     message_vector = stored_vector
                 elif message_vector is not None:
-                    pending_embeddings[
-                        str(episode.get("episode_id") or record["episode_id"])
-                    ] = message_vector
+                    pending_embeddings[str(episode.get("episode_id") or record["episode_id"])] = (
+                        message_vector
+                    )
                 chunks.append(
                     RetrievedChunk(
                         chunk_id=f"memory:{record['memory_key']}",

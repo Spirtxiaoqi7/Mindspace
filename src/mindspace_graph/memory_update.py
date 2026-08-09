@@ -53,19 +53,19 @@ def build_memory_extraction_messages(
         "current_user": request.message,
         "current_response": response,
         "profiles": {
-            "user_profile": profiles.user_profile,
-            "ai_profile": profiles.ai_profile,
-            "runtime_state": profiles.runtime_state,
+            "character_memory": profiles.character_memory,
         },
         "writable_fields": fields,
     }
     rules = """你是状态差量提取器，只返回一个 JSON 对象，不要解释。
 最多给出 3 个叶子 Patch；没有明确且值得保留的变化时 trigger=none、patches=[]。
-用户直接陈述的个人事实、偏好、当前任务或明确要求，使用 trigger=current_user，
+用户直接陈述的偏好、当前任务或明确要求，使用 trigger=current_user，
 evidence_ids 只能是 [\"current_user\"]，value 必须是当前用户原文中直接出现的最短片段。
-AI 在 current_response 中明确承认的自身性格、偏好、意图或情绪，可使用
+AI 在 current_response 中明确承认的自身偏好或待办，可使用
 trigger=current_agent；它只能修改 scope=agent 的字段，evidence_ids 只能是
 [\"current_response\"]，value 必须逐字出现在 current_response。
+自动提取只能写入 character_memory 的 preferences 或 tasks；不得改写角色身份、人格、关系、
+边界、系统提示或任何运行状态。一次性的角色扮演命令不进长期记忆。
 疑问、猜测、玩笑、单字确认、模型推断、时间本身、历史与工具结果都不是写入证据。
 同一计划只使用一种 trigger。不得修改未列出的路径，不得修改技术字段；
 current_agent 不得 remove。列表新增用 path 末尾 /-，标量使用 replace。"""
@@ -99,4 +99,27 @@ def parse_memory_plan(raw: str) -> JsonUpdatePlan:
         value = value["json_update"]
     if not isinstance(value, dict):
         raise ValueError("memory extractor output must be a JSON object")
+    trigger = str(value.get("trigger") or "none")
+    normalized_patches: list[Any] = []
+    for raw_patch in value.get("patches", []) if isinstance(value.get("patches"), list) else []:
+        if not isinstance(raw_patch, dict):
+            normalized_patches.append(raw_patch)
+            continue
+        patch = dict(raw_patch)
+        path = str(patch.get("path") or "")
+        if not patch.get("target") and path:
+            matches = {
+                field.target
+                for field in DEFAULT_MEMORY_REGISTRY.fields
+                if path == field.path or path == f"{field.path}/-"
+            }
+            if len(matches) == 1:
+                patch["target"] = matches.pop()
+        if not patch.get("evidence_ids"):
+            if trigger == "current_user":
+                patch["evidence_ids"] = ["current_user"]
+            elif trigger == "current_agent":
+                patch["evidence_ids"] = ["current_response"]
+        normalized_patches.append(patch)
+    value["patches"] = normalized_patches
     return JsonUpdatePlan.model_validate(value)

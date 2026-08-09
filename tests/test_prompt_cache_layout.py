@@ -463,6 +463,33 @@ def test_reply_length_is_only_added_from_explicit_user_setting():
     assert "【用户设定的回复篇幅】\n日常简洁，重要话题可以自然展开" in explicit_text
 
 
+def test_r18_text_pacing_is_scoped_to_text_and_respects_explicit_length_preference():
+    bundle = profiles()
+    text_request = request(1).model_copy(
+        update={
+            "adult_mode": True,
+            "interaction_mode": "text",
+            "reply_length_preference": "本轮约五百字",
+        }
+    )
+    text_prompt = "\n".join(
+        item["content"] for item in build_prompt(text_request, bundle, [], [], []).messages
+    )
+
+    assert "【R18 文字节奏】" in text_prompt
+    assert "约 300 个汉字" in text_prompt
+    assert "用户明确设置的回复篇幅优先" in text_prompt
+    assert "不机械规定比例" in text_prompt
+    assert "【用户设定的回复篇幅】\n本轮约五百字" in text_prompt
+
+    voice_request = text_request.model_copy(update={"interaction_mode": "voice"})
+    voice_prompt = "\n".join(
+        item["content"] for item in build_prompt(voice_request, bundle, [], [], []).messages
+    )
+
+    assert "【R18 文字节奏】" not in voice_prompt
+
+
 def test_face_to_face_scene_stays_after_the_stable_prefix_and_is_not_persistable():
     built = build_prompt(
         ChatRequest(

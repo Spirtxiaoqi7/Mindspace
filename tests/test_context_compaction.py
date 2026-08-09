@@ -14,7 +14,7 @@ from mindspace_graph.compaction import (
     ContextCompactionService,
     parse_compaction_output,
 )
-from mindspace_graph.context_ledger import ContextLedger
+from mindspace_graph.context_ledger import ContextLedger, summary_prompt_view
 from mindspace_graph.models import ChatRequest, JsonWriteReceipt, ProfileBundle
 from mindspace_graph.prompting import build_prompt
 from mindspace_graph.settings import AppSettings
@@ -195,6 +195,52 @@ def test_compaction_sanitizes_adult_details_even_if_model_mislabels_the_lane():
     assert "露骨细节未进入通用连续性包" in result["continuity_overview"]
     assert "阴茎" not in serialized
     assert "抽送" not in serialized
+
+
+def test_adult_facts_are_retained_only_in_the_adult_prompt_view():
+    payload = {
+        "previous_summary": None,
+        "cutoff_sequence": 2,
+        "source": {
+            "session_id": "adult-fact",
+            "message_ids": ["u1", "a1"],
+            "from_round": 1,
+            "to_round": 1,
+        },
+        "dialogue": [
+            {
+                "message_id": "u1",
+                "round": 1,
+                "companion_lane": "ADULT",
+                "role": "user",
+                "content": "已发生的成人事实",
+            },
+            {
+                "message_id": "a1",
+                "round": 1,
+                "companion_lane": "ADULT",
+                "role": "assistant",
+                "content": "确认",
+            },
+        ],
+    }
+    raw = json.dumps(
+        {
+            "dialogue_summary": "双方发生成人互动。",
+            "adult_facts": [{"text": "已经发生口交并射精", "evidence_ids": ["u1", "a1"]}],
+            "lane": "ADULT",
+        },
+        ensure_ascii=False,
+    )
+
+    stored = parse_compaction_output(raw, payload)
+    adult = summary_prompt_view(stored, adult_mode=True)
+    daily = summary_prompt_view(stored, adult_mode=False)
+
+    assert adult["adult_facts"][0]["text"] == "已经发生口交并射精"
+    assert "adult_facts" not in daily
+    assert "口交" not in json.dumps(daily, ensure_ascii=False)
+    assert "成人亲密经历" in json.dumps(daily, ensure_ascii=False)
 
 
 def test_compaction_rejects_assistant_only_shared_memory_claims():

@@ -174,7 +174,7 @@ class OpenAICompatibleLanguageModel:
     ) -> str:
         """Generate compact JSON with thinking disabled and compatibility fallbacks."""
 
-        seconds = max(1.0, min(60.0, float(timeout_seconds)))
+        seconds = max(1.0, min(180.0, float(timeout_seconds)))
         return self._private_completion(
             messages,
             config,
@@ -319,9 +319,13 @@ class OpenAICompatibleLanguageModel:
             payload = response.json()
             self._capture_usage(payload, config, request_kind)
             choices = payload.get("choices") or []
+            choice = choices[0] if choices else {}
+            finish_reason = str(choice.get("finish_reason") or "").strip().lower()
             content = _text_content(
-                (choices[0].get("message") or {}).get("content") if choices else None
+                (choice.get("message") or {}).get("content") if choice else None
             )
+            if finish_reason in {"length", "max_tokens"}:
+                raise ValueError("模型输出达到长度上限，JSON 在完成前被截断")
             if content.strip():
                 return content
             last_error = ValueError(f"{request_kind} response content is blank")

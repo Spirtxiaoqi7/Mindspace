@@ -20,3 +20,17 @@ def test_memory_plan_parser_accepts_fenced_json():
         ```"""
     )
     assert plan.trigger == "none"
+
+
+def test_memory_plan_parser_recovers_unique_target_and_current_evidence():
+    plan = parse_memory_plan(
+        """{
+          "turn_id":"round_1",
+          "base_revisions":{"user_profile":0,"ai_profile":0,"runtime_state":0},
+          "trigger":"current_user",
+          "patches":[{"op":"add","path":"/stable_preferences/likes/-","value":"雾蓝色书签"}]
+        }"""
+    )
+
+    assert plan.patches[0].target == "user_profile"
+    assert plan.patches[0].evidence_ids == ["current_user"]

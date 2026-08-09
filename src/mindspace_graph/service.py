@@ -31,6 +31,7 @@ from mindspace_graph.emotion_disabled import DisabledEmotionCoordinator
 from mindspace_graph.entity_registry import EntityRegistry
 from mindspace_graph.graph import build_graph
 from mindspace_graph.memory_service import StructuredMemoryService
+from mindspace_graph.memory_writeback import MemoryWritebackService
 from mindspace_graph.models import (
     ActivityPromptContext,
     ApiConfig,
@@ -43,7 +44,8 @@ from mindspace_graph.product_config import ProductConfigStore
 from mindspace_graph.product_database import ProductDatabase
 from mindspace_graph.prompt_inspection import PromptInspectionStore
 from mindspace_graph.role_audit import RoleAuditService
-from mindspace_graph.roleplay import effective_roleplay_temperature
+from mindspace_graph.roleplay import effective_roleplay_max_tokens, effective_roleplay_temperature
+from mindspace_graph.role_runtime import build_runtime_role_state
 from mindspace_graph.settings import AppSettings
 from mindspace_graph.shared_chapters import SharedChapterService
 
@@ -163,8 +165,7 @@ class ConversationService:
             llm_provider=lambda: self.dependencies.llm,
             active_run_count=cancellation.active_count,
             character_for_session=lambda session_id: str(
-                self.dependencies.sessions.load_session(session_id).get("character_id")
-                or ""
+                self.dependencies.sessions.load_session(session_id).get("character_id") or ""
             ),
         )
         self.role_audit = RoleAuditService(
@@ -173,6 +174,10 @@ class ConversationService:
             api_provider=self._role_audit_api,
             active_run_count=cancellation.active_count,
             enabled=lambda: self.settings.role_audit_enabled,
+        )
+        self.memory_writeback = MemoryWritebackService(
+            dependencies=self.dependencies,
+            api_provider=self._memory_writeback_api,
         )
         self._stream_runs: dict[str, BufferedStreamRun] = {}
         self._stream_runs_lock = asyncio.Lock()
@@ -193,6 +198,15 @@ class ConversationService:
             max_tokens=600,
         )
 
+    def _memory_writeback_api(self) -> ApiConfig:
+        return ApiConfig(
+            api_key=self.settings.llm_api_key,
+            base_url=self.settings.llm_base_url,
+            model=self.settings.llm_model,
+            temperature=0,
+            max_tokens=700,
+        )
+
     def refresh_language_model(self) -> None:
         close = getattr(self.dependencies.llm, "close", None)
         if callable(close):
@@ -210,6 +224,7 @@ class ConversationService:
             )
 
     def close(self) -> None:
+        self.memory_writeback.close()
         for task in self._retrieval_warmups.values():
             task.cancel()
         for resource in (
@@ -222,6 +237,7 @@ class ConversationService:
                 close()
 
     async def aclose(self) -> None:
+        await self.memory_writeback.drain()
         tasks = [
             run.task
             for run in self._stream_runs.values()
@@ -234,6 +250,15 @@ class ConversationService:
             await asyncio.gather(*tasks, return_exceptions=True)
         self.close()
 
+    def session_role_state(self, character_id: str, *, request_user_name: str = "") -> dict[str, Any]:
+        profiles = self.dependencies.profiles.load_bundle(character_id)
+        return build_runtime_role_state(
+            ai_profile=profiles.ai_profile,
+            character_memory=profiles.character_memory,
+            user_profile=profiles.user_profile,
+            request_user_name=request_user_name,
+        )
+
     def _server_request(self, request: ChatRequest) -> ChatRequest:
         """用服务端模型地址/密钥/模型名覆盖客户端值，只保留本轮采样参数。"""
 
@@ -241,20 +266,29 @@ class ConversationService:
         if characters is None:
             raise RuntimeError("character repository is unavailable")
         character = (
-            characters.get(request.character_id)
-            if request.character_id
-            else characters.default()
+            characters.get(request.character_id) if request.character_id else characters.default()
         )
         if character.get("status") != "active":
             raise ValueError("selected character is archived")
         character_id = str(character["character_id"])
         session_mode = "draw" if character.get("source") == "draw" else "custom"
-        self.dependencies.sessions.ensure_session(
+        profiles = self.dependencies.profiles.load_bundle(character_id)
+        current_role_state = build_runtime_role_state(
+            ai_profile=profiles.ai_profile,
+            character_memory=profiles.character_memory,
+            user_profile=profiles.user_profile,
+            request_user_name=request.user_name,
+            request_character_name=request.character_name,
+        )
+        session = self.dependencies.sessions.ensure_session(
             request.session_id,
             character_id=character_id,
             mode=session_mode,
+            role_state=current_role_state,
         )
-        profiles = self.dependencies.profiles.load_bundle(character_id)
+        session_role_state = session.get("role_state")
+        if not isinstance(session_role_state, dict):
+            session_role_state = current_role_state
         user_identity = profiles.user_profile.get("identity", {})
         ai_identity = profiles.ai_profile.get("identity", {})
         characters.touch(character_id)
@@ -264,9 +298,7 @@ class ConversationService:
             if activities is None:
                 raise RuntimeError("activity service is unavailable")
             activity_context = ActivityPromptContext.model_validate(
-                activities.prompt_context(
-                    request.activity_session_id, character_id=character_id
-                )
+                activities.prompt_context(request.activity_session_id, character_id=character_id)
             )
         scene_context = None
         if self.dependencies.activities is not None:
@@ -283,7 +315,9 @@ class ConversationService:
                 request,
                 self.dependencies.sessions.load_all(request.session_id),
             ),
-            max_tokens=request.api.max_tokens,
+            max_tokens=effective_roleplay_max_tokens(
+                request, self.dependencies.sessions.load_all(request.session_id)
+            ),
         )
         retrieval_key = (request.session_id, character_id)
         explicit_recall = bool(_EXPLICIT_RECALL.search(request.message))
@@ -312,8 +346,8 @@ class ConversationService:
                 "voice_tts_provider": self.settings.tts_provider,
                 "character_id": character_id,
                 "session_mode": session_mode,
-                "user_name": str(user_identity.get("preferred_name") or request.user_name),
-                "character_name": str(ai_identity.get("name") or request.character_name),
+                "user_name": str(session_role_state.get("user_name") or user_identity.get("preferred_name") or request.user_name),
+                "character_name": str(session_role_state.get("character_name") or ai_identity.get("name") or request.character_name),
                 "system_prompt": str(character.get("system_prompt") or ""),
                 "activity_context": activity_context,
                 "scene_context": scene_context,
@@ -388,6 +422,7 @@ class ConversationService:
         request_id = request_id or uuid4().hex
         self.cancellation.start(request_id)
         response: ChatResponse | None = None
+        await self.memory_writeback.flush_session(request.session_id)
         server_request = self._server_request(request)
         try:
             result = await self.graph.ainvoke(
@@ -397,6 +432,7 @@ class ConversationService:
             response = result["response"]
             if response.status == "success":
                 self._kick_retrieval_warmup(server_request)
+                self.memory_writeback.kick(server_request, response)
         finally:
             self.cancellation.finish(request_id)
             self.compaction.kick()
@@ -457,9 +493,7 @@ class ConversationService:
             "latest_seq": run.events[-1][0] if run.events else 0,
         }
 
-    async def _ensure_stream_run(
-        self, request: ChatRequest, request_id: str
-    ) -> BufferedStreamRun:
+    async def _ensure_stream_run(self, request: ChatRequest, request_id: str) -> BufferedStreamRun:
         """创建或复用运行，并拒绝 request_id 被绑定到另一轮。"""
 
         async with self._stream_runs_lock:
@@ -530,9 +564,7 @@ class ConversationService:
             or bool(terminal)
         )
         if checkpoint_due:
-            database.checkpoint_conversation_run(
-                run.request_id, run.partial_text, sequence
-            )
+            database.checkpoint_conversation_run(run.request_id, run.partial_text, sequence)
             run.last_checkpoint_at = now
             run.last_checkpoint_size = len(run.partial_text)
         # Token deltas are represented by the coalesced partial checkpoint.
@@ -596,6 +628,7 @@ class ConversationService:
             # section.  Archived or missing characters must become a terminal
             # run.error event instead of leaving subscribers after run.accepted
             # with a permanently running durable record.
+            await self.memory_writeback.flush_session(request.session_id)
             server_request = self._server_request(request)
             async for part in self.graph.astream(
                 {"request": server_request, "request_id": request_id},
@@ -631,33 +664,22 @@ class ConversationService:
                             final = values["response"]
             if final is None:
                 payload = events.sse("run.error", {"error": "missing final response"})
-                await self._publish_stream(
-                    run, events.sequence, payload, terminal="run.error"
-                )
+                await self._publish_stream(run, events.sequence, payload, terminal="run.error")
             elif final.status == "error":
-                payload = events.sse(
-                    "run.error", {"response": final.model_dump(mode="json")}
-                )
-                await self._publish_stream(
-                    run, events.sequence, payload, terminal="run.error"
-                )
+                payload = events.sse("run.error", {"response": final.model_dump(mode="json")})
+                await self._publish_stream(run, events.sequence, payload, terminal="run.error")
             else:
                 self.cancellation.finish(request_id)
                 run_finished = True
                 self._kick_retrieval_warmup(server_request)
+                self.memory_writeback.kick(server_request, final)
                 self.compaction.kick()
                 self.role_audit.kick()
-                payload = events.sse(
-                    "run.completed", {"response": final.model_dump(mode="json")}
-                )
-                await self._publish_stream(
-                    run, events.sequence, payload, terminal="run.completed"
-                )
+                payload = events.sse("run.completed", {"response": final.model_dump(mode="json")})
+                await self._publish_stream(run, events.sequence, payload, terminal="run.completed")
         except GenerationCancelled:
             payload = events.sse("run.cancelled", {"cancelled": True})
-            await self._publish_stream(
-                run, events.sequence, payload, terminal="run.cancelled"
-            )
+            await self._publish_stream(run, events.sequence, payload, terminal="run.cancelled")
         except asyncio.CancelledError:
             # Graceful Core shutdown preserves the partial answer and exposes a
             # stable interrupted terminal instead of pretending generation failed.
@@ -665,18 +687,14 @@ class ConversationService:
                 "run.interrupted",
                 {"partial_text": run.partial_text, "reason": "core_shutdown"},
             )
-            await self._publish_stream(
-                run, events.sequence, payload, terminal="run.interrupted"
-            )
+            await self._publish_stream(run, events.sequence, payload, terminal="run.interrupted")
             raise
         except Exception as exc:  # noqa: BLE001 - converted to a stable API event
             self.dependencies.audit.record(
                 "stream_failed", {"request_id": request_id, "error": str(exc)}
             )
             payload = events.sse("run.error", {"error": str(exc)})
-            await self._publish_stream(
-                run, events.sequence, payload, terminal="run.error"
-            )
+            await self._publish_stream(run, events.sequence, payload, terminal="run.error")
         finally:
             if not run_finished:
                 self.cancellation.finish(request_id)
@@ -684,9 +702,7 @@ class ConversationService:
                 self.role_audit.kick()
             if not run.completed:
                 payload = events.sse("run.error", {"error": "stream ended unexpectedly"})
-                await self._publish_stream(
-                    run, events.sequence, payload, terminal="run.error"
-                )
+                await self._publish_stream(run, events.sequence, payload, terminal="run.error")
 
     def interrupt(self, request_id: str) -> bool:
         return self.cancellation.cancel(request_id)

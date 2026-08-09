@@ -184,6 +184,7 @@ class ASRVocabularyStore:
             "user_profile": bundle.user_profile,
             "ai_profile": bundle.ai_profile,
             "runtime_state": bundle.runtime_state,
+            "character_memory": bundle.character_memory,
         }
         entries: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()

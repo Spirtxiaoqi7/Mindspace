@@ -230,11 +230,12 @@ class ProfileBundle(BaseModel):
     user_profile: dict[str, Any] = Field(default_factory=dict)
     ai_profile: dict[str, Any] = Field(default_factory=dict)
     runtime_state: dict[str, Any] = Field(default_factory=dict)
+    character_memory: dict[str, Any] = Field(default_factory=dict)
     revisions: dict[str, int] = Field(default_factory=dict)
 
 
 class JsonPatch(BaseModel):
-    target: Literal["user_profile", "ai_profile", "runtime_state"]
+    target: Literal["user_profile", "ai_profile", "runtime_state", "character_memory"]
     op: Literal["add", "replace", "remove"]
     path: str
     value: Any | None = None
@@ -272,7 +273,9 @@ class ModelUsage(BaseModel):
     model: str = ""
     request_kind: Literal[
         "generation", "repair", "compaction", "role_audit", "capability_plan", "preflight",
-        "research_review", "emotion_post", "memory_extract", "character_generate"
+        "research_review", "emotion_post", "memory_extract", "character_generate",
+        "destiny_archetypes", "destiny_cards", "destiny_synthesis",
+        "destiny_synthesis_repair"
     ] = "generation"
     prompt_tokens: int = Field(default=0, ge=0)
     cached_tokens: int = Field(default=0, ge=0)

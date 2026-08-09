@@ -28,7 +28,7 @@ def test_journals_and_moments_are_character_isolated_and_narrative_only(tmp_path
     container = app.state.container
     first = container.characters.default()
     second = container.characters.clone(first["character_id"])
-    before = deepcopy(container.characters.get(first["character_id"])["ai_profile"])
+    before = deepcopy(container.characters.get(first["character_id"])["card"])
 
     with TestClient(app) as client:
         journal = client.post(
@@ -69,7 +69,7 @@ def test_journals_and_moments_are_character_isolated_and_narrative_only(tmp_path
             second["character_id"], "窗外一起听雨"
         ) == []
 
-    after = container.characters.get(first["character_id"])["ai_profile"]
+    after = container.characters.get(first["character_id"])["card"]
     assert after == before
 
 
@@ -305,6 +305,29 @@ def test_conversation_scene_is_session_scoped_and_inherits_character_default(tmp
         assert legacy_activity.status_code == 422
 
 
+def test_archived_character_session_scene_returns_controlled_gone_response(tmp_path):
+    app = make_app(tmp_path)
+    container = app.state.container
+    character = container.characters.default()
+    container.characters.clone(character["character_id"])
+    container.sessions.ensure_session(
+        "archived-scene-chat",
+        character_id=character["character_id"],
+        mode="custom",
+    )
+
+    with TestClient(app) as client:
+        archived = client.post(
+            f"/api/v1/characters/{character['character_id']}/archive"
+        )
+        assert archived.status_code == 200
+
+        scene = client.get("/api/v1/sessions/archived-scene-chat/scene")
+
+    assert scene.status_code == 410
+    assert "archived" in scene.json()["detail"]
+
+
 def test_activity_context_is_resolved_server_side_for_chat(tmp_path):
     app = make_app(tmp_path)
     container = app.state.container
@@ -336,9 +359,7 @@ def test_prompt_inspector_marks_scene_as_ephemeral_system_layer(tmp_path):
     app = make_app(tmp_path)
     container = app.state.container
     character = container.characters.default()
-    profile_before = deepcopy(
-        container.characters.get(character["character_id"])["ai_profile"]
-    )
+    profile_before = deepcopy(container.characters.get(character["character_id"])["card"])
     container.sessions.ensure_session(
         "prompt-scene-session",
         character_id=character["character_id"],
@@ -375,10 +396,7 @@ def test_prompt_inspector_marks_scene_as_ephemeral_system_layer(tmp_path):
         assert scene_layer["content"] == "【当前场景】两个人现在在暮色中的河岸边。"
         assert container.chapters.list_journals(character["character_id"]) == []
         assert container.chapters.list_moments(character["character_id"]) == []
-        assert (
-            container.characters.get(character["character_id"])["ai_profile"]
-            == profile_before
-        )
+        assert container.characters.get(character["character_id"])["card"] == profile_before
 
 
 def test_confirmed_continuity_migration_is_idempotent(tmp_path):
@@ -386,30 +404,17 @@ def test_confirmed_continuity_migration_is_idempotent(tmp_path):
     container = app.state.container
     character = container.characters.default()
     character_id = character["character_id"]
-    updated = deepcopy(character)
-    updated["ai_profile"].setdefault("continuity", {})[
-        "important_shared_experiences"
-    ] = ["一起在雨夜听过窗外的雨。"]
-    container.database.put_document(f"character:{character_id}", updated)
-
     marker = "migration:shared-chapters:0.7.0"
     container.database.delete_document(marker)
     container.chapters._migrate_confirmed_continuity()
     first_pass = container.chapters.list_moments(character_id)
 
-    # Even if a repair removes the completion marker, stable source hashes must
-    # prevent duplicate moments from being manufactured.
+    # V2 cards deliberately do not carry the retired continuity tree.
     container.database.delete_document(marker)
     container.chapters._migrate_confirmed_continuity()
     second_pass = container.chapters.list_moments(character_id)
 
-    migrated = [
-        item
-        for item in second_pass
-        if item["source"] == "profile_migration"
-        and item["summary"] == "一起在雨夜听过窗外的雨。"
-    ]
-    assert len(migrated) == 1
-    assert len(second_pass) == len(first_pass)
+    assert first_pass == []
+    assert second_pass == []
     container.conversation.close()
     container.art_catalog.close()

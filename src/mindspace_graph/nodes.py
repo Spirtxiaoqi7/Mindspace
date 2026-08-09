@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any
 
@@ -31,6 +32,78 @@ from mindspace_graph.roleplay import (
 )
 from mindspace_graph.state import TurnState
 from mindspace_graph.voice_render import VoiceCueStream, extract_voice_cue, normalize_voice_cue
+
+_CONTEXTUAL_RECALL = re.compile(
+    r"(?:刚刚|刚才|之前|上次|以前|记得|忘了|有没有|是否|真的?没|第一次|"
+    r"还是|那个|这件事|这样|那样|什么味道|怎么回事)",
+    re.IGNORECASE,
+)
+_EXPLICIT_ADULT_RECALL = re.compile(
+    r"(?:性交|做爱|口交|手交|插入|抽送|射(?:精|了|的)|内射|高潮|阴茎|阴道|"
+    r"精液|鸡巴|肉棒|小穴|跳蛋|潮吹)",
+    re.IGNORECASE,
+)
+_ADULT_FACT_TOKENS = (
+    "性交",
+    "做爱",
+    "口交",
+    "手交",
+    "插入",
+    "抽送",
+    "射",
+    "内射",
+    "高潮",
+    "精液",
+    "跳蛋",
+    "潮吹",
+    "吞",
+    "舔",
+)
+def build_contextual_retrieval_query(
+    message: str, history: list[dict[str, Any]], *, limit: int = 900
+) -> tuple[str, str]:
+    """Resolve short/anaphoric chat queries with nearby dialogue, without an LLM call."""
+
+    current = re.sub(r"\s+", " ", message or "").strip()
+    compact = re.sub(r"\s+", "", current)
+    if len(compact) > 24 and not _CONTEXTUAL_RECALL.search(compact):
+        return current, "current_only"
+    anchors: list[str] = []
+    for item in reversed(history):
+        if item.get("hidden") or item.get("role") not in {"user", "assistant"}:
+            continue
+        content = re.sub(r"\s+", " ", str(item.get("content") or "")).strip()
+        if not content:
+            continue
+        anchors.append(content[:240])
+        if len(anchors) >= 4:
+            break
+    if not anchors:
+        return current, "current_only"
+    query = "\n".join([current, "相关近因：", *reversed(anchors)])
+    return query[-limit:], "anaphora_expanded"
+
+
+def should_open_adult_continuity(
+    message: str, history: list[dict[str, Any]], *, adult_mode: bool
+) -> bool:
+    """Allow adult history only for an explicit topic or its immediate anaphoric follow-up."""
+
+    if adult_mode or _EXPLICIT_ADULT_RECALL.search(message or ""):
+        return True
+    if not _CONTEXTUAL_RECALL.search(message or ""):
+        return False
+    visible = [
+        str(item.get("content") or "")
+        for item in history
+        if not item.get("hidden") and item.get("role") in {"user", "assistant"}
+    ]
+    return any(_EXPLICIT_ADULT_RECALL.search(text) for text in visible[-4:])
+
+
+def _adult_fact_overlap(query: str, text: str) -> int:
+    query_tokens = {token for token in _ADULT_FACT_TOKENS if token in query}
+    return sum(token in text for token in query_tokens)
 
 
 class NodeFactory:
@@ -171,9 +244,8 @@ class NodeFactory:
                 "knowledge_chunks": [],
                 "trace": ["retrieve_knowledge_deferred"],
             }
-        capability_allowed = (
-            self.deps.capabilities is None
-            or self.deps.capabilities.enabled("local_knowledge_enabled")
+        capability_allowed = self.deps.capabilities is None or self.deps.capabilities.enabled(
+            "local_knowledge_enabled"
         )
         if capability_allowed and settings.rag_enabled and settings.knowledge_enabled:
             query = request.message
@@ -194,17 +266,25 @@ class NodeFactory:
         request = state["request"]
         settings = request.retrieval
         chunks = []
+        query = request.message
+        query_mode = "current_only"
         if not settings.ready:
             return {
                 "chat_chunks": [],
                 "trace": ["retrieve_chat_deferred"],
             }
-        capability_allowed = (
-            self.deps.capabilities is None
-            or self.deps.capabilities.enabled("local_knowledge_enabled")
+        capability_allowed = self.deps.capabilities is None or self.deps.capabilities.enabled(
+            "local_knowledge_enabled"
         )
         if capability_allowed and settings.rag_enabled and settings.chat_enabled:
-            query = request.message
+            query, query_mode = build_contextual_retrieval_query(
+                request.message, state.get("recent_history", [])
+            )
+            adult_recall = should_open_adult_continuity(
+                request.message,
+                state.get("recent_history", []),
+                adult_mode=request.adult_mode,
+            )
             chunks = self.deps.retriever.search_chat(
                 query,
                 request.session_id,
@@ -215,7 +295,7 @@ class NodeFactory:
                 character_name=request.character_name,
                 messages=state.get("recent_history", []),
                 include_raw_chat=allow_raw_chat_retrieval(request),
-                adult_mode=request.adult_mode,
+                adult_mode=adult_recall,
             )
             chunks = [item for item in chunks if item.score >= settings.similarity_threshold]
             if self.deps.activities is not None:
@@ -225,13 +305,25 @@ class NodeFactory:
                     limit=min(3, settings.memory_family_limit),
                 )
                 chunks.extend(
-                    item
-                    for item in narratives
-                    if item.score >= settings.similarity_threshold
+                    item for item in narratives if item.score >= settings.similarity_threshold
                 )
         if not settings.structured_memory_enabled:
             chunks = [item for item in chunks if item.source != "memory"]
-        return {"chat_chunks": chunks, "trace": ["retrieve_chat"]}
+        return {
+            "chat_chunks": chunks,
+            "retrieval_query": query if settings.ready else request.message,
+            "retrieval_query_mode": query_mode if settings.ready else "deferred",
+            "adult_recall_opened": bool(
+                settings.ready
+                and not request.adult_mode
+                and should_open_adult_continuity(
+                    request.message,
+                    state.get("recent_history", []),
+                    adult_mode=False,
+                )
+            ),
+            "trace": ["retrieve_chat"],
+        }
 
     def rank_context(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
         self._check_cancelled(state)
@@ -248,9 +340,41 @@ class NodeFactory:
         # reference, raw dialogue evidence, then concise structured history.
         for source in ("knowledge", "chat", "memory"):
             source_chunks = [item for item in combined if item.source == source]
-            ranked.extend(
-                rank_with_temporal_decay(source_chunks, request, limit=quotas[source])
-            )
+            source_ranked = rank_with_temporal_decay(source_chunks, request, limit=quotas[source])
+            if source == "chat" and state.get("adult_recall_opened"):
+                query = str(state.get("retrieval_query") or request.message)
+                anchors = sorted(
+                    (
+                        item
+                        for item in source_chunks
+                        if bool(item.metadata.get("adult_mode"))
+                        and _adult_fact_overlap(query, item.text) > 0
+                    ),
+                    key=lambda item: (
+                        _adult_fact_overlap(query, item.text),
+                        item.round_num,
+                        item.score,
+                    ),
+                    reverse=True,
+                )[: min(2, max(0, quotas[source] - 1))]
+                anchor_ids = {item.chunk_id for item in anchors}
+                source_ranked = [
+                    *anchors,
+                    *(item for item in source_ranked if item.chunk_id not in anchor_ids),
+                ][: quotas[source]]
+            ranked.extend(source_ranked)
+        if state.get("adult_recall_opened"):
+            ranked = [
+                item.model_copy(
+                    update={
+                        "metadata": {
+                            **item.metadata,
+                            "adult_continuity_access": True,
+                        }
+                    }
+                )
+                for item in ranked
+            ]
         self.deps.retriever.record_retrieval(combined, ranked, request.round)
         writer(
             {
@@ -264,6 +388,9 @@ class NodeFactory:
                         "history": sum(item.source == "memory" for item in ranked),
                     },
                     "ranked": [item.model_dump(mode="json") for item in ranked],
+                    "query_mode": state.get("retrieval_query_mode", "current_only"),
+                    "query_characters": len(state.get("retrieval_query", request.message)),
+                    "adult_recall_opened": bool(state.get("adult_recall_opened")),
                     "ready": request.retrieval.ready,
                     "deferred_reason": request.retrieval.deferred_reason,
                 },
@@ -520,8 +647,7 @@ class NodeFactory:
         has_web = any(result.capability.startswith("web.") for result in results)
         reviewer = getattr(self.deps.llm, "review_research", None)
         review_required = bool(
-            service is not None
-            and service.research_review_required(plan, results)
+            service is not None and service.research_review_required(plan, results)
         )
         if (
             service is None
@@ -688,14 +814,9 @@ class NodeFactory:
         # The Base character voice no longer requires a leading cue.
         voice_cue_stream = VoiceCueStream(allow_adult=request.adult_mode)
         active_tts_provider = (
-            self.deps.tts_provider()
-            if callable(self.deps.tts_provider)
-            else self.deps.tts_provider
+            self.deps.tts_provider() if callable(self.deps.tts_provider) else self.deps.tts_provider
         )
-        emit_voice_cue = (
-            request.interaction_mode == "voice"
-            and active_tts_provider == "qwen3-vllm"
-        )
+        emit_voice_cue = request.interaction_mode == "voice" and active_tts_provider == "qwen3-vllm"
         voice_cue_sent = False
         chunks: list[str] = []
         for token in self.deps.llm.stream(state["prompt_messages"], request.api):
@@ -758,18 +879,15 @@ class NodeFactory:
         # Adult/director runs intentionally defer visible deltas, so their cue
         # must be recovered from the completed response instead of inheriting
         # the stream parser's neutral default.
-        voice_cue = parsed_voice_cue if explicit_cue else normalize_voice_cue(
-            state.get("voice_cue"), allow_adult=request.adult_mode
+        voice_cue = (
+            parsed_voice_cue
+            if explicit_cue
+            else normalize_voice_cue(state.get("voice_cue"), allow_adult=request.adult_mode)
         )
         active_tts_provider = (
-            self.deps.tts_provider()
-            if callable(self.deps.tts_provider)
-            else self.deps.tts_provider
+            self.deps.tts_provider() if callable(self.deps.tts_provider) else self.deps.tts_provider
         )
-        emit_voice_cue = (
-            request.interaction_mode == "voice"
-            and active_tts_provider == "qwen3-vllm"
-        )
+        emit_voice_cue = request.interaction_mode == "voice" and active_tts_provider == "qwen3-vllm"
         if emit_voice_cue and not state.get("voice_cue_event_sent"):
             writer({"event": "response.voice_cue", "data": {"cue": voice_cue}})
         visible_response = parsed_visible or previous_visible
@@ -797,9 +915,7 @@ class NodeFactory:
         update: dict[str, Any] = {
             "protocol_errors": errors,
             "voice_cue": voice_cue,
-            "voice_cue_event_sent": bool(
-                emit_voice_cue or state.get("voice_cue_event_sent")
-            ),
+            "voice_cue_event_sent": bool(emit_voice_cue or state.get("voice_cue_event_sent")),
             "trace": ["parse_protocol"],
         }
         if visible_response:
@@ -1135,9 +1251,7 @@ class NodeFactory:
                     item.source == "knowledge" for item in state.get("ranked_context", [])
                 ),
                 "chat": sum(item.source == "chat" for item in state.get("ranked_context", [])),
-                "history": sum(
-                    item.source == "memory" for item in state.get("ranked_context", [])
-                ),
+                "history": sum(item.source == "memory" for item in state.get("ranked_context", [])),
             },
             errors=validation.errors,
             trace=[*state.get("trace", []), "persist_turn"],

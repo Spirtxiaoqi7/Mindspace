@@ -49,6 +49,26 @@ export interface SessionDocument {
 
 export type CharacterSource = "draw" | "custom" | "imported" | "migrated";
 
+export interface CharacterCardV2Data {
+  name: string;
+  description: string;
+  personality: string;
+  scenario: string;
+  first_mes: string;
+  mes_example: string;
+  alternate_greetings: string[];
+  tags: string[];
+  creator: string;
+  character_version: string;
+  extensions: { mindspace?: { gender?: "男" | "女" | "不指定"; journey_id?: string; selected_card_ids?: string[] } };
+}
+
+export interface CharacterCardV2 {
+  spec: "chara_card_v2";
+  spec_version: "2.0";
+  data: CharacterCardV2Data;
+}
+
 export interface CharacterSummary {
   character_id: string;
   schema_version: string;
@@ -68,9 +88,8 @@ export interface CharacterSummary {
 }
 
 export interface CharacterRecord extends CharacterSummary {
-  system_prompt: string;
-  ai_profile: Record<string, unknown>;
-  runtime_state: Record<string, unknown>;
+  card: CharacterCardV2;
+  memory: { preferences: string[]; tasks: string[] };
 }
 
 export interface SceneDefinition {

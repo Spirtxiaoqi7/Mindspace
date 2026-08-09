@@ -29,6 +29,9 @@ class TurnState(TypedDict, total=False):
     request: ChatRequest
     profiles: ProfileBundle
     recent_history: list[dict[str, Any]]
+    retrieval_query: str
+    retrieval_query_mode: str
+    adult_recall_opened: bool
     knowledge_chunks: list[RetrievedChunk]
     chat_chunks: list[RetrievedChunk]
     ranked_context: list[RetrievedChunk]

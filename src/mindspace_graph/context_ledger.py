@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -45,6 +46,92 @@ MODEL_DIALOGUE_KINDS = {
     "assistant_message",
     "continuity_digest",
 }
+
+_PRIVATE_ADULT_DETAIL = re.compile(
+    r"(?:性交|做爱|口交|手交|插入|抽送|射精|内射|高潮|阴茎|阴道|精液|鸡巴|肉棒|小穴)",
+    re.I,
+)
+
+
+def _redact_adult_overview(value: str) -> str:
+    parts: list[str] = []
+    adult_seen = False
+    for raw in re.split(r"[；;]", value or ""):
+        text = raw.strip()
+        if not text:
+            continue
+        if _PRIVATE_ADULT_DETAIL.search(text):
+            adult_seen = True
+            continue
+        if text not in parts:
+            parts.append(text)
+    if adult_seen:
+        parts.append("双方有已确认的成人亲密经历；具体事实仅在成人模式中用于连续性回忆")
+    return "；".join(parts)[-3000:]
+
+
+def summary_prompt_view(summary: dict[str, Any], *, adult_mode: bool) -> dict[str, Any]:
+    """Project one stored summary into a mode-safe prompt view."""
+
+    view = json.loads(json.dumps(summary, ensure_ascii=False))
+    if adult_mode:
+        return view
+    had_adult_facts = bool(view.get("adult_facts"))
+    view.pop("adult_facts", None)
+    lane_overviews = dict(view.get("lane_overviews") or {})
+    lane_overviews.pop("ADULT", None)
+    view["lane_overviews"] = {
+        key: _redact_adult_overview(str(value)) for key, value in lane_overviews.items()
+    }
+    view["continuity_overview"] = _redact_adult_overview(str(view.get("continuity_overview") or ""))
+    if had_adult_facts and "成人亲密经历" not in view["continuity_overview"]:
+        view["continuity_overview"] = "；".join(
+            item
+            for item in (
+                view["continuity_overview"],
+                "双方有已确认的成人亲密经历；具体事实仅在成人模式中用于连续性回忆",
+            )
+            if item
+        )[-3000:]
+    for key in (
+        "recent_events",
+        "open_threads",
+        "commitments",
+        "relationship_deltas",
+        "confirmed_facts",
+        "temporary_cues",
+    ):
+        safe: list[dict[str, Any]] = []
+        adult_seen = False
+        for item in view.get(key, []) if isinstance(view.get(key), list) else []:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or "")
+            if str(item.get("lane") or "DAILY") == "ADULT" or _PRIVATE_ADULT_DETAIL.search(text):
+                adult_seen = True
+                continue
+            safe.append(item)
+        if adult_seen and key in {"recent_events", "relationship_deltas"}:
+            safe.append(
+                {
+                    "text": "双方有已确认的成人亲密经历",
+                    "evidence_ids": [],
+                    "lane": "ROMANCE",
+                }
+            )
+        view[key] = safe
+    return view
+
+
+def _summary_message(summary: dict[str, Any], *, adult_mode: bool) -> dict[str, str]:
+    return {
+        "role": "user",
+        "content": (
+            "以下是已压缩的历史对话状态，只用于延续语境；"
+            "权威 JSON 与后续原始消息拥有更高优先级。\n\n"
+            f"【当前连续性包】\n{_json(summary_prompt_view(summary, adult_mode=adult_mode))}"
+        ),
+    }
 
 
 def _trust_defaults(kind: str) -> tuple[str, float, str]:
@@ -128,8 +215,7 @@ def _recent_dialogue_events(
         except json.JSONDecodeError:
             metadata = {}
         if not allow_adult and (
-            bool(metadata.get("adult_mode"))
-            or str(metadata.get("companion_lane") or "") == "ADULT"
+            bool(metadata.get("adult_mode")) or str(metadata.get("companion_lane") or "") == "ADULT"
         ):
             continue
         try:
@@ -371,9 +457,7 @@ class ContextLedger:
             # dialogue, but it is never a long-term retrieval source.  This
             # migration covers ledgers created by versions that marked every
             # visible message as retrievable.
-            db.execute(
-                "UPDATE context_events SET retrieval_eligible=0 WHERE role='assistant'"
-            )
+            db.execute("UPDATE context_events SET retrieval_eligible=0 WHERE role='assistant'")
 
     def record_model_usage(
         self,
@@ -485,9 +569,7 @@ class ContextLedger:
             summary = str(value.get("recent_event_summary") or "").strip()
             progression = str(value.get("event_progression") or "").strip()
             open_threads = [
-                str(item).strip()
-                for item in value.get("open_threads", [])
-                if str(item).strip()
+                str(item).strip() for item in value.get("open_threads", []) if str(item).strip()
             ][:3]
             correction = ""
             if (
@@ -613,9 +695,7 @@ class ContextLedger:
     ) -> int:
         default_source, default_confidence, default_visibility = _trust_defaults(kind)
         source = source or default_source
-        confidence = (
-            default_confidence if confidence is None else max(0.0, min(1.0, confidence))
-        )
+        confidence = default_confidence if confidence is None else max(0.0, min(1.0, confidence))
         visibility = visibility or default_visibility
         if visibility not in {"model", "audit", "ephemeral"}:
             raise ValueError(f"unsupported context visibility: {visibility}")
@@ -770,9 +850,15 @@ class ContextLedger:
             ).fetchall()
             dialogue_events = _recent_dialogue_events(events, allow_adult=adult_mode)
             prefix_messages = json.loads(epoch["base_messages_json"])
+            stored_summary = (
+                json.loads(epoch["compacted_summary_json"])
+                if epoch["compacted_summary_json"]
+                else None
+            )
+            if stored_summary and len(prefix_messages) > 3:
+                prefix_messages[3] = _summary_message(stored_summary, adult_mode=adult_mode)
             dialogue_messages = [
-                {"role": row["role"], "content": row["content"]}
-                for row in dialogue_events
+                {"role": row["role"], "content": row["content"]} for row in dialogue_events
             ]
             messages = [*prefix_messages, *dialogue_messages]
             head = max((int(row["sequence"]) for row in events), default=0)
@@ -790,7 +876,12 @@ class ContextLedger:
                     label in old_base[3].get("content", "")
                     for label in ("【历史压缩摘要】", "【当前连续性包】")
                 ):
-                    bounded_base = [*expected_base, old_base[3]]
+                    bounded_base = [
+                        *expected_base,
+                        _summary_message(stored_summary, adult_mode=adult_mode)
+                        if stored_summary
+                        else old_base[3],
+                    ]
                 warning = {
                     "role": "user",
                     "content": (
@@ -872,9 +963,7 @@ class ContextLedger:
                     persistence_eligible=bool(item.get("persistence_eligible", True)),
                     source=(str(item["source"]) if item.get("source") is not None else None),
                     confidence=(
-                        float(item["confidence"])
-                        if item.get("confidence") is not None
-                        else None
+                        float(item["confidence"]) if item.get("confidence") is not None else None
                     ),
                     visibility=(
                         str(item["visibility"]) if item.get("visibility") is not None else None
@@ -902,9 +991,7 @@ class ContextLedger:
                         "message_id": assistant_message_id,
                         "round": round_num,
                         "adult_mode": bool(turn_metadata.get("adult_mode")),
-                        "companion_lane": str(
-                            turn_metadata.get("companion_lane") or "DAILY"
-                        ),
+                        "companion_lane": str(turn_metadata.get("companion_lane") or "DAILY"),
                     },
                     ui_visible=True,
                     retrieval_eligible=False,
@@ -1038,14 +1125,12 @@ class ContextLedger:
                 and len(user_rows) > retain_recent_turns
             )
             segment_due = bool(
-                has_summary
-                and len(user_rows) >= retain_recent_turns + max(1, segment_turns)
+                has_summary and len(user_rows) >= retain_recent_turns + max(1, segment_turns)
             )
             lane_transition_due = bool(
                 has_summary
                 and maximum_round >= bootstrap_rounds
-                and len(user_rows)
-                >= retain_recent_turns + max(3, max(1, segment_turns) // 2)
+                and len(user_rows) >= retain_recent_turns + max(3, max(1, segment_turns) // 2)
                 and len(lanes) >= 2
                 and lanes[-1] != lanes[-2]
             )
@@ -1183,9 +1268,7 @@ class ContextLedger:
                 if str(item.get("message_id") or "").strip()
             ]
             rounds = [
-                int(item["round"])
-                for item in dialogue
-                if str(item.get("round") or "").isdigit()
+                int(item["round"]) for item in dialogue if str(item.get("round") or "").isdigit()
             ]
             return {
                 "previous_summary": (
@@ -1199,9 +1282,7 @@ class ContextLedger:
                     "from_round": min(rounds, default=0),
                     "to_round": max(rounds, default=0),
                     "message_ids": message_ids,
-                    "source_hash": hashlib.sha256(
-                        _json(dialogue).encode("utf-8")
-                    ).hexdigest(),
+                    "source_hash": hashlib.sha256(_json(dialogue).encode("utf-8")).hexdigest(),
                     "rewrite_version": job.source_rewrite_version,
                 },
                 "dialogue": dialogue,
@@ -1235,14 +1316,7 @@ class ContextLedger:
             ).fetchone()
             old_base = json.loads(old_epoch["base_messages_json"])
             static_messages = old_base[:2]
-            summary_message = {
-                "role": "user",
-                "content": (
-                    "以下是已压缩的历史对话状态，只用于延续语境；"
-                    "权威 JSON 与后续原始消息拥有更高优先级。\n\n"
-                    f"【当前连续性包】\n{_json(summary)}"
-                ),
-            }
+            summary_message = _summary_message(summary, adult_mode=False)
             new_base = [
                 *static_messages,
                 authoritative_profile_message(profiles),

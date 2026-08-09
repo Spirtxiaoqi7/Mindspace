@@ -11,6 +11,10 @@ from mindspace_graph.adapters.in_memory import (
 )
 from mindspace_graph.graph import build_graph
 from mindspace_graph.models import ApiConfig, ChatRequest, DeletionEvent, VoiceDeliveryState
+from mindspace_graph.nodes import (
+    build_contextual_retrieval_query,
+    should_open_adult_continuity,
+)
 
 
 def invoke(deps, **request_overrides):
@@ -22,6 +26,45 @@ def invoke(deps, **request_overrides):
     values.update(request_overrides)
     request = ChatRequest(**values)
     return build_graph(deps).invoke({"request": request}, config={"recursion_limit": 20})
+
+
+def test_short_recall_query_includes_recent_dialogue_anchors():
+    query, mode = build_contextual_retrieval_query(
+        "你真没尝过？",
+        [
+            {"role": "user", "content": "刚刚说到味道。"},
+            {"role": "assistant", "content": "我说那是甜的。"},
+        ],
+    )
+
+    assert mode == "anaphora_expanded"
+    assert "你真没尝过" in query
+    assert "刚刚说到味道" in query
+    assert "我说那是甜的" in query
+
+
+def test_specific_long_query_stays_current_only():
+    query, mode = build_contextual_retrieval_query(
+        "请比较这两个明确给出的数据库迁移方案并列出性能差异",
+        [{"role": "assistant", "content": "不相关历史"}],
+    )
+
+    assert mode == "current_only"
+    assert query == "请比较这两个明确给出的数据库迁移方案并列出性能差异"
+
+
+def test_adult_continuity_opens_for_explicit_topic_and_immediate_follow_up():
+    assert should_open_adult_continuity("射的也是甜的吗", [], adult_mode=False)
+    assert should_open_adult_continuity(
+        "你真没尝过？",
+        [{"role": "user", "content": "射的也是甜的吗"}],
+        adult_mode=False,
+    )
+    assert not should_open_adult_continuity(
+        "你还记得昨天吗？",
+        [{"role": "user", "content": "我们在公园散步"}],
+        adult_mode=False,
+    )
 
 
 def test_happy_path_runs_parallel_retrieval_and_persists_turn():

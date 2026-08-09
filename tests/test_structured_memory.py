@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 from mindspace_graph.adapters.structured_memory import StructuredMemoryStore
 from mindspace_graph.models import ChatRequest, JsonWriteReceipt, RetrievedChunk
 from mindspace_graph.policies import rank_with_temporal_decay
@@ -149,6 +151,55 @@ def test_opposing_preference_reuses_one_slot_and_multiple_tags_share_one_episode
     ]
     assert len(preferences) == 1
     assert preferences[0]["json_tags"][0]["polarity"] == "dislike"
+
+
+def test_temporal_memory_expires_to_a_tombstone_while_persistent_memory_remains(tmp_path):
+    store = StructuredMemoryStore(tmp_path / "structured-memory.json")
+    store.record_turn(
+        _request(),
+        "记住了。",
+        persisted=_persisted(1),
+        write_receipt=_receipt(
+            {
+                "target": "runtime_state",
+                "op": "replace",
+                "path": "/user_state/current_goal",
+                "after": "临时目标",
+            },
+            {
+                "target": "user_profile",
+                "op": "add",
+                "path": "/stable_preferences/likes/-",
+                "after": "长期偏好",
+            },
+        ),
+    )
+    snapshot = store.snapshot()
+    temporal_key = next(
+        key for key, item in snapshot["active"].items() if item["lifecycle"] == "temporal"
+    )
+    persistent_key = next(
+        key for key, item in snapshot["active"].items() if item["lifecycle"] == "persistent"
+    )
+    snapshot["active"][temporal_key]["expires_at"] = (
+        datetime.now(UTC) - timedelta(seconds=1)
+    ).isoformat()
+    store._save(snapshot)
+
+    store.record_turn(
+        _request(2, "普通对话"),
+        "普通回复",
+        persisted=_persisted(2),
+        write_receipt=_receipt(),
+    )
+    pruned = store.snapshot()
+
+    assert temporal_key not in pruned["active"]
+    assert persistent_key in pruned["active"]
+    assert any(
+        item["memory_key"] == temporal_key and item["reason"] == "expired"
+        for item in pruned["tombstones"]
+    )
 
 
 def test_fair_ranking_reserves_a_slot_for_an_underexposed_memory():
