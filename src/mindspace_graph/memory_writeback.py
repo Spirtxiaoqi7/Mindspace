@@ -56,11 +56,7 @@ class MemoryWritebackService:
         )
 
     async def flush_session(self, session_id: str) -> None:
-        tasks = [
-            task
-            for key, task in self._tasks.items()
-            if key.startswith(f"{session_id}:") and not task.done()
-        ]
+        tasks = [task for key, task in self._tasks.items() if key.startswith(f"{session_id}:") and not task.done()]
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -97,9 +93,7 @@ class MemoryWritebackService:
                     }
                 )
                 allowed_patches = [
-                    patch
-                    for patch in plan.patches
-                    if self._automatic_patch_allowed(patch.target, patch.path)
+                    patch for patch in plan.patches if self._automatic_patch_allowed(patch.target, patch.path)
                 ]
                 plan = plan.model_copy(
                     update={
@@ -158,9 +152,7 @@ class MemoryWritebackService:
                         "session_id": request.session_id,
                         "round": request.round,
                         "patch_count": len(receipt.patches),
-                        "targets": sorted(
-                            {str(item.get("target") or "") for item in receipt.patches}
-                        ),
+                        "targets": sorted({str(item.get("target") or "") for item in receipt.patches}),
                     },
                 )
         except asyncio.CancelledError:

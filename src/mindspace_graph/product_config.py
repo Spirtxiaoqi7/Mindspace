@@ -50,19 +50,15 @@ class ProductConfigStore:
                 self._config["llm"]["mode"] = "openai"
             if self._config["appearance"].get("theme") == "system":
                 self._config["appearance"]["theme"] = "mindscape"
-            loaded_audio = (
-                loaded.get("audio", {}) if isinstance(loaded, dict) else {}
-            )
+            loaded_audio = loaded.get("audio", {}) if isinstance(loaded, dict) else {}
             if "tts_qwen3_vllm_task_type" not in loaded_audio:
                 # Migrate only configurations written before the task type
                 # existed. Later explicit voice choices remain user-owned.
                 self._config["audio"]["tts_qwen3_vllm_task_type"] = "CustomVoice"
                 self._config["audio"]["tts_qwen3_vllm_voice"] = "serena"
             elif (
-                str(self._config["audio"].get("tts_qwen3_vllm_task_type")).lower()
-                == "base"
-                and self._config["audio"].get("tts_qwen3_vllm_voice")
-                == "mindspace_mature_alluring"
+                str(self._config["audio"].get("tts_qwen3_vllm_task_type")).lower() == "base"
+                and self._config["audio"].get("tts_qwen3_vllm_voice") == "mindspace_mature_alluring"
             ):
                 # 0.5.41/0.5.42 briefly shipped the Base clone profile. It
                 # stabilised timbre but removed CustomVoice's actual prosody
@@ -292,9 +288,7 @@ class ProductConfigStore:
         self.settings.tts_qwen3_vllm_url = str(audio["tts_qwen3_vllm_url"])
         self.settings.tts_qwen3_vllm_model = str(audio["tts_qwen3_vllm_model"])
         self.settings.tts_qwen3_vllm_voice = str(audio["tts_qwen3_vllm_voice"])
-        self.settings.tts_qwen3_vllm_task_type = str(
-            audio["tts_qwen3_vllm_task_type"]
-        )
+        self.settings.tts_qwen3_vllm_task_type = str(audio["tts_qwen3_vllm_task_type"])
         self.settings.tts_qwen3_vllm_language = str(audio["tts_qwen3_vllm_language"])
         self.settings.auto_tts = bool(audio["auto_tts"])
         self.settings.asr_provider = str(audio["asr_provider"])
@@ -322,6 +316,29 @@ class ProductConfigStore:
             value["audio"]["tts_reference_name"] = Path(reference).name if reference else ""
         return value
 
+    def checkpoint(self) -> dict[str, Any]:
+        """Return a private rollback snapshot for one in-process settings update."""
+
+        with self._lock:
+            return deepcopy(self._config)
+
+    def restore(self, snapshot: dict[str, Any]) -> None:
+        """Restore configuration, disk state and live settings as one compensation step."""
+
+        if not isinstance(snapshot, dict):
+            raise ValueError("settings rollback snapshot must be an object")
+        with self._lock:
+            previous = deepcopy(self._config)
+            self._config = deepcopy(snapshot)
+            try:
+                self._validate()
+                _atomic_json(self.path, self._config)
+                self._apply_live_settings()
+            except Exception:
+                self._config = previous
+                self._apply_live_settings()
+                raise
+
     def update(self, patch: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(patch, dict):
             raise ValueError("settings patch must be an object")
@@ -341,18 +358,23 @@ class ProductConfigStore:
             self._config = _merge_known(self._config, sanitized)
             try:
                 self._validate()
-            except (TypeError, ValueError):
+                _atomic_json(self.path, self._config)
+                self._apply_live_settings()
+            except Exception as primary_error:
                 self._config = previous
-                raise
-            _atomic_json(self.path, self._config)
-            self._apply_live_settings()
+                try:
+                    _atomic_json(self.path, previous)
+                    self._apply_live_settings()
+                except Exception as rollback_error:
+                    raise RuntimeError(
+                        "settings update failed and its local rollback could not be persisted"
+                    ) from rollback_error
+                raise primary_error
         return self.snapshot(redact=True)
 
     def _validate(self) -> None:
         persona = self._config["persona"]
-        persona["reply_length_preference"] = str(
-            persona.get("reply_length_preference") or ""
-        ).strip()[:300]
+        persona["reply_length_preference"] = str(persona.get("reply_length_preference") or "").strip()[:300]
         llm = self._config["llm"]
         llm["mode"] = str(llm["mode"]).strip().lower()
         if llm["mode"] not in {"demo", "openai"}:
@@ -368,16 +390,12 @@ class ProductConfigStore:
         )
         llm["compaction_patch_limit"] = max(4, min(256, int(llm["compaction_patch_limit"])))
         llm["compaction_retain_turns"] = max(2, min(32, int(llm["compaction_retain_turns"])))
-        llm["compaction_delay_seconds"] = max(
-            0.0, min(30.0, float(llm["compaction_delay_seconds"]))
-        )
+        llm["compaction_delay_seconds"] = max(0.0, min(30.0, float(llm["compaction_delay_seconds"])))
         retrieval = self._config["retrieval"]
         retrieval["knowledge_k"] = max(1, min(50, int(retrieval["knowledge_k"])))
         retrieval["chat_k"] = max(1, min(100, int(retrieval["chat_k"])))
         retrieval["history_k"] = max(1, min(100, int(retrieval.get("history_k", 3))))
-        retrieval["similarity_threshold"] = max(
-            0.0, min(1.0, float(retrieval["similarity_threshold"]))
-        )
+        retrieval["similarity_threshold"] = max(0.0, min(1.0, float(retrieval["similarity_threshold"])))
         retrieval["low_exposure_ratio"] = max(0.0, min(0.5, float(retrieval["low_exposure_ratio"])))
         retrieval["memory_family_limit"] = max(1, min(10, int(retrieval["memory_family_limit"])))
         retrieval["starvation_rounds"] = max(1, min(100, int(retrieval["starvation_rounds"])))
@@ -397,9 +415,7 @@ class ProductConfigStore:
             retrieval["boosts"][key] = max(0.0, min(0.25, float(retrieval["boosts"][key])))
         knowledge = self._config["knowledge"]
         knowledge["child_size"] = max(100, min(3000, int(knowledge["child_size"])))
-        knowledge["parent_size"] = max(
-            knowledge["child_size"], min(10000, int(knowledge["parent_size"]))
-        )
+        knowledge["parent_size"] = max(knowledge["child_size"], min(10000, int(knowledge["parent_size"])))
         knowledge["overlap"] = max(0, min(knowledge["child_size"] - 1, int(knowledge["overlap"])))
         audio = self._config["audio"]
         audio["tts_provider"] = str(audio["tts_provider"]).strip().lower()
@@ -412,13 +428,10 @@ class ProductConfigStore:
             "qwen3-vllm",
         }:
             raise ValueError(
-                "audio.tts_provider must be browser, mock, cosyvoice, siliconflow, "
-                "gpt-sovits, or qwen3-vllm"
+                "audio.tts_provider must be browser, mock, cosyvoice, siliconflow, gpt-sovits, or qwen3-vllm"
             )
         audio["tts_speed"] = max(0.5, min(2.0, float(audio["tts_speed"])))
-        audio["tts_siliconflow_base_url"] = (
-            str(audio["tts_siliconflow_base_url"]).strip().rstrip("/")
-        )
+        audio["tts_siliconflow_base_url"] = str(audio["tts_siliconflow_base_url"]).strip().rstrip("/")
         audio["tts_siliconflow_model"] = str(audio["tts_siliconflow_model"]).strip()
         audio["tts_siliconflow_voice"] = str(audio["tts_siliconflow_voice"]).strip()
         audio["tts_siliconflow_gain"] = max(-10.0, min(10.0, float(audio["tts_siliconflow_gain"])))
@@ -426,9 +439,7 @@ class ProductConfigStore:
         if sample_rate not in {8000, 16000, 24000, 32000, 44100}:
             raise ValueError("unsupported SiliconFlow PCM sample rate")
         audio["tts_siliconflow_sample_rate"] = sample_rate
-        audio["tts_gpt_sovits_worker_url"] = (
-            str(audio["tts_gpt_sovits_worker_url"]).strip().rstrip("/")
-        )
+        audio["tts_gpt_sovits_worker_url"] = str(audio["tts_gpt_sovits_worker_url"]).strip().rstrip("/")
         audio["tts_gpt_sovits_voice"] = str(audio["tts_gpt_sovits_voice"]).strip()
         if audio["tts_gpt_sovits_voice"] not in GPT_SOVITS_VOICES:
             raise ValueError("unsupported GPT-SoVITS voice")
@@ -440,18 +451,12 @@ class ProductConfigStore:
         task_type = str(audio["tts_qwen3_vllm_task_type"]).strip()
         if task_type.lower() not in {"base", "customvoice"}:
             raise ValueError("audio.tts_qwen3_vllm_task_type must be Base or CustomVoice")
-        audio["tts_qwen3_vllm_task_type"] = (
-            "Base" if task_type.lower() == "base" else "CustomVoice"
-        )
-        audio["tts_qwen3_vllm_language"] = (
-            str(audio["tts_qwen3_vllm_language"]).strip() or "Chinese"
-        )
+        audio["tts_qwen3_vllm_task_type"] = "Base" if task_type.lower() == "base" else "CustomVoice"
+        audio["tts_qwen3_vllm_language"] = str(audio["tts_qwen3_vllm_language"]).strip() or "Chinese"
         if not audio["tts_qwen3_vllm_model"] or not audio["tts_qwen3_vllm_voice"]:
             raise ValueError("Qwen3-TTS model and voice must not be blank")
         audio["asr_silence_ms"] = max(250, min(3000, int(audio["asr_silence_ms"])))
-        audio["asr_energy_threshold_db"] = max(
-            -60.0, min(-15.0, float(audio["asr_energy_threshold_db"]))
-        )
+        audio["asr_energy_threshold_db"] = max(-60.0, min(-15.0, float(audio["asr_energy_threshold_db"])))
         audio["asr_noise_gate_db"] = max(-70.0, min(-20.0, float(audio["asr_noise_gate_db"])))
         if audio["asr_noise_gate_db"] > audio["asr_energy_threshold_db"]:
             audio["asr_noise_gate_db"] = audio["asr_energy_threshold_db"]
@@ -459,52 +464,28 @@ class ProductConfigStore:
         audio["asr_listening_energy_threshold_db"] = max(
             -60.0, min(-15.0, float(audio["asr_listening_energy_threshold_db"]))
         )
-        audio["asr_listening_min_speech_ms"] = max(
-            60, min(1000, int(audio["asr_listening_min_speech_ms"]))
-        )
+        audio["asr_listening_min_speech_ms"] = max(60, min(1000, int(audio["asr_listening_min_speech_ms"])))
         audio["asr_barge_in_energy_threshold_db"] = max(
             -60.0, min(-15.0, float(audio["asr_barge_in_energy_threshold_db"]))
         )
-        audio["asr_barge_in_min_speech_ms"] = max(
-            120, min(1500, int(audio["asr_barge_in_min_speech_ms"]))
-        )
-        audio["asr_candidate_release_ms"] = max(
-            80, min(1000, int(audio["asr_candidate_release_ms"]))
-        )
-        audio["asr_barge_in_cooldown_ms"] = max(
-            250, min(5000, int(audio["asr_barge_in_cooldown_ms"]))
-        )
-        audio["asr_false_candidate_backoff_ms"] = max(
-            500, min(10000, int(audio["asr_false_candidate_backoff_ms"]))
-        )
-        audio["asr_duplicate_text_window_ms"] = max(
-            500, min(10000, int(audio["asr_duplicate_text_window_ms"]))
-        )
+        audio["asr_barge_in_min_speech_ms"] = max(120, min(1500, int(audio["asr_barge_in_min_speech_ms"])))
+        audio["asr_candidate_release_ms"] = max(80, min(1000, int(audio["asr_candidate_release_ms"])))
+        audio["asr_barge_in_cooldown_ms"] = max(250, min(5000, int(audio["asr_barge_in_cooldown_ms"])))
+        audio["asr_false_candidate_backoff_ms"] = max(500, min(10000, int(audio["asr_false_candidate_backoff_ms"])))
+        audio["asr_duplicate_text_window_ms"] = max(500, min(10000, int(audio["asr_duplicate_text_window_ms"])))
         audio["asr_adaptive_noise_enabled"] = bool(audio["asr_adaptive_noise_enabled"])
-        audio["asr_noise_calibration_ms"] = max(
-            500, min(5000, int(audio["asr_noise_calibration_ms"]))
-        )
-        audio["asr_listening_noise_margin_db"] = max(
-            4.0, min(24.0, float(audio["asr_listening_noise_margin_db"]))
-        )
+        audio["asr_noise_calibration_ms"] = max(500, min(5000, int(audio["asr_noise_calibration_ms"])))
+        audio["asr_listening_noise_margin_db"] = max(4.0, min(24.0, float(audio["asr_listening_noise_margin_db"])))
         audio["asr_barge_in_noise_margin_db"] = max(
             audio["asr_listening_noise_margin_db"] + 2.0,
             min(30.0, float(audio["asr_barge_in_noise_margin_db"])),
         )
-        audio["asr_utterance_merge_ms"] = max(
-            650, min(3000, int(audio["asr_utterance_merge_ms"]))
-        )
-        audio["asr_deferred_during_playback"] = bool(
-            audio["asr_deferred_during_playback"]
-        )
+        audio["asr_utterance_merge_ms"] = max(650, min(3000, int(audio["asr_utterance_merge_ms"])))
+        audio["asr_deferred_during_playback"] = bool(audio["asr_deferred_during_playback"])
         audio["asr_hotwords_enabled"] = bool(audio["asr_hotwords_enabled"])
         audio["asr_dynamic_endpointing"] = bool(audio["asr_dynamic_endpointing"])
-        audio["asr_final_refinement_enabled"] = bool(
-            audio["asr_final_refinement_enabled"]
-        )
-        audio["asr_final_refinement_timeout_ms"] = max(
-            200, min(5000, int(audio["asr_final_refinement_timeout_ms"]))
-        )
+        audio["asr_final_refinement_enabled"] = bool(audio["asr_final_refinement_enabled"])
+        audio["asr_final_refinement_timeout_ms"] = max(200, min(5000, int(audio["asr_final_refinement_timeout_ms"])))
         audio["asr_final_refinement_min_audio_ms"] = max(
             160, min(2000, int(audio["asr_final_refinement_min_audio_ms"]))
         )
@@ -515,37 +496,21 @@ class ProductConfigStore:
         # Reserved compatibility field: the emotion implementation is disabled
         # and cannot be re-enabled by stale user configuration.
         audio["emotion_enabled"] = False
-        audio["emotion_deadline_ms"] = max(
-            300, min(2500, int(audio["emotion_deadline_ms"]))
-        )
+        audio["emotion_deadline_ms"] = max(300, min(2500, int(audio["emotion_deadline_ms"])))
         interaction = self._config["interaction"]
-        interaction["voice_entry_mode"] = str(
-            interaction["voice_entry_mode"]
-        ).strip().lower()
+        interaction["voice_entry_mode"] = str(interaction["voice_entry_mode"]).strip().lower()
         if interaction["voice_entry_mode"] not in {"call", "face_to_face"}:
             raise ValueError("interaction.voice_entry_mode must be call or face_to_face")
-        interaction["face_to_face_scene"] = str(
-            interaction["face_to_face_scene"]
-        ).strip()[:2000]
-        interaction["idle_continuation_enabled"] = bool(
-            interaction["idle_continuation_enabled"]
-        )
-        interaction["text_idle_seconds"] = max(
-            10, min(3600, int(interaction["text_idle_seconds"]))
-        )
-        interaction["voice_idle_seconds"] = max(
-            5, min(600, int(interaction["voice_idle_seconds"]))
-        )
-        interaction["unlimited_reply_enabled"] = bool(
-            interaction["unlimited_reply_enabled"]
-        )
+        interaction["face_to_face_scene"] = str(interaction["face_to_face_scene"]).strip()[:2000]
+        interaction["idle_continuation_enabled"] = bool(interaction["idle_continuation_enabled"])
+        interaction["text_idle_seconds"] = max(10, min(3600, int(interaction["text_idle_seconds"])))
+        interaction["voice_idle_seconds"] = max(5, min(600, int(interaction["voice_idle_seconds"])))
+        interaction["unlimited_reply_enabled"] = bool(interaction["unlimited_reply_enabled"])
         # Product behavior is intentionally fixed at ten seconds. Keeping the
         # value in the config makes the runtime state explicit without exposing
         # a second timing control in the UI.
         interaction["unlimited_reply_interval_seconds"] = 10
-        interaction["unlimited_reply_max_rounds"] = max(
-            1, min(50, int(interaction["unlimited_reply_max_rounds"]))
-        )
+        interaction["unlimited_reply_max_rounds"] = max(1, min(50, int(interaction["unlimited_reply_max_rounds"])))
         capabilities = self._config["capabilities"]
         for key in (
             "master_enabled",
@@ -560,18 +525,10 @@ class ProductConfigStore:
         if not capabilities["web_search_enabled"]:
             capabilities["realtime_topics_enabled"] = False
             capabilities["proactive_hotspots_enabled"] = False
-        capabilities["web_timeout_seconds"] = max(
-            2.0, min(30.0, float(capabilities["web_timeout_seconds"]))
-        )
-        capabilities["max_web_results"] = max(
-            1, min(20, int(capabilities["max_web_results"]))
-        )
-        capabilities["max_web_pages"] = max(
-            0, min(10, int(capabilities["max_web_pages"]))
-        )
-        capabilities["max_web_content_chars"] = max(
-            2000, min(30000, int(capabilities["max_web_content_chars"]))
-        )
+        capabilities["web_timeout_seconds"] = max(2.0, min(30.0, float(capabilities["web_timeout_seconds"])))
+        capabilities["max_web_results"] = max(1, min(20, int(capabilities["max_web_results"])))
+        capabilities["max_web_pages"] = max(0, min(10, int(capabilities["max_web_pages"])))
+        capabilities["max_web_content_chars"] = max(2000, min(30000, int(capabilities["max_web_content_chars"])))
         appearance = self._config["appearance"]
         if appearance["theme"] not in {"mindscape", "dark"}:
             appearance["theme"] = "mindscape"

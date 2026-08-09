@@ -146,9 +146,7 @@ def test_opposing_preference_reuses_one_slot_and_multiple_tags_share_one_episode
         ),
     )
     second = store.snapshot()
-    preferences = [
-        item for item in second["active"].values() if item["family_key"] == "user:user.preference"
-    ]
+    preferences = [item for item in second["active"].values() if item["family_key"] == "user:user.preference"]
     assert len(preferences) == 1
     assert preferences[0]["json_tags"][0]["polarity"] == "dislike"
 
@@ -175,15 +173,9 @@ def test_temporal_memory_expires_to_a_tombstone_while_persistent_memory_remains(
         ),
     )
     snapshot = store.snapshot()
-    temporal_key = next(
-        key for key, item in snapshot["active"].items() if item["lifecycle"] == "temporal"
-    )
-    persistent_key = next(
-        key for key, item in snapshot["active"].items() if item["lifecycle"] == "persistent"
-    )
-    snapshot["active"][temporal_key]["expires_at"] = (
-        datetime.now(UTC) - timedelta(seconds=1)
-    ).isoformat()
+    temporal_key = next(key for key, item in snapshot["active"].items() if item["lifecycle"] == "temporal")
+    persistent_key = next(key for key, item in snapshot["active"].items() if item["lifecycle"] == "persistent")
+    snapshot["active"][temporal_key]["expires_at"] = (datetime.now(UTC) - timedelta(seconds=1)).isoformat()
     store._save(snapshot)
 
     store.record_turn(
@@ -196,10 +188,7 @@ def test_temporal_memory_expires_to_a_tombstone_while_persistent_memory_remains(
 
     assert temporal_key not in pruned["active"]
     assert persistent_key in pruned["active"]
-    assert any(
-        item["memory_key"] == temporal_key and item["reason"] == "expired"
-        for item in pruned["tombstones"]
-    )
+    assert any(item["memory_key"] == temporal_key and item["reason"] == "expired" for item in pruned["tombstones"])
 
 
 def test_fair_ranking_reserves_a_slot_for_an_underexposed_memory():

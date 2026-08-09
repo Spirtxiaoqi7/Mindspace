@@ -24,9 +24,7 @@ _INTIMATE = re.compile(
     re.I,
 )
 _DISAGREEMENT = re.compile(r"(?:不对|不是这样|你又|别再|为什么总|我不同意|不同意|生气|吵架)")
-_SHORT_ACK = re.compile(
-    r"^\s*(?:嗯+|哦+|噢+|好+|行+|知道了|收到|可以|是的|对|没事)[。！!？?~～…]*\s*$"
-)
+_SHORT_ACK = re.compile(r"^\s*(?:嗯+|哦+|噢+|好+|行+|知道了|收到|可以|是的|对|没事)[。！!？?~～…]*\s*$")
 _CARE_CONTEXT = re.compile(r"(?:困|睡|休息|累|饿|吃|饭|病|疼|不舒服|照顾|粥|鸡蛋|早餐|晚餐)")
 _CARETAKER_OUTPUT = re.compile(
     r"(?:早点睡|快睡|该睡|去休息|好好休息|别熬夜|喝点水|吃点东西|"
@@ -36,35 +34,21 @@ _OUTSOURCE_OUTPUT = re.compile(
     r"(?:你想(?:要)?[^。！？!?]{0,18}吗|你要[^。！？!?]{0,18}还是|"
     r"都听你的|由你决定|你说了算|看你想怎么)"
 )
-_GENERIC_ASSISTANT = re.compile(
-    r"(?:作为(?:一个)?AI|我理解你的感受|我会一直陪着你|有什么需要随时告诉我)"
-)
+_GENERIC_ASSISTANT = re.compile(r"(?:作为(?:一个)?AI|我理解你的感受|我会一直陪着你|有什么需要随时告诉我)")
 _R18_SEXUAL_ACTION = re.compile(
     r"(?:性交|做爱|交合|口交|手交|手淫|插入|进入(?:身体|体内)|进来|进去|"
     r"抽送|骑乘|射精|内射|高潮|阴茎|阴道|龟头|精液|鸡巴|肉棒|屄|小穴|"
     r"骚穴|操(?:我|你)|干(?:我|你)|插(?:我|你)|顶(?:我|你)|抽插|含住|舔弄)",
     re.I,
 )
-_R18_FOREPLAY_OR_DELAY = re.compile(
-    r"(?:亲吻|拥抱|搂住|抚摸|爱抚|挑逗|撩拨|贴近|靠近|脱衣|解开|呼吸|"
-    r"体温|要不要|敢不敢|想不想|我可要|准备好|慢慢来|你先说|先告诉我|"
-    r"我再考虑|让我想想|待会儿?|等会儿?|再说|怎么弄|怎么来|想怎么|"
-    r"有的是办法|先从哪|不急|先让你感受)",
-    re.I,
-)
-_R18_DIRTY_LANGUAGE = re.compile(
-    r"(?:鸡巴|肉棒|屄|小穴|骚穴|欠操|操我|操你|干我|干你|射我|内射|"
-    r"淫水|精液|骚货|婊子|妈的|他妈的)",
-    re.I,
-)
 _R18_EXIT = re.compile(r"(?:停(?:一下)?|暂停|不要|别(?:说|继续|这样)|到此为止|换个话题|不想)")
+_R18_ACTIVE_CONTINUATION = re.compile(
+    r"^\s*(?:继续|接着|别停|再来|快点|再快点|用力|就这样|进去|进来|对)[。！!？?~～…\s]*$",
+    re.I,
+)
 _VOICE_STAGE_DIRECTION = re.compile(r"[（(][^）)]{1,160}[）)]")
-_APPEARANCE_CONTEXT = re.compile(
-    r"(?:穿什么|穿着|衣服|换衣|外貌|外观|样子|身材|头发|眼睛|高跟鞋|丝袜|靠近|触碰)"
-)
-_LIFE_CONTEXT = re.compile(
-    r"(?:工作|上班|职业|零工|收银|传单|大学|学历|医学|医生|收入|工资|钱|住哪|家里)"
-)
+_APPEARANCE_CONTEXT = re.compile(r"(?:穿什么|穿着|衣服|换衣|外貌|外观|样子|身材|头发|眼睛|高跟鞋|丝袜|靠近|触碰)")
+_LIFE_CONTEXT = re.compile(r"(?:工作|上班|职业|零工|收银|传单|大学|学历|医学|医生|收入|工资|钱|住哪|家里)")
 _SCENE_LOCATION = re.compile(
     r"(?:(?:我们|咱们|两个人|我和你|你和我)(?:现在|此刻)?(?:正)?在|"
     r"当前(?:场景|地点)(?:是|在)|场景(?:切到|来到))"
@@ -145,11 +129,7 @@ def resolve_presentation_mode(
         return "scene"
     if _DISCUSSION_TURN.search(request.message):
         return "dialogue"
-    recent = [
-        item
-        for item in history
-        if item.get("role") == "assistant" and not item.get("hidden")
-    ]
+    recent = [item for item in history if item.get("role") == "assistant" and not item.get("hidden")]
     if _CONTINUATION.fullmatch(request.message) and recent:
         return str(recent[-1].get("presentation_mode") or "dialogue")
     return "dialogue"
@@ -215,9 +195,7 @@ def build_presentation_plan(
 
     mode = resolve_presentation_mode(request, history)
     recent_assistant = [
-        str(item.get("content") or "")
-        for item in history
-        if item.get("role") == "assistant" and not item.get("hidden")
+        str(item.get("content") or "") for item in history if item.get("role") == "assistant" and not item.get("hidden")
     ][-4:]
     question_budget = 0 if recent_assistant and _QUESTION_END.search(recent_assistant[-1]) else 1
     if request.initiative:
@@ -344,12 +322,23 @@ def build_roleplay_layer(
         }
     )
     if request.adult_mode:
-        private_protocol = roleplay.get("r18_protocol", [])
-        result["r18_director"] = build_style_packet(
-            request,
-            history,
-            private_protocol if isinstance(private_protocol, list) else [],
+        behavior_rules = profiles.ai_profile.get("behavior_rules", {})
+        relationship_rules = profiles.ai_profile.get("relationship_rules", {})
+        adult_character_rules = _nonempty(
+            {
+                "contextual_rules": (
+                    behavior_rules.get("contextual_rules", []) if isinstance(behavior_rules, dict) else []
+                ),
+                "preferred_interactions": (
+                    relationship_rules.get("preferred_interactions", [])
+                    if isinstance(relationship_rules, dict)
+                    else []
+                ),
+            }
         )
+        if adult_character_rules:
+            result["adult_character_rules"] = adult_character_rules
+        result["r18_director"] = build_style_packet(request, history)
         result["r18_quality_requirement"] = r18_quality_requirement(result["r18_director"])
     return result
 
@@ -432,35 +421,6 @@ def chat_message_retrieval_eligible(item: dict[str, Any]) -> bool:
     }
 
 
-def r18_progress_state(history: list[dict[str, Any]]) -> dict[str, Any]:
-    """Summarize whether recent visible replies advanced beyond foreplay.
-
-    The result is current-turn evidence only. It is used to stop the final
-    R18 directive from resetting an established sexual scene or accepting
-    repeated teasing as progress; it is never written into the role card.
-    """
-
-    recent = [
-        str(item.get("content") or "")
-        for item in history[-12:]
-        if not item.get("hidden") and item.get("role") == "assistant"
-    ][-4:]
-    consecutive_foreplay_only = 0
-    sexual_action_established = False
-    for content in reversed(recent):
-        if _R18_SEXUAL_ACTION.search(content):
-            sexual_action_established = True
-            break
-        if _R18_FOREPLAY_OR_DELAY.search(content):
-            consecutive_foreplay_only += 1
-            continue
-        break
-    return {
-        "sexual_action_established": sexual_action_established,
-        "consecutive_foreplay_only_assistant_turns": consecutive_foreplay_only,
-    }
-
-
 def evaluate_roleplay_quality(
     response: str,
     request: ChatRequest,
@@ -507,36 +467,23 @@ def evaluate_roleplay_quality(
         reasons.append("generic_assistant_voice")
         correction_parts.append("用角色卡中的个人语气和具体立场说话")
 
-    r18_requires_progress = (
+    r18_requires_clarity = bool(
         request.adult_mode
         and not request.initiative
         and not _R18_EXIT.search(request.message)
+        and (_R18_ACTIVE_CONTINUATION.fullmatch(request.message) or _R18_SEXUAL_ACTION.search(request.message))
     )
-    if r18_requires_progress and not _R18_SEXUAL_ACTION.search(response):
-        progress = r18_progress_state(history)
-        reasons.append("r18_missing_sexual_action")
+    if r18_requires_clarity and not _R18_SEXUAL_ACTION.search(response):
+        reasons.append("r18_vague_active_scene")
         correction_parts.append(
-            "R18 性行为模式已开启：当前轮直接写正在发生的明确性行为与新进展，"
-            "不能再以亲吻、抚摸、挑逗、询问、威胁或预告代替推进"
+            "用户已明确继续活跃场景：使用准确身体或行为词写清当前一步和直接反应；"
+            "不要只写那里、那处、私密地方或将来预告，也不必强行升级强度"
         )
-        if (
-            _R18_FOREPLAY_OR_DELAY.search(response)
-            or progress["consecutive_foreplay_only_assistant_turns"] > 0
-        ):
-            reasons.append("r18_foreplay_loop")
-
-    if request.adult_mode and request.interaction_mode == "voice":
-        if not _R18_DIRTY_LANGUAGE.search(response):
-            reasons.append("r18_missing_dirty_language")
-            correction_parts.append(
-                "R18 语音必须使用符合角色口吻的直白淫语、器官或性行为俗称，"
-                "不能只用文明、医学化或含糊表达"
-            )
     if request.interaction_mode == "voice" and _VOICE_STAGE_DIRECTION.search(response):
         reasons.append("voice_stage_direction")
         correction_parts.append("语音正文只写亲口说出的口语，删除动作、神态、括号和第一人称动作播报")
 
-    hard_drift = "r18_missing_sexual_action" in reasons
+    hard_drift = "r18_vague_active_scene" in reasons
     quality = "drift" if hard_drift or len(reasons) >= 2 else "watch" if reasons else "pass"
     return {
         "quality": quality,

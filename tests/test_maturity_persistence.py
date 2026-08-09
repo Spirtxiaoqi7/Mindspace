@@ -16,18 +16,13 @@ def _sse(run_id: str, sequence: int, event: str, data: dict[str, object]) -> str
         "timestamp": "2026-07-23T00:00:00+00:00",
         "data": data,
     }
-    return (
-        f"id: {sequence}\nevent: {event}\n"
-        f"data: {json.dumps(envelope, ensure_ascii=False)}\n\n"
-    )
+    return f"id: {sequence}\nevent: {event}\ndata: {json.dumps(envelope, ensure_ascii=False)}\n\n"
 
 
 def test_restart_closes_running_run_without_reexecuting_and_keeps_partial(tmp_path):
     path = tmp_path / "product.db"
     database = ProductDatabase(path)
-    database.create_conversation_run(
-        run_id="restart-run", session_id="session-1", round_num=1
-    )
+    database.create_conversation_run(run_id="restart-run", session_id="session-1", round_num=1)
     database.append_conversation_run_event(
         run_id="restart-run",
         sequence=1,
@@ -54,9 +49,7 @@ def test_restart_closes_running_run_without_reexecuting_and_keeps_partial(tmp_pa
 
 def test_run_event_storage_is_idempotent_and_bounded_to_128_events(tmp_path):
     database = ProductDatabase(tmp_path / "product.db")
-    database.create_conversation_run(
-        run_id="bounded-run", session_id="session-1", round_num=1
-    )
+    database.create_conversation_run(run_id="bounded-run", session_id="session-1", round_num=1)
     for sequence in range(1, 141):
         payload = _sse(
             "bounded-run",

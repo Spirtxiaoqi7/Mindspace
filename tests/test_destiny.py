@@ -6,7 +6,7 @@ from copy import deepcopy
 from fastapi.testclient import TestClient
 
 from mindspace_graph.api import _character_summary, create_app
-from mindspace_graph.destiny import DestinyService, public_destiny_definition
+from mindspace_graph.destiny import DestinySeed, DestinyService, public_destiny_definition
 from mindspace_graph.settings import AppSettings
 
 
@@ -34,18 +34,44 @@ def seed_payload() -> dict:
 
 
 def people_payload() -> dict:
-    labels = ("邻家姐姐", "年上御姐", "淘气弟弟", "冷静搭档", "慢热朋友", "直球恋人", "嘴硬室友", "温和同事")
-    return {"people": [{"id": f"p{index}", "label": label, "summary": f"{label}说话方式和相处节奏明显不同。"} for index, label in enumerate(labels, start=1)]}
+    labels = (
+        "邻家姐姐",
+        "年上御姐",
+        "淘气妹妹",
+        "冷静搭档",
+        "慢热朋友",
+        "直球恋人",
+        "嘴硬室友",
+        "温和同事",
+    )
+    return {
+        "people": [
+            {"id": f"p{index}", "label": label, "summary": f"{label}说话方式和相处节奏明显不同。"}
+            for index, label in enumerate(labels, start=1)
+        ]
+    }
 
 
-def cards_payload() -> dict:
-    slots = public_destiny_definition()["slots"]
+def cards_payload(slot_start: int = 0, slot_count: int = 12) -> dict:
+    slots = public_destiny_definition()["slots"][slot_start : slot_start + slot_count]
     levels = ("low", "neutral", "normal", "high")
-    return {"cards": [[f"p{person}", slot["id"], f"人物{person}的{slot['axis']}", f"聊天中会以人物{person}的方式表现出{slot['axis']}。", levels[(person + slot["index"]) % 4]] for person in range(1, 9) for slot in slots]}
+    return {
+        "cards": [
+            [
+                f"p{person}",
+                slot["id"],
+                f"人物{person}的{slot['axis']}",
+                f"聊天中会以人物{person}的方式表现出{slot['axis']}。",
+                levels[(person + slot["index"]) % 4],
+            ]
+            for person in range(1, 9)
+            for slot in slots
+        ]
+    }
 
 
-def compact_cards_payload() -> dict:
-    slots = public_destiny_definition()["slots"]
+def compact_cards_payload(slot_start: int = 0, slot_count: int = 12) -> dict:
+    slots = public_destiny_definition()["slots"][slot_start : slot_start + slot_count]
     levels = ("low", "neutral", "normal", "high")
     return {
         "cards": [
@@ -83,9 +109,9 @@ def test_destiny_definition_exposes_v7_slots_and_willingness_levels():
     assert all("metrics" not in slot for slot in definition["slots"])
 
 
-def test_full_destiny_journey_uses_exactly_three_generation_calls(tmp_path, monkeypatch):
+def test_full_destiny_journey_uses_two_card_calls_inside_three_visible_stages(tmp_path, monkeypatch):
     app = create_app(make_settings(tmp_path))
-    model_results = [people_payload(), cards_payload(), card_payload()]
+    model_results = [people_payload(), cards_payload(0, 6), cards_payload(6, 6), card_payload()]
     calls: list[str] = []
 
     async def scripted_model(messages, **kwargs):  # noqa: ANN001, ARG001
@@ -128,13 +154,14 @@ def test_full_destiny_journey_uses_exactly_three_generation_calls(tmp_path, monk
     committed = client.post(f"/api/v1/destiny/journeys/{journey_id}/commit")
     assert committed.status_code == 200
     assert committed.json()["character"]["display_name"] == "林见月"
-    assert calls == ["destiny_archetypes", "destiny_cards", "destiny_synthesis"]
-    assert journey["model_calls"] == {"archetypes": 1, "cards": 1, "synthesis": 1}
+    assert calls == ["destiny_archetypes", "destiny_cards", "destiny_cards", "destiny_synthesis"]
+    assert journey["model_calls"] == {"archetypes": 1, "cards": 2, "synthesis": 1}
 
 
-def test_invalid_cards_are_persisted_without_a_hidden_repair_call(tmp_path, monkeypatch):
+def test_failed_first_half_preserves_successful_second_half_and_retries_only_first(tmp_path, monkeypatch):
     app = create_app(make_settings(tmp_path))
-    outputs = [people_payload(), {"cards": cards_payload()["cards"][:-1]}]
+    first_half = cards_payload(0, 6)
+    outputs = [people_payload(), {"cards": first_half["cards"][:-1]}, cards_payload(6, 6), first_half]
     call_count = 0
 
     async def malformed_model(*args, **kwargs):  # noqa: ANN001, ARG001
@@ -153,16 +180,62 @@ def test_invalid_cards_are_persisted_without_a_hidden_repair_call(tmp_path, monk
 
     assert response.status_code == 422
     assert persisted["status"] == "cards_failed"
-    assert persisted["model_calls"] == {"archetypes": 1, "cards": 1, "synthesis": 0}
-    assert call_count == 2
+    assert persisted["model_calls"] == {"archetypes": 1, "cards": 2, "synthesis": 0}
+    assert persisted["card_batches"]["first"]["status"] == "failed"
+    assert persisted["card_batches"]["second"]["status"] == "ready"
+    assert len(persisted["cards_by_slot"]) == 6
+    assert call_count == 3
+
+    retried = client.post(f"/api/v1/destiny/journeys/{journey_id}/cards")
+
+    assert retried.status_code == 200
+    assert retried.json()["status"] == "cards_ready"
+    assert len(retried.json()["cards_by_slot"]) == 12
+    assert retried.json()["model_calls"] == {"archetypes": 1, "cards": 3, "synthesis": 0}
+    assert call_count == 4
+
+
+def test_failed_second_half_preserves_successful_first_half_and_retries_only_second(tmp_path, monkeypatch):
+    app = create_app(make_settings(tmp_path))
+    second_half = cards_payload(6, 6)
+    outputs = [people_payload(), cards_payload(0, 6), {"cards": second_half["cards"][:-1]}, second_half]
+    call_count = 0
+
+    async def malformed_model(*args, **kwargs):  # noqa: ANN001, ARG001
+        nonlocal call_count
+        value = outputs[call_count]
+        call_count += 1
+        return json.dumps(value, ensure_ascii=False)
+
+    monkeypatch.setattr(app.state.destiny, "_generate", malformed_model)
+    client = TestClient(app, raise_server_exceptions=False)
+    journey = client.post("/api/v1/destiny/journeys", json=seed_payload()).json()
+    journey_id = journey["journey_id"]
+    assert client.post(f"/api/v1/destiny/journeys/{journey_id}/archetypes").status_code == 200
+
+    failed = client.post(f"/api/v1/destiny/journeys/{journey_id}/cards")
+    persisted = client.get(f"/api/v1/destiny/journeys/{journey_id}").json()
+
+    assert failed.status_code == 422
+    assert persisted["card_batches"]["first"]["status"] == "ready"
+    assert persisted["card_batches"]["second"]["status"] == "failed"
+    assert len(persisted["cards_by_slot"]) == 6
+    assert call_count == 3
+
+    retried = client.post(f"/api/v1/destiny/journeys/{journey_id}/cards")
+
+    assert retried.status_code == 200
+    assert retried.json()["status"] == "cards_ready"
+    assert retried.json()["model_calls"] == {"archetypes": 1, "cards": 3, "synthesis": 0}
+    assert call_count == 4
 
 
 def test_category_name_cannot_be_accepted_as_a_direct_card_label(tmp_path, monkeypatch):
     app = create_app(make_settings(tmp_path))
-    malformed = cards_payload()
+    malformed = cards_payload(0, 6)
     for row in malformed["cards"]:
         row[2] = next(slot["axis"] for slot in public_destiny_definition()["slots"] if slot["id"] == row[1])
-    outputs = [people_payload(), malformed]
+    outputs = [people_payload(), malformed, cards_payload(6, 6)]
     call_count = 0
 
     async def category_label_model(*args, **kwargs):  # noqa: ANN001, ARG001
@@ -182,17 +255,21 @@ def test_category_name_cannot_be_accepted_as_a_direct_card_label(tmp_path, monke
     assert response.status_code == 422
     assert "直接标签不能重复分类名" in response.json()["detail"]
     assert persisted["status"] == "cards_failed"
-    assert persisted["model_calls"] == {"archetypes": 1, "cards": 1, "synthesis": 0}
-    assert call_count == 2
+    assert persisted["model_calls"] == {"archetypes": 1, "cards": 2, "synthesis": 0}
+    assert call_count == 3
 
 
 def test_category_label_uses_a_valid_short_summary_prefix_without_a_second_model_call(tmp_path, monkeypatch):
     app = create_app(make_settings(tmp_path))
-    normalized = cards_payload()
+    normalized = cards_payload(0, 6)
     for row in normalized["cards"]:
         row[2] = next(slot["axis"] for slot in public_destiny_definition()["slots"] if slot["id"] == row[1])
         row[3] = "温柔体贴，聊天时会耐心回应对方的情绪。"
-    outputs = [people_payload(), normalized]
+    second_half = cards_payload(6, 6)
+    for row in second_half["cards"]:
+        row[2] = next(slot["axis"] for slot in public_destiny_definition()["slots"] if slot["id"] == row[1])
+        row[3] = "温柔体贴，聊天时会耐心回应对方的情绪。"
+    outputs = [people_payload(), normalized, second_half]
     call_count = 0
 
     async def category_label_model(*args, **kwargs):  # noqa: ANN001, ARG001
@@ -210,12 +287,12 @@ def test_category_label_uses_a_valid_short_summary_prefix_without_a_second_model
 
     assert response.status_code == 200
     assert all(card["label"] == "温柔体贴" for cards in response.json()["cards_by_slot"].values() for card in cards)
-    assert call_count == 2
+    assert call_count == 3
 
 
 def test_incomplete_journey_with_legacy_category_labels_requires_cards_only_retry(tmp_path, monkeypatch):
     app = create_app(make_settings(tmp_path))
-    outputs = [people_payload(), cards_payload()]
+    outputs = [people_payload(), cards_payload(0, 6), cards_payload(6, 6)]
     call_count = 0
 
     async def valid_model(*args, **kwargs):  # noqa: ANN001, ARG001
@@ -240,24 +317,94 @@ def test_incomplete_journey_with_legacy_category_labels_requires_cards_only_retr
     assert restored["cards_by_slot"] == {}
     assert restored["selections"] == {}
     assert restored["archetypes"] == people_payload()["people"]
-    assert restored["model_calls"] == {"archetypes": 1, "cards": 1, "synthesis": 0}
+    assert restored["model_calls"] == {"archetypes": 1, "cards": 2, "synthesis": 0}
     assert "继续生成命签" in restored["errors"][-1]["message"]
 
 
 def test_destiny_prompts_keep_the_simple_character_creation_contract():
     archetypes = DestinyService._archetype_messages(seed_payload())
-    cards = DestinyService._cards_messages(people_payload()["people"])
+    cards = DestinyService._cards_messages(
+        people_payload()["people"], "女", tuple(public_destiny_definition()["slots"][:6])
+    )
 
-    assert archetypes[0]["content"] == '你是聊天角色创作者。只返回 JSON：{"people":[{"id":"p1","label":"","summary":""}]}'
-    assert '[["p1","emotional_baseline","","","normal"]]' in cards[0]["content"]
+    assert (
+        archetypes[0]["content"] == '你是聊天角色创作者。只返回 JSON：{"people":[{"id":"p1","label":"","summary":""}]}'
+    )
+    assert '[[["慢热敏感","会先观察语气再回应","normal"]]]' in cards[0]["content"]
+    assert "6 个分类，共 48 张" in cards[1]["content"]
     assert "分类名、分类 ID 或人物方向标签" in cards[1]["content"]
     assert "不超过 32 个汉字" in cards[1]["content"]
-    assert not any(word in "\n".join(message["content"] for message in [*archetypes, *cards]) for word in ("玄学", "命宫", "宿", "推演", "阴阳"))
+    assert not any(
+        word in "\n".join(message["content"] for message in [*archetypes, *cards])
+        for word in ("玄学", "命宫", "宿", "推演", "阴阳")
+    )
+
+
+def test_cards_accept_compact_matrix_top_level_array_and_harmless_json_damage():
+    people = people_payload()["people"]
+    slots = tuple(public_destiny_definition()["slots"][:6])
+    compact = compact_cards_payload(0, 6)["cards"]
+
+    top_level = DestinyService._normalize_cards(json.dumps(compact, ensure_ascii=False), people, "女", slots)
+    trailing_comma = json.dumps({"cards": compact}, ensure_ascii=False, separators=(",", ":")).replace(
+        "]]}", "]],}"
+    )
+    repaired = DestinyService._normalize_cards(trailing_comma, people, "女", slots)
+
+    assert len(top_level) == 6
+    assert sum(len(cards) for cards in repaired.values()) == 48
+
+
+def test_cards_recover_rows_when_outer_json_is_missing_a_comma():
+    people = people_payload()["people"]
+    slots = tuple(public_destiny_definition()["slots"][:6])
+    raw = json.dumps(cards_payload(0, 6), ensure_ascii=False, separators=(",", ":"))
+    broken = raw.replace("],[", "][", 1)
+
+    recovered = DestinyService._normalize_cards(broken, people, "女", slots)
+
+    assert sum(len(cards) for cards in recovered.values()) == 48
+
+
+def test_cards_accept_ordered_object_aliases_without_repeated_ids():
+    people = people_payload()["people"]
+    slots = tuple(public_destiny_definition()["slots"][:6])
+    rows = [
+        {
+            "标签": f"人物{person}特征{slot['index']}",
+            "表现": f"聊天时会呈现人物{person}的具体回应方式。",
+            "互动意愿": "normal",
+        }
+        for person in range(1, 9)
+        for slot in slots
+    ]
+
+    normalized = DestinyService._normalize_cards(json.dumps(rows, ensure_ascii=False), people, "女", slots)
+
+    assert sum(len(cards) for cards in normalized.values()) == 48
+
+
+def test_app_startup_recovers_an_interrupted_destiny_stage(tmp_path):
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+    journey = app.state.destiny.create(DestinySeed.model_validate(seed_payload()))
+    journey["status"] = "cards_generating"
+    journey["operation_id"] = "interrupted-operation"
+    app.state.destiny.database.put_document(app.state.destiny._key(journey["journey_id"]), journey)
+
+    recovered = create_app(settings).state.destiny.get(journey["journey_id"])
+
+    assert recovered["status"] == "cards_failed"
+    assert "Core 在本阶段完成前中断" in recovered["errors"][-1]["message"]
 
 
 def test_truncated_cards_report_a_clear_retryable_error(tmp_path, monkeypatch):
     app = create_app(make_settings(tmp_path))
-    outputs = [json.dumps(people_payload(), ensure_ascii=False), '{"cards":[[["慢热","会先观察"']
+    outputs = [
+        json.dumps(people_payload(), ensure_ascii=False),
+        '{"cards":[[["慢热","会先观察"',
+        json.dumps(cards_payload(6, 6), ensure_ascii=False),
+    ]
     call_count = 0
 
     async def truncated_model(*args, **kwargs):  # noqa: ANN001, ARG001
@@ -278,8 +425,9 @@ def test_truncated_cards_report_a_clear_retryable_error(tmp_path, monkeypatch):
     assert response.status_code == 422
     assert "JSON 完成前中断" in response.json()["detail"]
     assert "JSON 完成前中断" in persisted["errors"][-1]["message"]
-    assert persisted["model_calls"] == {"archetypes": 1, "cards": 1, "synthesis": 0}
-    assert call_count == 2
+    assert persisted["model_calls"] == {"archetypes": 1, "cards": 2, "synthesis": 0}
+    assert len(persisted["cards_by_slot"]) == 6
+    assert call_count == 3
 
 
 def test_destiny_avatar_upload_is_local_to_the_journey(tmp_path):
@@ -293,6 +441,60 @@ def test_destiny_avatar_upload_is_local_to_the_journey(tmp_path):
     avatar = response.json()["avatar"]
     assert avatar["src"].startswith("/api/v1/avatar/files/destiny-")
     assert avatar["scale"] == 1.0
+
+    filename = avatar["src"].rsplit("/", maxsplit=1)[-1]
+    deleted = client.delete(f"/api/v1/destiny/avatars/{filename}")
+    assert deleted.status_code == 200
+    assert not (tmp_path / "runtime" / "data" / "avatars" / filename).exists()
+
+
+def test_committed_destiny_avatar_moves_to_the_character_directory(tmp_path, monkeypatch):
+    app = create_app(make_settings(tmp_path))
+
+    async def scripted_synthesis(*args, **kwargs):  # noqa: ANN001, ARG001
+        return json.dumps(card_payload(), ensure_ascii=False)
+
+    monkeypatch.setattr(app.state.destiny, "_generate", scripted_synthesis)
+    client = TestClient(app)
+    avatar = client.post(
+        "/api/v1/destiny/avatars",
+        files={"file": ("portrait.png", b"\x89PNG\r\n\x1a\nminimal", "image/png")},
+    ).json()["avatar"]
+    created = client.post("/api/v1/destiny/journeys", json={**seed_payload(), "avatar": avatar})
+    assert created.status_code == 200
+    journey = created.json()
+    journey_id = journey["journey_id"]
+
+    journey = client.post(
+        f"/api/v1/destiny/journeys/{journey_id}/archetypes?use_default=true&expected_revision={journey['revision']}"
+    ).json()
+    journey = client.post(
+        f"/api/v1/destiny/journeys/{journey_id}/cards?use_default=true&expected_revision={journey['revision']}"
+    ).json()
+    for slot in public_destiny_definition()["slots"]:
+        card_id = journey["cards_by_slot"][slot["id"]][0]["card_id"]
+        selected = client.put(
+            f"/api/v1/destiny/journeys/{journey_id}/selections/{slot['id']}",
+            json={"card_id": card_id, "expected_revision": journey["revision"]},
+        )
+        assert selected.status_code == 200
+        journey = selected.json()
+
+    synthesized = client.post(
+        f"/api/v1/destiny/journeys/{journey_id}/synthesize?expected_revision={journey['revision']}"
+    )
+    assert synthesized.status_code == 200
+    committed = client.post(
+        f"/api/v1/destiny/journeys/{journey_id}/commit?expected_revision={synthesized.json()['revision']}"
+    )
+    assert committed.status_code == 200
+    character = committed.json()["character"]
+
+    source_name = avatar["src"].rsplit("/", maxsplit=1)[-1]
+    assert not (tmp_path / "runtime" / "data" / "avatars" / source_name).exists()
+    assert character["avatar"]["src"].startswith("/api/v1/character/files/")
+    destination = character["avatar"]["src"].removeprefix("/api/v1/character/files/")
+    assert (tmp_path / "runtime" / "data" / "characters" / destination).is_file()
 
 
 def test_destiny_seed_never_persists_a_browser_blob_avatar(tmp_path):

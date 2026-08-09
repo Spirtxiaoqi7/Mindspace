@@ -19,7 +19,6 @@ from mindspace_graph.settings import AppSettings
 from mindspace_graph.streaming_asr import FunASRRuntime
 from mindspace_graph.voice_render import (
     infer_qwen3_voice_cue,
-    normalize_voice_cue,
     pace_qwen3_base_text,
     qwen3_instructions,
 )
@@ -123,9 +122,7 @@ class AudioService:
                 else self.settings.tts_gpt_sovits_worker_url
             )
             try:
-                response = await self._http.get(
-                    f"{worker_url.rstrip('/')}/health", timeout=2
-                )
+                response = await self._http.get(f"{worker_url.rstrip('/')}/health", timeout=2)
                 response.raise_for_status()
                 health = response.json()
                 result["tts_ready"] = bool(health.get("ok"))
@@ -234,9 +231,7 @@ class AudioService:
                 cancelled = True
         return cancelled
 
-    async def synthesize(
-        self, text: str, *, request_id: str, speed: float = 1.0, voice_cue: str = "neutral"
-    ) -> Path:
+    async def synthesize(self, text: str, *, request_id: str, speed: float = 1.0, voice_cue: str = "neutral") -> Path:
         self._register_current(request_id)
         try:
             text = sanitize_tts_text(text)
@@ -255,9 +250,7 @@ class AudioService:
                 chunks = (
                     self._siliconflow_chunks(text, speed=speed)
                     if provider == "siliconflow"
-                    else self._qwen3_vllm_chunks(
-                        text, speed=speed, voice_cue=voice_cue, request_id=request_id
-                    )
+                    else self._qwen3_vllm_chunks(text, speed=speed, voice_cue=voice_cue, request_id=request_id)
                 )
                 async for chunk in chunks:
                     pcm.extend(chunk)
@@ -273,9 +266,7 @@ class AudioService:
             if provider not in {"cosyvoice", "gpt-sovits"}:
                 raise AudioProviderUnavailable(f"unsupported TTS provider: {provider}")
             worker_url = (
-                self.settings.tts_worker_url
-                if provider == "cosyvoice"
-                else self.settings.tts_gpt_sovits_worker_url
+                self.settings.tts_worker_url if provider == "cosyvoice" else self.settings.tts_gpt_sovits_worker_url
             )
             payload = {
                 "text": text,
@@ -289,9 +280,7 @@ class AudioService:
                 )
             else:
                 payload["voice_id"] = self.settings.tts_gpt_sovits_voice
-            response = await self._http.post(
-                f"{worker_url.rstrip('/')}/synthesize", json=payload, timeout=180
-            )
+            response = await self._http.post(f"{worker_url.rstrip('/')}/synthesize", json=payload, timeout=180)
             response.raise_for_status()
             result = response.json()
             if not result.get("ok") or not output.exists() or output.stat().st_size == 0:
@@ -341,9 +330,7 @@ class AudioService:
                         yield chunk
                     return
                 worker_url = (
-                    self.settings.tts_worker_url
-                    if provider == "cosyvoice"
-                    else self.settings.tts_gpt_sovits_worker_url
+                    self.settings.tts_worker_url if provider == "cosyvoice" else self.settings.tts_gpt_sovits_worker_url
                 )
                 payload = {
                     "text": text,
@@ -423,16 +410,8 @@ class AudioService:
         # natural-language style instruction on every request would reintroduce
         # the cross-paragraph voice drift this profile is designed to remove.
         resolved_voice_cue = infer_qwen3_voice_cue(text, voice_cue)
-        instructions = (
-            ""
-            if task_type == "Base"
-            else qwen3_instructions(resolved_voice_cue, speed=speed)
-        )
-        spoken_text = (
-            pace_qwen3_base_text(text, speed=speed)
-            if task_type == "Base"
-            else text
-        )
+        instructions = "" if task_type == "Base" else qwen3_instructions(resolved_voice_cue, speed=speed)
+        spoken_text = pace_qwen3_base_text(text, speed=speed) if task_type == "Base" else text
         payload = {
             "model": self.settings.tts_qwen3_vllm_model,
             "input": spoken_text,
@@ -461,9 +440,7 @@ class AudioService:
             async with self._http.stream("POST", endpoint, json=payload, timeout=timeout) as response:
                 if response.is_error:
                     detail = (await response.aread()).decode("utf-8", errors="replace")[:300]
-                    raise AudioProviderUnavailable(
-                        f"Qwen3-TTS 请求失败（{response.status_code}）：{detail}"
-                    )
+                    raise AudioProviderUnavailable(f"Qwen3-TTS 请求失败（{response.status_code}）：{detail}")
                 async for chunk in response.aiter_raw():
                     if not chunk:
                         continue
@@ -491,15 +468,11 @@ class AudioService:
             raise AudioProviderUnavailable(f"请先在启动器下载音色：{voice['label']}")
         endpoint = f"{self.settings.tts_gpt_sovits_worker_url.rstrip('/')}/voice"
         try:
-            response = await self._http.post(
-                endpoint, json={"voice_id": voice_id}, timeout=180
-            )
+            response = await self._http.post(endpoint, json={"voice_id": voice_id}, timeout=180)
             response.raise_for_status()
             result = response.json()
         except httpx.HTTPError as exc:
-            raise AudioProviderUnavailable(
-                f"GPT-SoVITS 音色已保存，Worker 切换失败：{exc}"
-            ) from exc
+            raise AudioProviderUnavailable(f"GPT-SoVITS 音色已保存，Worker 切换失败：{exc}") from exc
         if not result.get("ok"):
             raise AudioProviderUnavailable(str(result.get("error") or "GPT-SoVITS 音色切换失败"))
         return result
@@ -520,8 +493,12 @@ class AudioService:
             "provider": "qwen3-vllm",
             "active_voice": self.settings.tts_qwen3_vllm_voice,
             "items": [
-                {"id": voice, "label": voice, "installed": True,
-                 "selected": voice == self.settings.tts_qwen3_vllm_voice}
+                {
+                    "id": voice,
+                    "label": voice,
+                    "installed": True,
+                    "selected": voice == self.settings.tts_qwen3_vllm_voice,
+                }
                 for voice in items
             ],
         }
@@ -554,20 +531,13 @@ class AudioService:
         }
         timeout = httpx.Timeout(connect=10, read=180, write=10, pool=10)
         try:
-            async with self._http.stream(
-                "POST", endpoint, headers=headers, json=payload, timeout=timeout
-            ) as response:
+            async with self._http.stream("POST", endpoint, headers=headers, json=payload, timeout=timeout) as response:
                 if response.is_error:
                     body = await response.aread()
                     detail = body.decode("utf-8", errors="replace")
                     try:
                         parsed = json.loads(detail)
-                        detail = str(
-                            parsed.get("message")
-                            or parsed.get("error")
-                            or parsed.get("detail")
-                            or detail
-                        )
+                        detail = str(parsed.get("message") or parsed.get("error") or parsed.get("detail") or detail)
                     except (json.JSONDecodeError, AttributeError):
                         pass
                     raise AudioProviderUnavailable(
@@ -579,9 +549,7 @@ class AudioService:
         except httpx.HTTPError as exc:
             raise AudioProviderUnavailable(f"无法连接 SiliconFlow TTS：{exc}") from exc
 
-    async def transcribe(
-        self, audio: bytes, filename: str, content_type: str, *, request_id: str
-    ) -> str:
+    async def transcribe(self, audio: bytes, filename: str, content_type: str, *, request_id: str) -> str:
         self._register_current(request_id)
         try:
             provider = self.settings.asr_provider
@@ -593,11 +561,7 @@ class AudioService:
                 raise AudioProviderUnavailable("use /api/v1/audio/asr/stream for FunASR PCM")
             if provider != "openai" or not self.settings.asr_base_url:
                 raise AudioProviderUnavailable(f"unsupported ASR provider: {provider}")
-            headers = (
-                {"Authorization": f"Bearer {self.settings.asr_api_key}"}
-                if self.settings.asr_api_key
-                else {}
-            )
+            headers = {"Authorization": f"Bearer {self.settings.asr_api_key}"} if self.settings.asr_api_key else {}
             files = {"file": (filename or "audio.webm", audio, content_type or "audio/webm")}
             data = {"model": self.settings.asr_model}
             response = await self._http.post(
@@ -627,21 +591,16 @@ class AudioService:
             )
             return {"text": text, "duration": None}
 
-        worker_url = self.settings.asr_base_url.replace("ws://", "http://").replace(
-            "wss://", "https://"
-        )
+        worker_url = self.settings.asr_base_url.replace("ws://", "http://").replace("wss://", "https://")
         endpoint = (
-            f"{worker_url[:-3]}/transcribe"
-            if worker_url.endswith("/ws")
-            else f"{worker_url.rstrip('/')}/transcribe"
+            f"{worker_url[:-3]}/transcribe" if worker_url.endswith("/ws") else f"{worker_url.rstrip('/')}/transcribe"
         )
         try:
             response = await self._http.post(
                 endpoint,
                 content=content,
                 headers={
-                    "Content-Type": mimetypes.guess_type(path.name)[0]
-                    or "application/octet-stream",
+                    "Content-Type": mimetypes.guess_type(path.name)[0] or "application/octet-stream",
                     "X-Audio-Filename": path.name,
                 },
                 timeout=180,

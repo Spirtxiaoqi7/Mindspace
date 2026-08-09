@@ -36,9 +36,7 @@ def test_low_confidence_playback_text_remains_draft_only() -> None:
     assert event["data"]["quality"] == "uncertain"
     assert event["data"]["confirmed_text"] == ""
     assert event["data"]["barge_in_eligible"] is False
-    assert event["data"]["uncertain_segments"] == [
-        {"text": "像是一个没听清的人名", "reason": "playback_unstable_text"}
-    ]
+    assert event["data"]["uncertain_segments"] == [{"text": "像是一个没听清的人名", "reason": "playback_unstable_text"}]
 
 
 def test_short_vad_confirmed_playback_phrase_can_interrupt_after_duration_check() -> None:
@@ -127,9 +125,7 @@ def test_uncommon_name_disagreement_keeps_only_the_reliable_backbone() -> None:
 
     assert event["data"]["quality"] == "uncertain"
     assert event["data"]["confirmed_text"] == "我想找帮我配音"
-    assert event["data"]["uncertain_segments"] == [
-        {"text": "阿斯塔利昂", "reason": "stream_final_disagreement"}
-    ]
+    assert event["data"]["uncertain_segments"] == [{"text": "阿斯塔利昂", "reason": "stream_final_disagreement"}]
 
 
 def test_runtime_waits_for_an_in_progress_preload(monkeypatch, tmp_path) -> None:
@@ -176,10 +172,7 @@ def test_runtime_serializes_shared_model_inference(tmp_path) -> None:
 
     runtime = FunASRRuntime(tmp_path)
     runtime.asr = SharedModel()
-    sessions = [
-        FunASRStreamSession(runtime, ASRSessionOptions(energy_threshold=0))
-        for _ in range(2)
-    ]
+    sessions = [FunASRStreamSession(runtime, ASRSessionOptions(energy_threshold=0)) for _ in range(2)]
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(session.feed, _pcm(0.05, 480)) for session in sessions]
         for future in futures:

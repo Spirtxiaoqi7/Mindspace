@@ -49,9 +49,7 @@ class PromptInspectionStore:
 
     def _purge(self) -> None:
         cutoff = time.monotonic() - self.ttl_seconds
-        for key in [
-            key for key, item in self._items.items() if item["stored_at"] < cutoff
-        ]:
+        for key in [key for key, item in self._items.items() if item["stored_at"] < cutoff]:
             self._items.pop(key, None)
         while len(self._items) > self.max_runs:
             self._items.popitem(last=False)
@@ -70,18 +68,12 @@ class PromptInspectionStore:
         pending_by_signature: dict[tuple[str, str], deque[str]] = defaultdict(deque)
         for event in pending_events:
             signature = (str(event.get("role") or ""), str(event.get("content") or ""))
-            pending_by_signature[signature].append(
-                str(event.get("kind") or "turn_context")
-            )
+            pending_by_signature[signature].append(str(event.get("kind") or "turn_context"))
         layers = []
         for index, message in enumerate(messages):
             content = str(message.get("content") or "")
             signature = (str(message.get("role") or ""), content)
-            pending_kind = (
-                pending_by_signature[signature].popleft()
-                if pending_by_signature[signature]
-                else ""
-            )
+            pending_kind = pending_by_signature[signature].popleft() if pending_by_signature[signature] else ""
             layers.append(
                 {
                     "index": index,
@@ -114,10 +106,7 @@ class PromptInspectionStore:
                 run_id=run_id,
                 session_id=session_id,
                 sha256=metadata["sha256"],
-                layers=[
-                    {key: value for key, value in item.items() if key != "content"}
-                    for item in layers
-                ],
+                layers=[{key: value for key, value in item.items() if key != "content"} for item in layers],
             )
 
     def get(self, run_id: str, *, reveal: bool = False) -> dict[str, Any] | None:

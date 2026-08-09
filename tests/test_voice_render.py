@@ -14,18 +14,12 @@ def test_voice_cue_is_removed_from_completed_spoken_text():
 
 
 def test_qwen3_base_pacing_slows_semantic_boundaries_without_changing_words():
-    assert pace_qwen3_base_text(
-        "先别急，我在听。慢慢说给我听。", speed=0.9
-    ) == "先别急，……我在听。……慢慢说给我听。"
-    assert pace_qwen3_base_text(
-        "先别急，我在听。慢慢说给我听。", speed=1.0
-    ) == "先别急，我在听。慢慢说给我听。"
+    assert pace_qwen3_base_text("先别急，我在听。慢慢说给我听。", speed=0.9) == "先别急，……我在听。……慢慢说给我听。"
+    assert pace_qwen3_base_text("先别急，我在听。慢慢说给我听。", speed=1.0) == "先别急，我在听。慢慢说给我听。"
 
 
 def test_qwen3_base_pacing_preserves_existing_breath_and_paragraph_pause():
-    assert pace_qwen3_base_text(
-        "嗯……我在听。\n\n呼……慢慢说。", speed=0.9
-    ) == "嗯……我在听。……呼……慢慢说。"
+    assert pace_qwen3_base_text("嗯……我在听。\n\n呼……慢慢说。", speed=0.9) == "嗯……我在听。……呼……慢慢说。"
 
 
 def test_invalid_voice_cue_falls_back_to_neutral_without_leaking_a_tag():
@@ -51,9 +45,7 @@ def test_streamed_split_voice_cue_is_held_until_the_prefix_is_complete():
 def test_non_voice_text_keeps_low_latency_and_neutral_uses_natural_conversation_hint():
     stream = VoiceCueStream()
     assert stream.feed("你好") == ["你好"]
-    assert qwen3_instructions("unknown") == (
-        "像熟悉伴侣近距离聊天，句间自然换气，偶尔带一点很轻的笑意。"
-    )
+    assert qwen3_instructions("unknown") == ("像熟悉伴侣近距离聊天，句间自然换气，偶尔带一点很轻的笑意。")
 
 
 def test_style_instruction_is_short_positive_and_does_not_repeat_format_rules():

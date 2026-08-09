@@ -13,15 +13,9 @@ def test_registry_has_unique_codes_locations_and_complete_business_metadata():
     assert len(registry.fields) >= 40
     assert len({field.field_code for field in registry.fields}) == len(registry.fields)
     assert len({(field.target, field.path) for field in registry.fields}) == len(registry.fields)
-    assert all(
-        field.display_name and field.category and field.max_items > 0 for field in registry.fields
-    )
-    assert registry.resolve("user_profile", "/stable_preferences/likes/0").field_code == (
-        "user.preference.likes"
-    )
-    assert registry.resolve("user_profile", "/stable_preferences/likes/-").reducer == (
-        "opposing_set"
-    )
+    assert all(field.display_name and field.category and field.max_items > 0 for field in registry.fields)
+    assert registry.resolve("user_profile", "/stable_preferences/likes/0").field_code == ("user.preference.likes")
+    assert registry.resolve("user_profile", "/stable_preferences/likes/-").reducer == ("opposing_set")
 
 
 def test_memory_center_update_delete_and_restore_keep_profile_and_index_aligned(tmp_path):
@@ -65,8 +59,7 @@ def test_memory_center_update_delete_and_restore_keep_profile_and_index_aligned(
     assert profiles.load_document("user_profile")["stable_preferences"]["likes"] == []
     assert service.list_items() == []
     assert any(
-        item["value"] == "蓝莓" and item["status"] == "invalidated"
-        for item in service.list_items(include_history=True)
+        item["value"] == "蓝莓" and item["status"] == "invalidated" for item in service.list_items(include_history=True)
     )
 
     restored = service.restore(updated["memory_key"])

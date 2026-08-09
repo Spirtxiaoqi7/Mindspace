@@ -51,9 +51,7 @@ class LocalKnowledgeRetriever:
         self.sessions = sessions
         self.embedding_model_path = embedding_model_path
         self.memory_store = memory_store
-        self.reranker = (
-            CrossEncoderReranker(str(reranker_model_path)) if reranker_model_path else None
-        )
+        self.reranker = CrossEncoderReranker(str(reranker_model_path)) if reranker_model_path else None
         self._embedding_model: Any | None = None
         self._embedding_error = ""
         self._embedding_load_attempted = False
@@ -90,17 +88,13 @@ class LocalKnowledgeRetriever:
             for item in messages
             if chat_message_retrieval_eligible(item) and str(item.get("content") or "")
         ]
-        memory_records = (
-            self.memory_store.list_active(character_id) if self.memory_store is not None else []
-        )
+        memory_records = self.memory_store.list_active(character_id) if self.memory_store is not None else []
         missing_memory: list[tuple[str, str]] = []
         for record in memory_records:
             episode = record.get("episode", {})
             text = str(episode.get("text") or "")
             if text and not isinstance(episode.get("embedding"), list):
-                missing_memory.append(
-                    (str(episode.get("episode_id") or record.get("episode_id") or ""), text)
-                )
+                missing_memory.append((str(episode.get("episode_id") or record.get("episode_id") or ""), text))
 
         # Deduplicate without changing order.  The same sentence may be present
         # in a recent-session projection and in a structured-memory episode.
@@ -171,9 +165,7 @@ class LocalKnowledgeRetriever:
                         local_files_only=True,
                     )
                 except Exception:  # noqa: BLE001 - retry with the portable PyTorch backend
-                    self._embedding_model = SentenceTransformer(
-                        str(self.embedding_model_path), local_files_only=True
-                    )
+                    self._embedding_model = SentenceTransformer(str(self.embedding_model_path), local_files_only=True)
             except Exception as exc:  # noqa: BLE001 - lexical fallback remains available
                 self._embedding_error = str(exc)
                 self._embedding_model = None
@@ -201,13 +193,9 @@ class LocalKnowledgeRetriever:
             # cache admission and model encoding under one re-entrant lock so
             # both branches cannot encode the same query at the same time.
             with self._lock:
-                missing = {
-                    key: text for key, text in missing.items() if key not in self._embedding_cache
-                }
+                missing = {key: text for key, text in missing.items() if key not in self._embedding_cache}
                 encoded = (
-                    model.encode(
-                        list(missing.values()), normalize_embeddings=True, convert_to_numpy=True
-                    )
+                    model.encode(list(missing.values()), normalize_embeddings=True, convert_to_numpy=True)
                     if missing
                     else []
                 )
@@ -251,16 +239,12 @@ class LocalKnowledgeRetriever:
         ]
         lexical_order = [
             chunks[index].chunk_id
-            for index in sorted(
-                range(len(chunks)), key=lambda i: (-bm25_raw[i], chunks[i].chunk_id)
-            )
+            for index in sorted(range(len(chunks)), key=lambda i: (-bm25_raw[i], chunks[i].chunk_id))
             if bm25_raw[index] > 0
         ]
         vector_order = [
             chunks[index].chunk_id
-            for index in sorted(
-                range(len(chunks)), key=lambda i: (-semantic[i], chunks[i].chunk_id)
-            )
+            for index in sorted(range(len(chunks)), key=lambda i: (-semantic[i], chunks[i].chunk_id))
             if semantic[index] > 0
         ]
         fused = reciprocal_rank_fusion([lexical_order, vector_order], rrf_k=settings.rrf_k)
@@ -316,18 +300,12 @@ class LocalKnowledgeRetriever:
                 exact_parents.add(parent_id)
             filtered_records.append(item)
         records = filtered_records
-        missing_texts = [
-            str(item.get("text") or "")
-            for item in records
-            if not isinstance(item.get("embedding"), list)
-        ]
+        missing_texts = [str(item.get("text") or "") for item in records if not isinstance(item.get("embedding"), list)]
         computed = self._embed_many([query, *missing_texts])
         query_vector = computed[0]
         missing_vectors = iter(computed[1:])
         vectors = [
-            item.get("embedding")
-            if isinstance(item.get("embedding"), list)
-            else next(missing_vectors, None)
+            item.get("embedding") if isinstance(item.get("embedding"), list) else next(missing_vectors, None)
             for item in records
         ]
         chunks: list[RetrievedChunk] = []
@@ -358,9 +336,7 @@ class LocalKnowledgeRetriever:
                     "character_name": settings.knowledge_character_boost
                     if character_name and character_name.casefold() in parent_text.casefold()
                     else 0.0,
-                    "source_match": settings.knowledge_source_boost
-                    if query_terms & _terms(source)
-                    else 0.0,
+                    "source_match": settings.knowledge_source_boost if query_terms & _terms(source) else 0.0,
                     "user_name": settings.knowledge_user_boost
                     if user_name and user_name.casefold() in parent_text.casefold()
                     else 0.0,
@@ -388,9 +364,7 @@ class LocalKnowledgeRetriever:
     ) -> list[RetrievedChunk]:
         settings = settings or RetrievalSettings()
         source_messages = (
-            messages
-            if messages is not None
-            else self.sessions.load_session(session_id).get("messages", [])
+            messages if messages is not None else self.sessions.load_session(session_id).get("messages", [])
         )
         messages = (
             [
@@ -399,10 +373,7 @@ class LocalKnowledgeRetriever:
                 if chat_message_retrieval_eligible(item)
                 and (
                     adult_mode
-                    or (
-                        not bool(item.get("adult_mode"))
-                        and str(item.get("companion_lane") or "") != "ADULT"
-                    )
+                    or (not bool(item.get("adult_mode")) and str(item.get("companion_lane") or "") != "ADULT")
                 )
             ]
             if include_raw_chat
@@ -422,10 +393,7 @@ class LocalKnowledgeRetriever:
                     or str(item.get("session_id") or "") == session_id
                     or (
                         not adult_mode
-                        and (
-                            bool(item.get("adult_mode"))
-                            or str(item.get("companion_lane") or "") == "ADULT"
-                        )
+                        and (bool(item.get("adult_mode")) or str(item.get("companion_lane") or "") == "ADULT")
                     )
                 ):
                     continue
@@ -509,12 +477,8 @@ class LocalKnowledgeRetriever:
             chunk_vectors.append(message_vector)
             boosts.append(
                 {
-                    "current_session": (
-                        settings.chat_session_boost if item_session_id == session_id else 0.0
-                    ),
-                    "exact_phrase": settings.chat_exact_boost
-                    if query.casefold() in content.casefold()
-                    else 0.0,
+                    "current_session": (settings.chat_session_boost if item_session_id == session_id else 0.0),
+                    "exact_phrase": settings.chat_exact_boost if query.casefold() in content.casefold() else 0.0,
                 }
             )
         pending_embeddings: dict[str, list[float]] = {}
@@ -526,9 +490,7 @@ class LocalKnowledgeRetriever:
                 if isinstance(stored_vector, list):
                     message_vector = stored_vector
                 elif message_vector is not None:
-                    pending_embeddings[str(episode.get("episode_id") or record["episode_id"])] = (
-                        message_vector
-                    )
+                    pending_embeddings[str(episode.get("episode_id") or record["episode_id"])] = message_vector
                 chunks.append(
                     RetrievedChunk(
                         chunk_id=f"memory:{record['memory_key']}",
@@ -554,9 +516,7 @@ class LocalKnowledgeRetriever:
                         "current_session": settings.chat_session_boost
                         if str(episode.get("session_id") or "") == session_id
                         else 0.0,
-                        "exact_phrase": settings.chat_exact_boost
-                        if query.casefold() in text.casefold()
-                        else 0.0,
+                        "exact_phrase": settings.chat_exact_boost if query.casefold() in text.casefold() else 0.0,
                     }
                 )
         if pending_embeddings:
@@ -578,11 +538,7 @@ class LocalKnowledgeRetriever:
         selected = ordered[: k - reserve]
         selected_ids = {item.chunk_id for item in selected}
         protected = sorted(
-            (
-                item
-                for item in ordered
-                if item.source == "memory" and item.chunk_id not in selected_ids
-            ),
+            (item for item in ordered if item.source == "memory" and item.chunk_id not in selected_ids),
             key=lambda item: (
                 int(item.metadata.get("eligible_misses", 0)),
                 -int(item.metadata.get("last_selected_round", 0)),

@@ -339,11 +339,7 @@ class JsonProfileRepository:
             return self.characters.memory_document(character_id)
         if key not in TARGET_FILES:
             raise KeyError(f"unknown profile document: {key}")
-        if (
-            character_id
-            and self.characters is not None
-            and key in {"ai_profile", "runtime_state"}
-        ):
+        if character_id and self.characters is not None and key in {"ai_profile", "runtime_state"}:
             record = self.characters.get(character_id)
             if isinstance(record.get("card"), dict):
                 bundle = self.characters.profile_bundle(character_id, self._load("user_profile"))
@@ -352,30 +348,21 @@ class JsonProfileRepository:
         with self._lock:
             return deepcopy(self._load(key))
 
-    def save_document(
-        self, key: str, document: dict[str, Any], character_id: str = ""
-    ) -> dict[str, Any]:
+    def save_document(self, key: str, document: dict[str, Any], character_id: str = "") -> dict[str, Any]:
         if character_id and self.characters is not None and key == "character_memory":
             return self.characters.save_memory_document(character_id, document)
         if key not in TARGET_FILES:
             raise KeyError(f"unknown profile document: {key}")
         if not isinstance(document, dict):
             raise ValueError("profile document must be an object")
-        if (
-            character_id
-            and self.characters is not None
-            and key in {"ai_profile", "runtime_state"}
-        ):
+        if character_id and self.characters is not None and key in {"ai_profile", "runtime_state"}:
             return self.characters.save_profile_document(character_id, key, document)
         with self._lock:
             current = self._load(key)
             submitted_revision = document.get("revision")
-            if submitted_revision is not None and int(submitted_revision) != int(
-                current.get("revision", 0)
-            ):
+            if submitted_revision is not None and int(submitted_revision) != int(current.get("revision", 0)):
                 raise ValueError(
-                    f"stale revision for {key}: expected {submitted_revision}, "
-                    f"current {current.get('revision', 0)}"
+                    f"stale revision for {key}: expected {submitted_revision}, current {current.get('revision', 0)}"
                 )
             candidate = self.schema.validate_document(key, document, current=current)
             candidate["revision"] = int(current.get("revision", 0)) + 1
@@ -428,12 +415,9 @@ class JsonProfileRepository:
             raise KeyError("profile history version not found")
         with self._lock:
             current = self._load(key)
-            if expected_revision is not None and expected_revision != int(
-                current.get("revision", 0)
-            ):
+            if expected_revision is not None and expected_revision != int(current.get("revision", 0)):
                 raise ValueError(
-                    f"stale revision for {key}: expected {expected_revision}, "
-                    f"current {current.get('revision', 0)}"
+                    f"stale revision for {key}: expected {expected_revision}, current {current.get('revision', 0)}"
                 )
             with path.open("r", encoding="utf-8") as handle:
                 snapshot = json.load(handle)
@@ -456,9 +440,7 @@ class JsonProfileRepository:
         character_receipt = JsonWriteReceipt(turn_id=plan.turn_id)
         if request.character_id and self.characters is not None:
             character_patches = [
-                patch
-                for patch in plan.patches
-                if patch.target in {"ai_profile", "runtime_state", "character_memory"}
+                patch for patch in plan.patches if patch.target in {"ai_profile", "runtime_state", "character_memory"}
             ]
             if character_patches:
                 character_receipt = self.characters.apply_profile_plan(
@@ -566,9 +548,7 @@ class JsonSessionRepository:
         self._store_events(self.database.get_document("session_deletion_events", []))
         for key, value in self.database.list_documents("session:"):
             if isinstance(value, dict):
-                self._store_session(
-                    str(value.get("session_id") or key.removeprefix("session:")), value
-                )
+                self._store_session(str(value.get("session_id") or key.removeprefix("session:")), value)
 
     @staticmethod
     def _session_key(session_id: str) -> str:
@@ -605,11 +585,7 @@ class JsonSessionRepository:
 
     def load_session(self, session_id: str) -> dict[str, Any]:
         path = self._path(session_id)
-        stored = (
-            self.database.get_document(self._session_key(session_id))
-            if self.database is not None
-            else None
-        )
+        stored = self.database.get_document(self._session_key(session_id)) if self.database is not None else None
         if not isinstance(stored, dict) and not path.exists():
             return {
                 "session_id": session_id,
@@ -753,11 +729,7 @@ class JsonSessionRepository:
             return []
 
     def load_recent(self, session_id: str, limit: int = 10) -> list[dict[str, Any]]:
-        visible = [
-            item
-            for item in self.load_session(session_id).get("messages", [])
-            if not item.get("hidden")
-        ]
+        visible = [item for item in self.load_session(session_id).get("messages", []) if not item.get("hidden")]
         return visible[-limit:]
 
     def load_all(self, session_id: str) -> list[dict[str, Any]]:
@@ -802,11 +774,7 @@ class JsonSessionRepository:
             messages = session.setdefault("messages", [])
             replaced_ids: set[str | None] = set()
             if replace_round:
-                replaced_ids = {
-                    item.get("message_id")
-                    for item in messages
-                    if item.get("round") == request.round
-                }
+                replaced_ids = {item.get("message_id") for item in messages if item.get("round") == request.round}
                 messages[:] = [item for item in messages if item.get("round") != request.round]
             user_timestamp = request.server_received_at.isoformat()
             assistant_timestamp = _now()
@@ -825,18 +793,14 @@ class JsonSessionRepository:
                         "timestamp": user_timestamp,
                         "timing": {
                             "client_sent_at": (
-                                request.client_sent_at.isoformat()
-                                if request.client_sent_at is not None
-                                else None
+                                request.client_sent_at.isoformat() if request.client_sent_at is not None else None
                             ),
                             "server_received_at_utc": user_timestamp,
                         },
                         "hidden": request.initiative,
                         "kind": "initiative_signal" if request.initiative else "message",
                         "initiative_trigger": request.initiative_trigger,
-                        "retrieval_class": (
-                            "initiative_signal" if request.initiative else "user_dialogue"
-                        ),
+                        "retrieval_class": ("initiative_signal" if request.initiative else "user_dialogue"),
                         "adult_mode": request.adult_mode,
                         "companion_lane": companion_lane(request),
                         "presentation_mode": presentation_mode,
@@ -854,9 +818,7 @@ class JsonSessionRepository:
                         },
                         "kind": "initiative_response" if request.initiative else "message",
                         "initiative_trigger": request.initiative_trigger,
-                        "retrieval_class": (
-                            "raw_initiative" if request.initiative else "raw_assistant"
-                        ),
+                        "retrieval_class": ("raw_initiative" if request.initiative else "raw_assistant"),
                         "adult_mode": request.adult_mode,
                         "companion_lane": companion_lane(request),
                         "presentation_mode": presentation_mode,
@@ -867,11 +829,7 @@ class JsonSessionRepository:
                 ]
             )
             if session.get("title") == "新对话":
-                session["title"] = (
-                    f"{request.character_name}的主动问候"
-                    if request.initiative
-                    else request.message[:28]
-                )
+                session["title"] = f"{request.character_name}的主动问候" if request.initiative else request.message[:28]
             session["updated_at"] = assistant_timestamp
             self._store_session(request.session_id, session)
             receipts = self._read_receipts()
@@ -907,9 +865,7 @@ class JsonSessionRepository:
                         "character_id": value.get("character_id", ""),
                         "mode": value.get("mode", "custom"),
                         "updated_at": value.get("updated_at", ""),
-                        "message_count": sum(
-                            1 for item in value.get("messages", []) if not item.get("hidden")
-                        ),
+                        "message_count": sum(1 for item in value.get("messages", []) if not item.get("hidden")),
                     }
                 )
             except (OSError, json.JSONDecodeError):
@@ -918,11 +874,7 @@ class JsonSessionRepository:
 
     def delete_session(self, session_id: str) -> bool:
         path = self._path(session_id)
-        exists = (
-            self.database.has_document(self._session_key(session_id))
-            if self.database
-            else path.exists()
-        )
+        exists = self.database.has_document(self._session_key(session_id)) if self.database else path.exists()
         if not exists:
             return False
         with self._lock:
@@ -946,11 +898,7 @@ class JsonSessionRepository:
             session = self.load_session(session_id)
             messages = session.get("messages", [])
             target = next(
-                (
-                    item
-                    for item in messages
-                    if item.get("message_id") == message_id and item.get("role") == "assistant"
-                ),
+                (item for item in messages if item.get("message_id") == message_id and item.get("role") == "assistant"),
                 None,
             )
             if target is None:
@@ -992,11 +940,7 @@ class JsonSessionRepository:
         with self._lock:
             session = self.load_session(session_id)
             messages = session.get("messages", [])
-            removed_ids = {
-                item.get("message_id")
-                for item in messages
-                if int(item.get("round", 0)) == round_num
-            }
+            removed_ids = {item.get("message_id") for item in messages if int(item.get("round", 0)) == round_num}
             retained = [item for item in messages if int(item.get("round", 0)) != round_num]
             if len(retained) == len(messages):
                 return False
@@ -1027,11 +971,7 @@ class JsonSessionRepository:
 
     def clear_session(self, session_id: str) -> bool:
         path = self._path(session_id)
-        exists = (
-            self.database.has_document(self._session_key(session_id))
-            if self.database
-            else path.exists()
-        )
+        exists = self.database.has_document(self._session_key(session_id)) if self.database else path.exists()
         if not exists:
             return False
         with self._lock:
@@ -1069,9 +1009,7 @@ class JsonSessionRepository:
             if self.database is not None:
                 removed = self.database.delete_prefix("session:")
                 paths = list(self.root.glob("*.json"))
-                self.database.defer_projection(
-                    lambda: [path.unlink(missing_ok=True) for path in paths]
-                )
+                self.database.defer_projection(lambda: [path.unlink(missing_ok=True) for path in paths])
             else:
                 for path in self.root.glob("*.json"):
                     path.unlink()
@@ -1096,10 +1034,7 @@ class JsonSessionRepository:
             )
         else:
             sources = [
-                (path, None)
-                for path in (
-                    [self._path(session_id)] if session_id else list(self.root.glob("*.json"))
-                )
+                (path, None) for path in ([self._path(session_id)] if session_id else list(self.root.glob("*.json")))
             ]
         for path, stored in sources:
             if isinstance(stored, dict):

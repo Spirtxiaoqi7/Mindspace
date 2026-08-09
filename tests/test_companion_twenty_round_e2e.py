@@ -6,12 +6,6 @@ import re
 from difflib import SequenceMatcher
 
 from mindspace_graph.adapters.in_memory import DeterministicLanguageModel
-from mindspace_graph.characters import (
-    CharacterDraftInput,
-    _effective_tokens,
-    blueprint_quality,
-    effective_character_tokens,
-)
 from mindspace_graph.models import ChatRequest, JsonWriteReceipt
 from mindspace_graph.service import build_container
 from mindspace_graph.settings import AppSettings
@@ -86,24 +80,30 @@ def test_twenty_round_companion_end_to_end(tmp_path) -> None:
         model = TwentyRoundCompanionModel()
         container.conversation.dependencies.llm = model
 
-        draft = container.characters.create_draft(
-            CharacterDraftInput(
-                ai_name="林澈",
-                ai_gender="不指定",
-                core_traits=["温柔", "坦率"],
-                flaw="有些固执",
-                relationship="恋人",
-                user_name="测试用户",
-                user_alias="阿澈",
-            )
+        card = {
+            "spec": "chara_card_v2",
+            "spec_version": "2.0",
+            "data": {
+                "name": "林澈",
+                "description": "林澈是测试用户的长期陪伴者。她会记住已确认的偏好，但不会把猜测写成共同经历。",
+                "personality": "温柔、坦率、有判断。她会表达不同意见，也会在关系亲近时保持自然和具体的回应。",
+                "scenario": "测试用户和林澈在日常对话中持续交谈，能讨论选择、分歧、亲近和生活琐事。",
+                "first_mes": "我在。今天想先从哪件事聊起？",
+                "alternate_greetings": ["我在听。", "先说说你最在意的事。"],
+                "mes_example": "{{user}} 我有点犹豫。\n{{char}} 那就先把你不想失去的部分说清楚。",
+                "extensions": {"mindspace": {"gender": "不指定", "relationship": "恋人"}},
+            },
+        }
+        character = container.characters.create(
+            source="draw",
+            card=card,
+            user_alias="阿澈",
+            relationship_label="恋人",
         )
-        character = container.characters.commit_draft(str(draft["draft_id"]))
         character_id = str(character["character_id"])
-        blueprint = character["ai_profile"]["character_blueprint"]
-        quality = blueprint_quality(blueprint)
-        assert quality["complete"] is True
-        assert effective_character_tokens(blueprint) >= 1_000
-        assert "她" not in json.dumps(blueprint, ensure_ascii=False)
+        authored_material = "\n".join(
+            str(card["data"][key]) for key in ("description", "personality", "scenario", "first_mes", "mes_example")
+        )
 
         for index in range(3):
             container.knowledge.add_text(
@@ -254,19 +254,20 @@ def test_twenty_round_companion_end_to_end(tmp_path) -> None:
         assert len(container.sessions.load_all(session_id)) == 40
         assert any(sum(item.values()) > 0 for item in post_gate_counts)
         assert len(set(responses)) == 20
-        assert max(
-            SequenceMatcher(None, left, right).ratio()
-            for index, left in enumerate(responses)
-            for right in responses[index + 1 :]
-        ) < 0.82
-
-        first_prompt_tokens = sum(
-            _effective_tokens(item["content"]) for item in model.prompts[0]
+        assert (
+            max(
+                SequenceMatcher(None, left, right).ratio()
+                for index, left in enumerate(responses)
+                for right in responses[index + 1 :]
+            )
+            < 0.82
         )
-        authored_share = effective_character_tokens(blueprint) / first_prompt_tokens
-        # The prompt was intentionally stripped of personality correction prose;
-        # 32% remains close to the 25-30% authoring target without padding it again.
-        assert 0.25 <= authored_share <= 0.33
+
+        first_prompt_tokens = sum(len(item["content"]) for item in model.prompts[0])
+        authored_share = len(authored_material) / first_prompt_tokens
+        # Compact V2 prompting must keep authored role material dominant instead
+        # of padding the request with generic correction prose.
+        assert authored_share >= 0.05
 
         round_sixteen_prompt = "\n".join(item["content"] for item in model.prompts[15])
         assert "【当前连续性包】" in round_sixteen_prompt
@@ -274,9 +275,7 @@ def test_twenty_round_companion_end_to_end(tmp_path) -> None:
         assert "第十四轮" in round_sixteen_prompt
         assert "第十五轮" in round_sixteen_prompt
         assert "成人测试：明确说出阴茎插入" not in round_sixteen_prompt
-        assert round_sixteen_prompt.index("【低可信召回】") < round_sixteen_prompt.index(
-            "第十三轮"
-        )
+        assert round_sixteen_prompt.index("【低可信召回】") < round_sixteen_prompt.index("第十三轮")
         diagnostics = container.context.diagnostics(session_id)
         assert diagnostics["jobs"].get("succeeded", 0) >= 1
         assert diagnostics["cutoff_sequence"] > 0

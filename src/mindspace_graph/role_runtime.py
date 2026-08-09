@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 DEFAULT_USER_NAME = "用户"
 
 
@@ -64,6 +63,8 @@ def build_runtime_role_state(
         "character_name": character_name,
         "user_name": user_name,
         "user_alias": _text(mindspace.get("user_alias"), 80) or user_name,
+        "character_gender": _text(mindspace.get("ai_gender") or identity.get("gender"), 32) or "不指定",
+        "user_gender": _text(user_identity.get("gender"), 32) or "不指定",
         "relationship": relationship,
         "description": _text(card.get("description") or identity.get("self_description"), 640),
         "personality": _text(card.get("personality"), 640),
@@ -77,6 +78,8 @@ def compact_system_prompt(state: dict[str, Any], *, reply_length: str = "") -> s
     """Provider-neutral role instruction with no dialogue examples."""
 
     lines = [
+        "【身份状态】",
+        f"用户性别：{state['user_gender']}；角色性别：{state['character_gender']}。",
         f"你是{state['character_name']}，正在和{state['user_name']}聊天。",
         f"关系：{state['relationship'] or '以角色卡为准'}；对用户称呼：{state['user_alias']}。",
     ]
@@ -94,7 +97,7 @@ def compact_system_prompt(state: dict[str, Any], *, reply_length: str = "") -> s
         ]
     )
     if reply_length:
-        lines.append(f"回复篇幅：{_text(reply_length, 120)}")
+        lines.append(f"【用户设定的回复篇幅】\n{_text(reply_length, 120)}")
     return "\n".join(lines)
 
 

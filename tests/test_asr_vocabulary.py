@@ -81,9 +81,7 @@ def test_asr_observation_is_bounded_metadata_outside_profiles(tmp_path) -> None:
         {
             "raw_text": "长利你好",
             "text": "长离你好",
-            "correction_matches": [
-                {"from": "长利", "to": "长离", "source": "explicit"}
-            ],
+            "correction_matches": [{"from": "长利", "to": "长离", "source": "explicit"}],
             "vocabulary_revision": "v1",
         },
         event="asr.final",

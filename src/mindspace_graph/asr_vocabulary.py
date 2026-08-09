@@ -147,11 +147,7 @@ class ASRVocabularyStore:
             try:
                 value = json.loads(path.read_text(encoding="utf-8"))
                 if isinstance(value, dict):
-                    entries = [
-                        _normalize_entry(item)
-                        for item in value.get("entries", [])
-                        if isinstance(item, dict)
-                    ]
+                    entries = [_normalize_entry(item) for item in value.get("entries", []) if isinstance(item, dict)]
                     self._manual = {
                         "schema_version": "1.0.0",
                         "revision": max(0, int(value.get("revision") or 0)),
@@ -245,9 +241,7 @@ class ASRVocabularyStore:
 
         # Only high-value terms are sent to the streaming decoder.  The complete
         # list remains available to the deterministic final-text corrector.
-        decoder_hotwords = list(
-            dict.fromkeys(item["term"] for item in enabled if int(item["weight"]) >= 65)
-        )[:96]
+        decoder_hotwords = list(dict.fromkeys(item["term"] for item in enabled if int(item["weight"]) >= 65))[:96]
         explicit: dict[str, str] = {}
         fuzzy_targets: list[dict[str, Any]] = []
         for item in reversed(enabled):
@@ -356,9 +350,7 @@ class ASRVocabularyStore:
             right = snapshot["explicit"][wrong]
             if wrong not in updated:
                 continue
-            matches.append(
-                {"from": wrong, "to": right, "score": 1.0, "source": "explicit"}
-            )
+            matches.append({"from": wrong, "to": right, "score": 1.0, "source": "explicit"})
             updated = updated.replace(wrong, right)
         return {
             "raw_text": text,

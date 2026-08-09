@@ -53,11 +53,11 @@ beforeEach(() => {
       journey = { ...journey, seed: JSON.parse(String(init.body)) };
       return response(journey);
     }
-    if (url.endsWith("/archetypes")) {
+    if (url.includes("/archetypes")) {
       journey = { ...journey, revision: 2, status: "archetypes_ready", archetypes, model_calls: { ...journey.model_calls, archetypes: 1 } };
       return response(journey);
     }
-    if (url.endsWith("/cards") && init?.method === "POST") {
+    if (url.includes("/cards") && init?.method === "POST") {
       cardRequests += 1;
       const cards_by_slot = Object.fromEntries(slots.map((slot) => [slot.id, archetypes.map((person, personIndex) => ({
         card_id: `${person.id}:${slot.id}`, source_id: person.id, source_label: person.label, slot_id: slot.id,
@@ -76,12 +76,12 @@ beforeEach(() => {
       journey = { ...journey, revision: journey.revision + 1, status: Object.keys(selections).length === 12 ? "selections_ready" : "cards_ready", selections };
       return response(journey);
     }
-    if (url.endsWith("/synthesize")) {
+    if (url.includes("/synthesize")) {
       synthesisRequests += 1;
       journey = { ...journey, status: "review_ready", final_card: { spec: "chara_card_v2", spec_version: "2.0", data: { name: "林见月", description: "基础信息", personality: "清醒而细腻", scenario: "长期陪伴", first_mes: "我在。", alternate_greetings: ["你好。", "慢慢说。"], mes_example: "{{user}} 你好\n{{char}} 我在。" } } };
       return response(journey);
     }
-    if (url.endsWith("/commit")) {
+    if (url.includes("/commit")) {
       commitRequests += 1;
       journey = { ...journey, status: "committed" };
       return response({ success: true, character: { character_id: "character-1", display_name: "林见月" } });
@@ -112,6 +112,9 @@ it("runs 8 directions, 96 cards and twelve V7 selections before entering local c
     const candidate = document.querySelector<HTMLElement>(".destiny-slip");
     expect(candidate).not.toBeNull();
     await user.click(candidate!);
+    expect(candidate).toHaveClass("is-preview");
+    expect(candidate).toHaveClass("is-selecting");
+    expect(document.querySelector(".slip-fan")).toHaveClass("has-selection");
     await user.click(screen.getByRole("button", { name: /落契此签|改契此签/ }));
     await waitFor(() => expect(Object.keys(journey.selections)).toHaveLength(index + 1));
     if (index < 11) {
@@ -143,4 +146,81 @@ it("keeps the persistent uploaded avatar URL while preserving crop adjustments",
     x: 12,
     y: -8,
   });
+});
+
+it("keeps the V7 resume key when a temporary journey restore request fails", async () => {
+  window.localStorage.setItem("mindspace.destiny.v7.active", "journey-test");
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/destiny/definition")) return response({ slots, interaction_willingness: {} });
+    if (url.includes("/api/v1/destiny/journeys/journey-test")) {
+      return new Response(JSON.stringify({ detail: "temporary Core failure" }), { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  }));
+
+  render(<DestinyCanvas defaultUserName="测试用户" onBack={vi.fn()} />);
+
+  await screen.findByRole("alert");
+  expect(window.localStorage.getItem("mindspace.destiny.v7.active")).toBe("journey-test");
+});
+
+it("keeps the V7 resume key when the definition endpoint is unavailable", async () => {
+  window.localStorage.setItem("mindspace.destiny.v7.active", "journey-test");
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/destiny/definition")) {
+      return new Response(JSON.stringify({ detail: "definition unavailable" }), { status: 404, headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error(`Journey should not load until definition is ready: ${url}`);
+  }));
+
+  render(<DestinyCanvas defaultUserName="测试用户" onBack={vi.fn()} />);
+
+  await screen.findByRole("alert");
+  expect(window.localStorage.getItem("mindspace.destiny.v7.active")).toBe("journey-test");
+});
+
+it("refreshes a failed stage revision and carries the default template through both generation stages", async () => {
+  const user = userEvent.setup();
+  let serverJourney: Record<string, any> = { ...journey, revision: 1 };
+  const requestedUrls: string[] = [];
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    requestedUrls.push(url);
+    if (url.endsWith("/api/v1/destiny/definition")) return response({ slots, interaction_willingness: {} });
+    if (url.endsWith("/api/v1/destiny/journeys") && init?.method === "POST") return response(serverJourney);
+    if (url.endsWith("/api/v1/destiny/journeys/journey-test") && !init?.method) return response(serverJourney);
+    if (url.includes("/archetypes") && !url.includes("use_default=true")) {
+      serverJourney = { ...serverJourney, revision: 2, model_calls: { ...serverJourney.model_calls, archetypes: 1 } };
+      return new Response(JSON.stringify({ detail: "provider unavailable" }), { status: 503, headers: { "Content-Type": "application/json" } });
+    }
+    if (url.includes("/archetypes") && url.includes("use_default=true")) {
+      expect(url).toContain("expected_revision=2");
+      serverJourney = { ...serverJourney, revision: 3, status: "archetypes_ready", archetypes };
+      return response(serverJourney);
+    }
+    if (url.includes("/cards") && url.includes("use_default=true")) {
+      expect(url).toContain("expected_revision=3");
+      const cards_by_slot = Object.fromEntries(slots.map((slot) => [slot.id, archetypes.map((person) => ({
+        card_id: `${person.id}:${slot.id}`, source_id: person.id, source_label: person.label,
+        slot_id: slot.id, slot_name: slot.axis, label: `${person.label} ${slot.axis}`,
+        summary: "默认可见表现。", interaction_willingness: "normal",
+      }))]));
+      serverJourney = { ...serverJourney, revision: 4, status: "cards_ready", cards_by_slot };
+      return response(serverJourney);
+    }
+    throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+  }));
+
+  render(<DestinyCanvas defaultUserName="测试用户" onBack={vi.fn()} />);
+  await user.type(screen.getByLabelText("AI 名称"), "林见月");
+  await user.type(screen.getByLabelText("角色期待"), "自然地陪伴和聊天。");
+  await user.click(screen.getByRole("button", { name: "生成命格图" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("provider unavailable");
+  await user.click(screen.getByRole("button", { name: "使用默认模板" }));
+
+  await waitFor(() => expect(document.querySelectorAll(".destiny-slip")).toHaveLength(3));
+  expect(requestedUrls.some((url) => url.includes("/archetypes") && url.includes("use_default=true"))).toBe(true);
+  expect(requestedUrls.some((url) => url.includes("/cards") && url.includes("use_default=true"))).toBe(true);
 });

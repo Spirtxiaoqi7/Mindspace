@@ -82,9 +82,7 @@ def _evidenced_items(
             continue
         text = re.sub(r"\s+", " ", str(item.get("text") or "")).strip()
         evidence_ids = [
-            str(identifier)
-            for identifier in item.get("evidence_ids", [])
-            if str(identifier) in allowed_ids
+            str(identifier) for identifier in item.get("evidence_ids", []) if str(identifier) in allowed_ids
         ]
         if not text or not evidence_ids:
             continue
@@ -164,25 +162,20 @@ def parse_compaction_output(raw: str, payload: dict[str, Any]) -> dict[str, Any]
     source_lanes = [
         str(item.get("companion_lane") or "DAILY")
         for item in payload.get("dialogue", [])
-        if isinstance(item, dict)
-        and str(item.get("companion_lane") or "DAILY") in {"DAILY", "ROMANCE", "ADULT"}
+        if isinstance(item, dict) and str(item.get("companion_lane") or "DAILY") in {"DAILY", "ROMANCE", "ADULT"}
     ]
     # Lane classification is server-owned. The model may describe the segment,
     # but it cannot promote or demote an adult turn by changing this field.
     lane = source_lanes[-1] if source_lanes else str(previous.get("lane") or "DAILY")
     if lane not in {"DAILY", "ROMANCE", "ADULT"}:
         lane = "DAILY"
-    delta_summary = (
-        re.sub(r"\s+", " ", str(value.get("dialogue_summary") or "")).strip().replace("她", "TA")
-    )
+    delta_summary = re.sub(r"\s+", " ", str(value.get("dialogue_summary") or "")).strip().replace("她", "TA")
     if not delta_summary:
         raise ValueError("compaction dialogue_summary is blank")
     if _ADULT_DETAIL.search(delta_summary):
         delta_summary = "双方在成人模式中发生了明确同意的亲密互动；露骨细节未进入通用连续性包。"
     previous_overview = str(previous.get("continuity_overview") or "").strip()
-    continuity_overview = "；".join(item for item in (previous_overview, delta_summary) if item)[
-        -3000:
-    ]
+    continuity_overview = "；".join(item for item in (previous_overview, delta_summary) if item)[-3000:]
     source = dict(payload.get("source") or {})
     source["cutoff_sequence"] = int(payload["cutoff_sequence"])
     source["lanes"] = list(dict.fromkeys(source_lanes))
@@ -241,9 +234,7 @@ def parse_compaction_output(raw: str, payload: dict[str, Any]) -> dict[str, Any]
         )
         if output_key == "adult_facts" and lane != "ADULT":
             delta_items = []
-        result[output_key] = _merge_items(
-            previous.get(output_key), delta_items, limit=limits[output_key]
-        )
+        result[output_key] = _merge_items(previous.get(output_key), delta_items, limit=limits[output_key])
     return result
 
 
@@ -331,9 +322,7 @@ class ContextCompactionService:
                 self._api_config(),
             )
             summary = parse_compaction_output(raw, payload)
-            current_profiles: ProfileBundle = self.profiles.load_bundle(
-                self.character_for_session(job.session_id)
-            )
+            current_profiles: ProfileBundle = self.profiles.load_bundle(self.character_for_session(job.session_id))
             self.ledger.activate_compaction(job, summary=summary, profiles=current_profiles)
         except Exception as exc:  # noqa: BLE001 - durable retry owns failure semantics
             self.ledger.fail_compaction(job.job_id, str(exc), retry=True)

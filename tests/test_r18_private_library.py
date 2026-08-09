@@ -14,9 +14,7 @@ from mindspace_graph.r18_private_library import (
 
 
 def _docx(paragraphs: list[str]) -> bytes:
-    body = "".join(
-        f"<w:p><w:r><w:t>{paragraph}</w:t></w:r></w:p>" for paragraph in paragraphs
-    )
+    body = "".join(f"<w:p><w:r><w:t>{paragraph}</w:t></w:r></w:p>" for paragraph in paragraphs)
     xml = (
         '<?xml version="1.0" encoding="UTF-8"?>'
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
@@ -43,7 +41,7 @@ def test_private_library_reads_a_sealed_docx_from_memory_only(tmp_path, monkeypa
 
 def test_node_packager_and_core_unsealer_share_one_envelope_format(tmp_path):
     source = tmp_path / "source.docx"
-    source.write_bytes(_docx(["只应从内存读取"] ))
+    source.write_bytes(_docx(["只应从内存读取"]))
     sealed = tmp_path / "private.bin"
     script = Path(__file__).parents[1] / "scripts" / "seal-r18-library.mjs"
 

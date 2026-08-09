@@ -19,12 +19,12 @@ def write_test_pe(path: Path, *, signed: bool) -> None:
     optional_offset = pe_offset + 24
     data[0:2] = b"MZ"
     data[0x3C:0x40] = pe_offset.to_bytes(4, "little")
-    data[pe_offset:pe_offset + 4] = b"PE\0\0"
-    data[optional_offset:optional_offset + 2] = (0x20B).to_bytes(2, "little")
+    data[pe_offset : pe_offset + 4] = b"PE\0\0"
+    data[optional_offset : optional_offset + 2] = (0x20B).to_bytes(2, "little")
     if signed:
         certificate_entry = optional_offset + 112 + (8 * 4)
-        data[certificate_entry:certificate_entry + 4] = (0xF0000).to_bytes(4, "little")
-        data[certificate_entry + 4:certificate_entry + 8] = (128).to_bytes(4, "little")
+        data[certificate_entry : certificate_entry + 4] = (0xF0000).to_bytes(4, "little")
+        data[certificate_entry + 4 : certificate_entry + 8] = (128).to_bytes(4, "little")
     path.write_bytes(data)
 
 
@@ -50,9 +50,7 @@ def test_manifest_contains_required_stable_fields_and_matching_hash(tmp_path: Pa
 def test_signature_status_is_detected_from_pe_certificate_table(tmp_path: Path) -> None:
     installer = tmp_path / "Mindspace-0.6.1-x64.exe"
     write_test_pe(installer, signed=True)
-    manifest, _ = deploy_installer.build_download_manifest(
-        installer, installer.name, "0.6.1", "douyinqijun.cn"
-    )
+    manifest, _ = deploy_installer.build_download_manifest(installer, installer.name, "0.6.1", "douyinqijun.cn")
     assert manifest["signature_status"] == "signed"
 
 
@@ -77,9 +75,7 @@ def test_declared_signed_rejects_unsigned_file(tmp_path: Path) -> None:
         ("Mindspace-0.7.0-x64.exe", "0.7.0", "example.com"),
     ],
 )
-def test_manifest_rejects_inconsistent_public_identity(
-    tmp_path: Path, name: str, version: str, domain: str
-) -> None:
+def test_manifest_rejects_inconsistent_public_identity(tmp_path: Path, name: str, version: str, domain: str) -> None:
     installer = tmp_path / name
     write_test_pe(installer, signed=False)
     with pytest.raises(ValueError):

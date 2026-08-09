@@ -81,9 +81,7 @@ def evaluate_profile_bootstrap(
         "ai_profile": profiles.ai_profile,
     }
     empty_fields = tuple(
-        field
-        for field in persistent_fields
-        if _is_empty(_read_pointer(documents[field.target], field.path))
+        field for field in persistent_fields if _is_empty(_read_pointer(documents[field.target], field.path))
     )
     ratio = len(empty_fields) / max(1, len(persistent_fields))
 
@@ -98,9 +96,11 @@ def evaluate_profile_bootstrap(
         "",
         "用户",
     }
-    has_character_setup = bool(
-        request.system_prompt.strip()
-    ) or request.character_name.strip() not in {"", "AI助手", "Mindspace"}
+    has_character_setup = bool(request.system_prompt.strip()) or request.character_name.strip() not in {
+        "",
+        "AI助手",
+        "Mindspace",
+    }
 
     eligible: list[MemoryField] = []
     evidence: dict[str, frozenset[str]] = {}
@@ -130,14 +130,10 @@ def evaluate_profile_bootstrap(
             {
                 "current_user": request.message.strip(),
                 "user_setup": "\n".join(
-                    value
-                    for value in (request.user_name.strip(), request.user_persona.strip())
-                    if value
+                    value for value in (request.user_name.strip(), request.user_persona.strip()) if value
                 ),
                 "character_setup": "\n".join(
-                    value
-                    for value in (request.character_name.strip(), request.system_prompt.strip())
-                    if value
+                    value for value in (request.character_name.strip(), request.system_prompt.strip()) if value
                 ),
             }
             if active

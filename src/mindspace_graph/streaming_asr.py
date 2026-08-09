@@ -66,9 +66,7 @@ def _looks_like_echo(text: str, playback_text: str) -> bool:
     return normalized in playback or _text_similarity(normalized, playback) >= 0.82
 
 
-def _split_refinement_uncertainty(
-    stream_text: str, final_text: str
-) -> tuple[str, list[dict[str, str]]]:
+def _split_refinement_uncertainty(stream_text: str, final_text: str) -> tuple[str, list[dict[str, str]]]:
     """Keep agreeing characters as the backbone and mark changed spans as alternatives."""
 
     stream = _compact_speech_text(stream_text)
@@ -136,16 +134,12 @@ def apply_asr_decision(event: dict[str, Any]) -> dict[str, Any]:
         agreement = _text_similarity(stream_text, text) if stream_text and text else 1.0
         data["stream_final_agreement"] = round(agreement, 4)
         if refinement_applied and agreement < 0.72:
-            confirmed_text, uncertain_segments = _split_refinement_uncertainty(
-                stream_text, text
-            )
+            confirmed_text, uncertain_segments = _split_refinement_uncertainty(stream_text, text)
             if len(_compact_speech_text(confirmed_text)) < 2:
                 confirmed_text = ""
             quality = "uncertain"
             reasons.append("stream_final_disagreement")
-        elif playback_active and not (
-            explicit_stop or stable_partial or duration_confirmed
-        ):
+        elif playback_active and not (explicit_stop or stable_partial or duration_confirmed):
             # A plausible final remains draft-only when playback prevented a
             # stable partial and the final pass was skipped for echo safety.
             quality, confirmed_text = "uncertain", ""
@@ -157,9 +151,7 @@ def apply_asr_decision(event: dict[str, Any]) -> dict[str, Any]:
             "quality": quality,
             "confirmed_text": confirmed_text,
             "uncertain_segments": uncertain_segments,
-            "barge_in_eligible": bool(
-                playback_active and confirmed_text and quality in {"accepted", "uncertain"}
-            ),
+            "barge_in_eligible": bool(playback_active and confirmed_text and quality in {"accepted", "uncertain"}),
             "explicit_stop": explicit_stop,
             "decision_reasons": reasons,
         }
@@ -480,8 +472,7 @@ class FunASRRuntime:
     def status(self) -> dict[str, Any]:
         installed = find_spec("funasr") is not None
         model_files = {
-            name: (self.model_root / name).exists()
-            for name in ("paraformer-zh-streaming", "fsmn-vad", "ct-punc")
+            name: (self.model_root / name).exists() for name in ("paraformer-zh-streaming", "fsmn-vad", "ct-punc")
         }
         final_installed = self.final_model_path.exists()
         ready = self.asr is not None or (installed and all(model_files.values()))
@@ -760,9 +751,7 @@ class FunASRStreamSession:
             maximum_bytes = self.options.sample_rate * 2 * 30
             if len(self._utterance_pcm) > maximum_bytes:
                 del self._utterance_pcm[: len(self._utterance_pcm) - maximum_bytes]
-            self._utterance_playback_active = (
-                self._utterance_playback_active or self.options.playback_active
-            )
+            self._utterance_playback_active = self._utterance_playback_active or self.options.playback_active
             if self.options.playback_active and self.options.playback_text:
                 self._utterance_playback_text = self.options.playback_text
         else:
@@ -836,20 +825,9 @@ class FunASRStreamSession:
 
         self.pending.extend(pcm)
         endpoint_silence_ms, endpoint_reason = self._endpoint_policy()
-        silence_final = (
-            self.speaking
-            and self.silence_ms >= endpoint_silence_ms
-            and self.tail_resume_ms == 0
-        )
-        while (
-            len(self.pending) >= self.chunk_bytes
-            or ((force_final or silence_final) and self.pending)
-        ):
-            length = (
-                len(self.pending)
-                if force_final or silence_final
-                else self.chunk_bytes
-            )
+        silence_final = self.speaking and self.silence_ms >= endpoint_silence_ms and self.tail_resume_ms == 0
+        while len(self.pending) >= self.chunk_bytes or ((force_final or silence_final) and self.pending):
+            length = len(self.pending) if force_final or silence_final else self.chunk_bytes
             raw = bytes(self.pending[:length])
             del self.pending[:length]
             samples = self._pcm_array(raw)
@@ -882,9 +860,7 @@ class FunASRStreamSession:
             # provide two independent checks. Requiring a decoded text token as
             # a third check made real barge-in fail whenever the first streaming
             # ASR chunk had not formed characters yet.
-            speech_confirmed = (
-                vad_confirmed if self.runtime.vad is not None else bool(text)
-            )
+            speech_confirmed = vad_confirmed if self.runtime.vad is not None else bool(text)
             if self.pending_speech_start and speech_confirmed:
                 self.pending_speech_start = False
                 self.speaking = True
@@ -898,32 +874,27 @@ class FunASRStreamSession:
                             "confirmed_by": (
                                 "fsmn_vad+asr"
                                 if self.options.playback_active and text
-                                else "fsmn_vad" if vad_confirmed else "asr_partial"
+                                else "fsmn_vad"
+                                if vad_confirmed
+                                else "asr_partial"
                             ),
                         },
                     }
                 )
             accept_text = bool(text) and (
-                self.options.playback_active
-                or self.speaking
-                or vad_confirmed
-                or self.runtime.vad is None
+                self.options.playback_active or self.speaking or vad_confirmed or self.runtime.vad is None
             )
             if accept_text:
                 self.transcript += text
                 self._partial_texts.append(self.transcript)
                 self._partial_texts = self._partial_texts[-3:]
-                events.append(
-                    {"event": "asr.partial", "data": {"text": self.transcript, "delta": text}}
-                )
+                events.append({"event": "asr.partial", "data": {"text": self.transcript, "delta": text}})
                 compact = _compact_speech_text(self.transcript)
                 stable_partial = self._stable_partial()
                 explicit_stop = compact in STOP_COMMANDS
                 # 两个稳定 partial + VAD + 回声排除已经是三重确认。不能再用
                 # “至少四个字”拒绝“不对”“不是”这类真实的中文短插话。
-                can_confirm_early = explicit_stop or (
-                    stable_partial and len(compact) >= 2
-                )
+                can_confirm_early = explicit_stop or (stable_partial and len(compact) >= 2)
                 if (
                     self.options.playback_active
                     and self._vad_confirmed

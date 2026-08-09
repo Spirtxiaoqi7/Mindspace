@@ -157,9 +157,7 @@ def research_transport(request: httpx.Request) -> httpx.Response:
 
 
 def test_permissions_route_only_enabled_read_capabilities(tmp_path):
-    service = ReadOnlyCapabilityService(
-        config_provider=lambda: capability_config(), runtime_dir=tmp_path
-    )
+    service = ReadOnlyCapabilityService(config_provider=lambda: capability_config(), runtime_dir=tmp_path)
     local = service.route(ChatRequest(message="看看本机 CPU 和 Mindspace 服务状态"))
     assert local.decision == "direct_answer"
     assert local.calls == []
@@ -250,9 +248,7 @@ def test_six_am_trending_request_is_a_deterministic_web_route(tmp_path):
 
 def test_web_search_is_get_only_public_and_never_json_evidence(tmp_path):
     service = ReadOnlyCapabilityService(
-        config_provider=lambda: capability_config(
-            web_search_enabled=True, realtime_topics_enabled=True
-        ),
+        config_provider=lambda: capability_config(web_search_enabled=True, realtime_topics_enabled=True),
         runtime_dir=tmp_path,
         http_transport=httpx.MockTransport(rss_transport),
     )
@@ -263,9 +259,7 @@ def test_web_search_is_get_only_public_and_never_json_evidence(tmp_path):
     assert results[0].status == "success"
     assert results[0].trust == "external_untrusted"
     assert results[0].eligible_for_json_evidence is False
-    assert [item["url"] for item in results[0].data["items"]] == [
-        "https://example.com/mindspace-news"
-    ]
+    assert [item["url"] for item in results[0].data["items"]] == ["https://example.com/mindspace-news"]
 
 
 def test_direct_url_is_opened_and_related_original_sources_are_collected(tmp_path):
@@ -301,9 +295,7 @@ def test_local_status_request_cannot_create_an_ai_tool_call(tmp_path):
     assert result["capability_results"] == []
     stored = deps.sessions.sessions["single-turn"][-1]
     assert stored["content"] == reply
-    assistant_messages = [
-        item for item in deps.sessions.sessions["single-turn"] if item["role"] == "assistant"
-    ]
+    assistant_messages = [item for item in deps.sessions.sessions["single-turn"] if item["role"] == "assistant"]
     assert len(assistant_messages) == 1
     assert deps.profiles.applied_plans == []
 
@@ -346,9 +338,7 @@ def test_ambiguous_freshness_uses_private_planner_then_one_visible_reply(tmp_pat
     assert model.planner_calls == 1
     assert not result["response"].reply.startswith("我去网上查一下最新信息，等我一下。")
     assert len(deps.sessions.sessions["planned"]) == 2
-    assert "【本轮只读观测结果】" in "\n".join(
-        message["content"] for message in result["prompt_messages"]
-    )
+    assert "【本轮只读观测结果】" in "\n".join(message["content"] for message in result["prompt_messages"])
 
 
 class ContextAwarePlannerModel(DeterministicLanguageModel):
@@ -536,9 +526,7 @@ def test_research_review_can_run_one_follow_up_wave_but_keeps_one_reply(tmp_path
     assert model.review_calls == 1
     assert len(result["capability_results"]) == 2
     assert result["capability_results"][1].call_id == "cap_followup_01"
-    assistant_messages = [
-        item for item in deps.sessions.sessions["review"] if item["role"] == "assistant"
-    ]
+    assistant_messages = [item for item in deps.sessions.sessions["review"] if item["role"] == "assistant"]
     assert len(assistant_messages) == 2
 
 

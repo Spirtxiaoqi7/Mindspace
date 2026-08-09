@@ -51,23 +51,13 @@ def test_journals_and_moments_are_character_isolated_and_narrative_only(tmp_path
         assert moment.status_code == 200
         assert moment.json()["eligible_for_json_evidence"] is False
 
-        assert client.get(
-            f"/api/v1/characters/{first['character_id']}/journal"
-        ).json()["count"] == 1
-        assert client.get(
-            f"/api/v1/characters/{second['character_id']}/journal"
-        ).json()["count"] == 0
-        assert client.get(
-            f"/api/v1/characters/{second['character_id']}/moments"
-        ).json()["count"] == 0
-        hits = container.chapters.search_narratives(
-            first["character_id"], "窗外一起听雨"
-        )
+        assert client.get(f"/api/v1/characters/{first['character_id']}/journal").json()["count"] == 1
+        assert client.get(f"/api/v1/characters/{second['character_id']}/journal").json()["count"] == 0
+        assert client.get(f"/api/v1/characters/{second['character_id']}/moments").json()["count"] == 0
+        hits = container.chapters.search_narratives(first["character_id"], "窗外一起听雨")
         assert hits
         assert all(item.metadata["visibility"] == "narrative_only" for item in hits)
-        assert container.chapters.search_narratives(
-            second["character_id"], "窗外一起听雨"
-        ) == []
+        assert container.chapters.search_narratives(second["character_id"], "窗外一起听雨") == []
 
     after = container.characters.get(first["character_id"])["card"]
     assert after == before
@@ -112,9 +102,7 @@ def test_journal_uses_character_first_person_and_complete_user_anchored_rounds(
     container.chapters.llm_provider = lambda: llm
     container.chapters.api_provider = lambda: ApiConfig()
 
-    generated = container.chapters.generate_journal(
-        character["character_id"], session_id="journal-session"
-    )
+    generated = container.chapters.generate_journal(character["character_id"], session_id="journal-session")
 
     assert generated["generation"] == "llm"
     assert generated["model_calls"] == 1
@@ -155,9 +143,7 @@ def test_journal_invalid_perspective_falls_back_but_counts_attempt(tmp_path):
 
     container.chapters.llm_provider = lambda: WrongPerspectiveLLM()
     container.chapters.api_provider = lambda: ApiConfig()
-    generated = container.chapters.generate_journal(
-        character["character_id"], session_id="bad-journal"
-    )
+    generated = container.chapters.generate_journal(character["character_id"], session_id="bad-journal")
 
     assert generated["generation"] == "template"
     assert generated["model_calls"] == 1
@@ -267,9 +253,18 @@ def test_conversation_scene_is_session_scoped_and_inherits_character_default(tmp
         scenes = client.get("/api/v1/scenes")
         assert scenes.status_code == 200
         assert scenes.json()["count"] == 20
-        assert all(
-            "-preview" not in item["asset_id"] for item in scenes.json()["items"]
+        assert all("-preview" not in item["asset_id"] for item in scenes.json()["items"])
+
+        custom = client.post(
+            "/api/v1/scenes/custom",
+            data={"title": "我的房间", "description": "只属于这段对话的房间。"},
+            files={"file": ("room.webp", b"RIFF\x10\x00\x00\x00WEBPscene", "image/webp")},
         )
+        assert custom.status_code == 200
+        assert custom.json()["custom"] is True
+        assert custom.json()["asset_url"].startswith("/api/v1/scene/files/scene-")
+        assert client.get(custom.json()["asset_url"]).content == b"RIFF\x10\x00\x00\x00WEBPscene"
+        assert client.get("/api/v1/scenes").json()["count"] == 21
 
         empty = client.get("/api/v1/sessions/scene-chat-a/scene")
         assert empty.status_code == 200
@@ -298,6 +293,13 @@ def test_conversation_scene_is_session_scoped_and_inherits_character_default(tmp
         other = client.get("/api/v1/sessions/scene-chat-other/scene").json()
         assert other["scene"] is None
 
+        custom_selected = client.put(
+            "/api/v1/sessions/scene-chat-a/scene",
+            json={"scene_id": custom.json()["scene_id"], "expected_revision": 1},
+        )
+        assert custom_selected.status_code == 200
+        assert custom_selected.json()["scene"]["asset_url"] == custom.json()["asset_url"]
+
         legacy_activity = client.post(
             "/api/v1/activities/scene_companion/sessions",
             json={"character_id": first["character_id"], "session_id": "scene-chat-a"},
@@ -317,9 +319,7 @@ def test_archived_character_session_scene_returns_controlled_gone_response(tmp_p
     )
 
     with TestClient(app) as client:
-        archived = client.post(
-            f"/api/v1/characters/{character['character_id']}/archive"
-        )
+        archived = client.post(f"/api/v1/characters/{character['character_id']}/archive")
         assert archived.status_code == 200
 
         scene = client.get("/api/v1/sessions/archived-scene-chat/scene")
@@ -383,15 +383,11 @@ def test_prompt_inspector_marks_scene_as_ephemeral_system_layer(tmp_path):
             },
         )
         assert streamed.status_code == 200
-        inspection = client.get(
-            "/api/v1/runs/scene-prompt-run/prompt-inspection?reveal=true"
-        )
+        inspection = client.get("/api/v1/runs/scene-prompt-run/prompt-inspection?reveal=true")
         assert inspection.status_code == 200
         layers = inspection.json()["layers"]
         assert any(item["layer"] == "scene_context" for item in layers)
-        scene_layer = next(
-            item for item in layers if item["layer"] == "scene_context"
-        )
+        scene_layer = next(item for item in layers if item["layer"] == "scene_context")
         assert scene_layer["role"] == "system"
         assert scene_layer["content"] == "【当前场景】两个人现在在暮色中的河岸边。"
         assert container.chapters.list_journals(character["character_id"]) == []

@@ -34,9 +34,7 @@ def tokenize(text: str) -> list[str]:
 class BM25Plus:
     """Small corpus-local BM25+ implementation with deterministic tie ordering."""
 
-    def __init__(
-        self, documents: list[str], *, k1: float = 1.5, b: float = 0.75, delta: float = 1.0
-    ):
+    def __init__(self, documents: list[str], *, k1: float = 1.5, b: float = 0.75, delta: float = 1.0):
         self.documents = documents
         self.k1 = k1
         self.b = b
@@ -62,15 +60,9 @@ class BM25Plus:
                 if frequency == 0:
                     continue
                 document_frequency = self.document_frequency[term]
-                inverse_frequency = math.log(
-                    1.0 + (total - document_frequency + 0.5) / (document_frequency + 0.5)
-                )
-                normalization = self.k1 * (
-                    1.0 - self.b + self.b * length / max(self.avg_length, 1.0)
-                )
-                score += inverse_frequency * (
-                    frequency * (self.k1 + 1.0) / (frequency + normalization) + self.delta
-                )
+                inverse_frequency = math.log(1.0 + (total - document_frequency + 0.5) / (document_frequency + 0.5))
+                normalization = self.k1 * (1.0 - self.b + self.b * length / max(self.avg_length, 1.0))
+                score += inverse_frequency * (frequency * (self.k1 + 1.0) / (frequency + normalization) + self.delta)
             output.append(score)
         return output
 
@@ -96,9 +88,7 @@ def reciprocal_rank_fusion(rankings: Iterable[list[str]], *, rrf_k: int = 60) ->
     return {identifier: min(1.0, score / maximum) for identifier, score in fused.items()}
 
 
-def bounded_boost(
-    parts: dict[str, float], *, max_total: float = 0.25
-) -> tuple[float, dict[str, float]]:
+def bounded_boost(parts: dict[str, float], *, max_total: float = 0.25) -> tuple[float, dict[str, float]]:
     accepted: dict[str, float] = {}
     remaining = max(0.0, max_total)
     for name in sorted(parts):
@@ -131,9 +121,7 @@ class CrossEncoderReranker:
             self._error = str(exc)
         return self._model
 
-    def rerank(
-        self, query: str, chunks: list[RetrievedChunk], *, top_n: int
-    ) -> list[RetrievedChunk]:
+    def rerank(self, query: str, chunks: list[RetrievedChunk], *, top_n: int) -> list[RetrievedChunk]:
         model = self._load()
         candidates = chunks[: max(1, top_n)]
         if model is None or not candidates:

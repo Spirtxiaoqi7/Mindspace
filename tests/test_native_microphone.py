@@ -75,8 +75,18 @@ def test_endpoint_selection_prefers_wasapi_native_rate_and_remembers_success(mon
     devices = list(sounddevice.query_devices())
     devices.extend(
         [
-            {"name": "wasapi mic", "max_input_channels": 1, "hostapi": 2, "default_samplerate": 48_000},
-            {"name": "wdm mic", "max_input_channels": 1, "hostapi": 3, "default_samplerate": 44_100},
+            {
+                "name": "wasapi mic",
+                "max_input_channels": 1,
+                "hostapi": 2,
+                "default_samplerate": 48_000,
+            },
+            {
+                "name": "wdm mic",
+                "max_input_channels": 1,
+                "hostapi": 3,
+                "default_samplerate": 44_100,
+            },
         ]
     )
     sounddevice.query_devices = lambda index=None: devices if index is None else devices[index]
@@ -91,9 +101,14 @@ def test_endpoint_selection_prefers_wasapi_native_rate_and_remembers_success(mon
     endpoints = select_input_endpoints(sounddevice)
     assert endpoints[0].hostapi == "Windows WASAPI"
     assert endpoints[0].sample_rate == 48_000
-    remembered = select_input_endpoints(sounddevice, {
-        "device_name": "wdm mic", "hostapi": "Windows WDM-KS", "sample_rate": 44_100,
-    })
+    remembered = select_input_endpoints(
+        sounddevice,
+        {
+            "device_name": "wdm mic",
+            "hostapi": "Windows WDM-KS",
+            "sample_rate": 44_100,
+        },
+    )
     assert remembered[0].hostapi == "Windows WDM-KS"
 
 
@@ -192,9 +207,13 @@ def test_capture_reports_a_missing_windows_input_endpoint(monkeypatch) -> None:
     sounddevice.query_hostapis = lambda: [
         {"name": "MME", "devices": [0], "default_input_device": -1},
     ]
-    sounddevice.query_devices = lambda index=None: [
-        {"name": "speaker", "max_input_channels": 0},
-    ] if index is None else {"name": "speaker", "max_input_channels": 0}
+    sounddevice.query_devices = lambda index=None: (
+        [
+            {"name": "speaker", "max_input_channels": 0},
+        ]
+        if index is None
+        else {"name": "speaker", "max_input_channels": 0}
+    )
     sounddevice.default.device = FakeInputOutputPair(-1, 0)
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setitem(sys.modules, "sounddevice", sounddevice)

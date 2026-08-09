@@ -5,7 +5,6 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-
 CARD_SPEC = "chara_card_v2"
 CARD_VERSION = "2.0"
 CARD_FIELDS = (
@@ -63,9 +62,7 @@ def normalize_card(value: Any) -> dict[str, Any]:
     name = _text(data.get("name"), 80)
     if not name:
         raise ValueError("V2 role card requires data.name")
-    gender = _text(
-        (data.get("extensions") or {}).get("mindspace", {}).get("gender"), 10
-    )
+    gender = _text((data.get("extensions") or {}).get("mindspace", {}).get("gender"), 10)
     if gender not in {"男", "女", "不指定"}:
         gender = "不指定"
     extensions = data.get("extensions") if isinstance(data.get("extensions"), dict) else {}
@@ -93,7 +90,8 @@ def normalize_card(value: Any) -> dict[str, Any]:
                 **{
                     key: deepcopy(item)
                     for key, item in mindspace.items()
-                    if key in {
+                    if key
+                    in {
                         "destiny_version",
                         "journey_id",
                         "selected_card_ids",
@@ -128,9 +126,7 @@ def legacy_profile_to_card(profile: dict[str, Any], *, creator: str = "Mindspace
     traits = _strings(personality.get("core_traits"), limit=6, item_limit=120)
     speech = _strings(personality.get("speech_style"), limit=4, item_limit=120)
     description = _text(identity.get("self_description"), 2400)
-    scenario = _text(
-        relationship.get("relationship_definition") or identity.get("relationship_to_user"), 1600
-    )
+    scenario = _text(relationship.get("relationship_definition") or identity.get("relationship_to_user"), 1600)
     return normalize_card(
         {
             "spec": CARD_SPEC,
@@ -167,7 +163,10 @@ def prompt_profile_from_card(card: dict[str, Any]) -> dict[str, Any]:
             "relationship_to_user": data["scenario"],
         },
         "personality": {"core_traits": [data["personality"]], "speech_style": []},
-        "relationship_rules": {"relationship_definition": data["extensions"]["mindspace"].get("relationship") or data["scenario"], "preferred_interactions": []},
+        "relationship_rules": {
+            "relationship_definition": data["extensions"]["mindspace"].get("relationship") or data["scenario"],
+            "preferred_interactions": [],
+        },
         "behavior_rules": {},
         "continuity": {},
         "roleplay": {

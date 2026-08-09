@@ -307,9 +307,7 @@ class OpenAICompatibleLanguageModel:
         last_error: Exception | None = None
         for body in variants:
             try:
-                response = self._client.post(
-                    endpoint, headers=headers, json=body, timeout=timeout
-                )
+                response = self._client.post(endpoint, headers=headers, json=body, timeout=timeout)
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code not in {400, 404, 422}:
@@ -321,9 +319,7 @@ class OpenAICompatibleLanguageModel:
             choices = payload.get("choices") or []
             choice = choices[0] if choices else {}
             finish_reason = str(choice.get("finish_reason") or "").strip().lower()
-            content = _text_content(
-                (choice.get("message") or {}).get("content") if choice else None
-            )
+            content = _text_content((choice.get("message") or {}).get("content") if choice else None)
             if finish_reason in {"length", "max_tokens"}:
                 raise ValueError("模型输出达到长度上限，JSON 在完成前被截断")
             if content.strip():
@@ -474,15 +470,11 @@ class OpenAICompatibleLanguageModel:
                     yield content
                 elif monotonic() - started_at >= 12:
                     detail = "reasoning-only" if saw_reasoning else "no visible token"
-                    raise EmptyVisibleContentError(
-                        f"{request_kind} first visible token timeout ({detail})"
-                    )
+                    raise EmptyVisibleContentError(f"{request_kind} first visible token timeout ({detail})")
                 if choice.get("finish_reason") is not None:
                     finish_reason = str(choice.get("finish_reason") or "")
         if not saw_content:
             detail = "reasoning-only" if saw_reasoning else "empty"
             if finish_reason:
                 detail += f", finish_reason={finish_reason}"
-            raise EmptyVisibleContentError(
-                f"{request_kind} response content is blank ({detail})"
-            )
+            raise EmptyVisibleContentError(f"{request_kind} response content is blank ({detail})")

@@ -41,15 +41,12 @@ class EntityRegistry:
             return None
         with self.database.connection() as db:
             row = db.execute(
-                "SELECT entity_id FROM entity_aliases WHERE scope=? AND entity_type=? "
-                "AND alias_normalized=?",
+                "SELECT entity_id FROM entity_aliases WHERE scope=? AND entity_type=? AND alias_normalized=?",
                 (scope, entity_type, normalized),
             ).fetchone()
             if row is not None:
                 entity_id = str(row["entity_id"])
-                merged = db.execute(
-                    "SELECT merged_into FROM entities WHERE entity_id=?", (entity_id,)
-                ).fetchone()
+                merged = db.execute("SELECT merged_into FROM entities WHERE entity_id=?", (entity_id,)).fetchone()
                 return str(merged["merged_into"] or entity_id) if merged else entity_id
             if not create:
                 return None
@@ -77,14 +74,11 @@ class EntityRegistry:
         if not normalized:
             raise ValueError("alias must not be blank")
         with self.database.connection() as db:
-            entity = db.execute(
-                "SELECT * FROM entities WHERE entity_id=? AND status='active'", (entity_id,)
-            ).fetchone()
+            entity = db.execute("SELECT * FROM entities WHERE entity_id=? AND status='active'", (entity_id,)).fetchone()
             if entity is None:
                 raise KeyError("active entity not found")
             conflict = db.execute(
-                "SELECT entity_id FROM entity_aliases WHERE scope=? AND entity_type=? "
-                "AND alias_normalized=?",
+                "SELECT entity_id FROM entity_aliases WHERE scope=? AND entity_type=? AND alias_normalized=?",
                 (entity["scope"], entity["entity_type"], normalized),
             ).fetchone()
             if conflict is not None and str(conflict["entity_id"]) != entity_id:
@@ -107,12 +101,8 @@ class EntityRegistry:
         if source_entity_id == target_entity_id:
             return
         with self.database.connection() as db:
-            source = db.execute(
-                "SELECT * FROM entities WHERE entity_id=?", (source_entity_id,)
-            ).fetchone()
-            target = db.execute(
-                "SELECT * FROM entities WHERE entity_id=?", (target_entity_id,)
-            ).fetchone()
+            source = db.execute("SELECT * FROM entities WHERE entity_id=?", (source_entity_id,)).fetchone()
+            target = db.execute("SELECT * FROM entities WHERE entity_id=?", (target_entity_id,)).fetchone()
             if source is None or target is None:
                 raise KeyError("entity not found")
             if (source["scope"], source["entity_type"]) != (target["scope"], target["entity_type"]):
@@ -127,8 +117,7 @@ class EntityRegistry:
                 (target_entity_id, source_entity_id),
             )
             db.execute(
-                "UPDATE entities SET status='merged', merged_into=?, updated_at=CURRENT_TIMESTAMP "
-                "WHERE entity_id=?",
+                "UPDATE entities SET status='merged', merged_into=?, updated_at=CURRENT_TIMESTAMP WHERE entity_id=?",
                 (target_entity_id, source_entity_id),
             )
 
@@ -144,8 +133,7 @@ class EntityRegistry:
             output = []
             for entity in entities:
                 aliases = db.execute(
-                    "SELECT alias_value, source FROM entity_aliases WHERE entity_id=? "
-                    "ORDER BY alias_value",
+                    "SELECT alias_value, source FROM entity_aliases WHERE entity_id=? ORDER BY alias_value",
                     (entity["entity_id"],),
                 ).fetchall()
                 output.append(

@@ -33,9 +33,7 @@ class RetrieverPort(Protocol):
 
     def search_knowledge(self, query: str, k: int, **kwargs: Any) -> list[RetrievedChunk]: ...
 
-    def search_chat(
-        self, query: str, session_id: str, k: int, **kwargs: Any
-    ) -> list[RetrievedChunk]: ...
+    def search_chat(self, query: str, session_id: str, k: int, **kwargs: Any) -> list[RetrievedChunk]: ...
 
     def record_retrieval(
         self,
@@ -59,9 +57,7 @@ class StructuredMemoryPort(Protocol):
 class ProfileRepositoryPort(Protocol):
     def load_bundle(self, character_id: str = "") -> ProfileBundle: ...
 
-    def apply_json_update(
-        self, plan: JsonUpdatePlan, *, request: ChatRequest
-    ) -> JsonWriteReceipt: ...
+    def apply_json_update(self, plan: JsonUpdatePlan, *, request: ChatRequest) -> JsonWriteReceipt: ...
 
 
 class SessionRepositoryPort(Protocol):

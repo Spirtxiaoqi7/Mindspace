@@ -7,9 +7,11 @@ import hashlib
 import io
 import json
 import re
-import shutil
+import time
 import zipfile
 from contextlib import asynccontextmanager
+from copy import deepcopy
+from functools import wraps
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import quote
@@ -35,25 +37,11 @@ from starlette.background import BackgroundTask
 from mindspace_graph.adapters.file_storage import _atomic_json
 from mindspace_graph.art_catalog import ArtPackPaused
 from mindspace_graph.audio import AudioProviderUnavailable, AudioService
-from mindspace_graph.characters import (
-    CORE_TRAITS,
-    FLAWS,
-    RELATIONSHIPS,
-    CharacterDraftInput,
-    CharacterRewriteInput,
-    generate_draft_once,
-    rewrite_draft_blocks_once,
-)
 from mindspace_graph.destiny import (
     DestinySeed,
     DestinySelectionRequest,
     DestinyService,
     public_destiny_definition,
-)
-from mindspace_graph.fate_forge import (
-    FateOptionsRequest,
-    generate_fate_options_once,
-    public_fate_catalog,
 )
 from mindspace_graph.gpt_sovits import public_voice_catalog, voice_definition
 from mindspace_graph.memory_registry import DEFAULT_MEMORY_REGISTRY
@@ -297,9 +285,7 @@ def _voice_energy_threshold_db(
     Keep the argument for wire compatibility, but deliberately do not use it.
     """
 
-    base_key = (
-        "asr_barge_in_energy_threshold_db" if playing else "asr_listening_energy_threshold_db"
-    )
+    base_key = "asr_barge_in_energy_threshold_db" if playing else "asr_listening_energy_threshold_db"
     threshold = float(audio_config[base_key])
     if playing:
         # TTS playback still needs echo rejection, but the energy gate is only a
@@ -323,6 +309,63 @@ def create_app(
         llm=container.conversation.dependencies.llm,
         settings=settings,
     )
+    destiny.recover_interrupted_journeys()
+    settings_journal_key = "settings-transaction:pending"
+
+    settings_update_lock = asyncio.Lock()
+
+    def serialize_settings_update(handler):  # type: ignore[no-untyped-def]
+        @wraps(handler)
+        async def guarded(*args, **kwargs):  # type: ignore[no-untyped-def]
+            async with settings_update_lock:
+                return await handler(*args, **kwargs)
+
+        return guarded
+
+    def recover_settings_transaction(journal: dict[str, Any]) -> None:
+        previous_config = journal.get("previous_config")
+        previous_profile = journal.get("previous_profile")
+        transaction_id = str(journal.get("transaction_id") or "").strip()
+        if not isinstance(previous_config, dict) or not isinstance(previous_profile, dict):
+            raise RuntimeError("settings recovery journal is malformed")
+        if transaction_id and len(transaction_id) < 12:
+            raise RuntimeError("settings recovery journal has an invalid transaction id")
+        container.config.restore(previous_config)
+        profile_update = journal.get("profile_update")
+        current_profile = container.profiles.load_document("user_profile")
+        current_identity = current_profile.get("identity")
+        if isinstance(profile_update, dict):
+            previous_name = str(profile_update.get("previous_preferred_name") or "")
+            applied_name = str(profile_update.get("applied_preferred_name") or "")
+            if (
+                applied_name
+                and isinstance(current_identity, dict)
+                and str(current_identity.get("preferred_name") or "") == applied_name
+            ):
+                # Preserve concurrent edits to other profile fields and only
+                # compensate the one field this settings transaction owns.
+                profile_snapshot = deepcopy(current_profile)
+                profile_snapshot["identity"]["preferred_name"] = previous_name
+                profile_snapshot.pop("revision", None)
+                profile_snapshot.pop("updated_at", None)
+                container.profiles.save_document("user_profile", profile_snapshot)
+        elif int(current_profile.get("revision", 0)) == int(previous_profile.get("revision", 0)) + 1:
+            # Pre-transaction-ID journals do not identify the changed field.
+            # Their snapshot is safe only when no later profile write occurred.
+            profile_snapshot = deepcopy(previous_profile)
+            profile_snapshot.pop("revision", None)
+            profile_snapshot.pop("updated_at", None)
+            container.profiles.save_document("user_profile", profile_snapshot)
+        container.conversation.refresh_language_model()
+        destiny.llm = container.conversation.dependencies.llm
+
+    pending_settings = container.database.get_document(settings_journal_key)
+    if isinstance(pending_settings, dict):
+        try:
+            recover_settings_transaction(pending_settings)
+        except Exception as exc:  # noqa: BLE001 - mixed model/settings state must not be hidden
+            raise RuntimeError("Mindspace 必须先恢复上一次未完成的设置修改") from exc
+        container.database.delete_document(settings_journal_key)
     shared_http = httpx.AsyncClient(
         timeout=httpx.Timeout(15.0, connect=5.0),
         limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
@@ -353,6 +396,69 @@ def create_app(
     avatar_config_path = avatar_root / "config.json"
     character_root = settings.runtime_dir / "data" / "characters"
     character_root.mkdir(parents=True, exist_ok=True)
+    scene_asset_root = settings.runtime_dir / "data" / "assets" / "scenes"
+    scene_asset_root.mkdir(parents=True, exist_ok=True)
+
+    destiny_avatar_prefix = "/api/v1/avatar/files/"
+
+    def destiny_avatar_path(src: object) -> Path | None:
+        """Return a safe local path only for journey-scoped avatar resources."""
+        if not isinstance(src, str) or not src.startswith(destiny_avatar_prefix):
+            return None
+        filename = src.removeprefix(destiny_avatar_prefix)
+        if not filename.startswith("destiny-") or Path(filename).name != filename:
+            return None
+        candidate = (avatar_root / filename).resolve()
+        return candidate if candidate.parent == avatar_root.resolve() else None
+
+    def destiny_avatar_is_referenced(filename: str) -> bool:
+        src = f"{destiny_avatar_prefix}{filename}"
+        for _key, journey in container.database.list_documents("destiny-journey:"):
+            if isinstance(journey, dict) and journey.get("seed", {}).get("avatar", {}).get("src") == src:
+                return True
+        return any(
+            isinstance(record.get("avatar"), dict) and record["avatar"].get("src") == src
+            for record in container.characters.list(include_archived=True)
+        )
+
+    def cleanup_unreferenced_destiny_avatars(*, minimum_age_seconds: int = 3600) -> None:
+        cutoff = time.time() - minimum_age_seconds
+        for candidate in avatar_root.glob("destiny-*"):
+            if not candidate.is_file() or candidate.stat().st_mtime > cutoff:
+                continue
+            if not destiny_avatar_is_referenced(candidate.name):
+                candidate.unlink(missing_ok=True)
+
+    def promote_destiny_avatar(record: dict[str, Any]) -> dict[str, Any]:
+        """Move a committed journey avatar into its character-owned directory."""
+        avatar = deepcopy(record.get("avatar") or {})
+        source = destiny_avatar_path(avatar.get("src"))
+        if source is None:
+            return record
+        if not source.is_file():
+            raise ValueError("命格头像文件已不存在，请重新上传头像后再收入角色库")
+
+        character_id = str(record["character_id"])
+        target_dir = character_root / character_id
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"avatar{source.suffix.lower()}"
+        temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
+        try:
+            temporary.write_bytes(source.read_bytes())
+            temporary.replace(target)
+            avatar["src"] = f"/api/v1/character/files/{character_id}/{target.name}"
+            updated = container.characters.update(
+                character_id,
+                {"revision": record["revision"], "avatar": avatar},
+            )
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            target.unlink(missing_ok=True)
+            raise
+        source.unlink(missing_ok=True)
+        return updated
+
+    cleanup_unreferenced_destiny_avatars()
     art_pack_root = settings.runtime_dir / "data" / "assets" / "packs"
     art_pack_root.mkdir(parents=True, exist_ok=True)
     app.mount("/assets", StaticFiles(directory=web_root), name="assets")
@@ -366,6 +472,11 @@ def create_app(
         "/api/v1/art/files",
         StaticFiles(directory=art_pack_root),
         name="art-pack-files",
+    )
+    app.mount(
+        "/api/v1/scene/files",
+        StaticFiles(directory=scene_asset_root),
+        name="scene-files",
     )
 
     @app.get("/", include_in_schema=False)
@@ -391,7 +502,19 @@ def create_app(
         return container.config.snapshot(redact=True)
 
     @app.put("/api/v1/settings")
+    @serialize_settings_update
     async def put_settings(payload: dict[str, Any]):
+        previous_config = container.config.checkpoint()
+        previous_profile = container.profiles.load_document("user_profile")
+        journal = {
+            "schema_version": "1.0.0",
+            "revision": 1,
+            "state": "prepared",
+            "transaction_id": uuid4().hex,
+            "previous_config": previous_config,
+            "previous_profile": previous_profile,
+        }
+        container.database.put_document(settings_journal_key, journal)
         try:
             result = container.config.update(payload)
             persona = result.get("persona") if isinstance(result.get("persona"), dict) else {}
@@ -400,15 +523,34 @@ def create_app(
                 user_profile = container.profiles.load_document("user_profile")
                 identity = user_profile.setdefault("identity", {})
                 if str(identity.get("preferred_name") or "") != configured_name:
+                    previous_name = str(identity.get("preferred_name") or "")
                     identity["preferred_name"] = configured_name
-                    container.profiles.save_document("user_profile", user_profile)
+                    saved_profile = container.profiles.save_document("user_profile", user_profile)
+                    journal["profile_update"] = {
+                        "previous_preferred_name": previous_name,
+                        "applied_preferred_name": configured_name,
+                        "applied_revision": int(saved_profile.get("revision", 0)),
+                    }
+                    container.database.put_document(settings_journal_key, journal)
             container.conversation.refresh_language_model()
             # Destiny keeps a concrete model instance for its staged generation
             # workflow, so it must follow the live settings refresh as well.
             destiny.llm = container.conversation.dependencies.llm
+            container.database.delete_document(settings_journal_key)
             return {"success": True, "settings": result}
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            journal.update({"revision": 2, "state": "rollback_pending", "error": str(exc)[:1000]})
+            container.database.put_document(settings_journal_key, journal)
+            try:
+                recover_settings_transaction(journal)
+            except Exception as rollback_exc:  # noqa: BLE001 - journal remains for startup recovery
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"设置修改失败，自动恢复也失败；重启 Core 会继续恢复：{rollback_exc}",
+                ) from rollback_exc
+            container.database.delete_document(settings_journal_key)
+            status = 422 if isinstance(exc, (TypeError, ValueError)) else 500
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
 
     @app.get("/api/v1/audio/asr/vocabulary")
     async def get_asr_vocabulary():
@@ -428,9 +570,7 @@ def create_app(
     @app.post("/api/v1/audio/asr/corrections")
     async def add_asr_correction(payload: ASRCorrectionRequest):
         try:
-            return container.asr_vocabulary.record_correction(
-                payload.raw_text, payload.corrected_text
-            )
+            return container.asr_vocabulary.record_correction(payload.raw_text, payload.corrected_text)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -507,14 +647,11 @@ def create_app(
             return {"ok": False, "error": str(exc)}
 
     @app.get("/api/v1/characters/options")
-    async def character_options():
-        return {
-            "core_traits": CORE_TRAITS,
-            "flaws": FLAWS,
-            "relationships": RELATIONSHIPS,
-            "gender": ["女", "男", "不指定"],
-            "fate_system": public_fate_catalog(),
-        }
+    async def legacy_character_options():
+        raise HTTPException(
+            status_code=410,
+            detail="旧角色档案选项已废弃，请从命格系统创建 V2 角色卡",
+        )
 
     @app.get("/api/v1/destiny/definition")
     async def destiny_definition():
@@ -531,7 +668,10 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         filename = f"destiny-{uuid4().hex}{suffix}"
-        (avatar_root / filename).write_bytes(data)
+        target = avatar_root / filename
+        temporary = target.with_name(f".{filename}.{uuid4().hex}.tmp")
+        temporary.write_bytes(data)
+        temporary.replace(target)
         return {
             "success": True,
             "avatar": {
@@ -542,6 +682,15 @@ def create_app(
                 "y": 0,
             },
         }
+
+    @app.delete("/api/v1/destiny/avatars/{filename}")
+    async def discard_destiny_avatar(filename: str):
+        if not filename.startswith("destiny-") or Path(filename).name != filename:
+            raise HTTPException(status_code=404, detail="命格头像不存在")
+        if destiny_avatar_is_referenced(filename):
+            raise HTTPException(status_code=409, detail="命格头像仍被旅程或角色引用，不能删除")
+        (avatar_root / filename).unlink(missing_ok=True)
+        return {"success": True}
 
     @app.post("/api/v1/destiny/journeys")
     async def create_destiny_journey(payload: DestinySeed):
@@ -557,24 +706,42 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/api/v1/destiny/journeys/{journey_id}/archetypes")
-    async def generate_destiny_archetypes(journey_id: str):
+    async def generate_destiny_archetypes(
+        journey_id: str,
+        use_default: bool = Query(default=False),
+        expected_revision: int | None = Query(default=None),
+    ):
         try:
-            return await destiny.generate_archetypes(journey_id)
+            if use_default:
+                return destiny.use_default_archetypes(journey_id, expected_revision=expected_revision)
+            return await destiny.generate_archetypes(journey_id, expected_revision=expected_revision)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except (TimeoutError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        except (TimeoutError, json.JSONDecodeError, TypeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ValueError as exc:
+            status = 409 if "stale" in str(exc) or "当前旅程不能" in str(exc) else 422
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 - provider errors are surfaced for retry
             raise HTTPException(status_code=502, detail=f"人物原型生成失败：{exc}") from exc
 
     @app.post("/api/v1/destiny/journeys/{journey_id}/cards")
-    async def generate_destiny_cards(journey_id: str):
+    async def generate_destiny_cards(
+        journey_id: str,
+        use_default: bool = Query(default=False),
+        expected_revision: int | None = Query(default=None),
+    ):
         try:
-            return await destiny.generate_cards(journey_id)
+            if use_default:
+                return destiny.use_default_cards(journey_id, expected_revision=expected_revision)
+            return await destiny.generate_cards(journey_id, expected_revision=expected_revision)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except (TimeoutError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        except (TimeoutError, json.JSONDecodeError, TypeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ValueError as exc:
+            status = 409 if "stale" in str(exc) or "请先完成" not in str(exc) and "当前旅程不能" in str(exc) else 422
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 - provider errors are surfaced for retry
             raise HTTPException(status_code=502, detail=f"人物命格拆分失败：{exc}") from exc
 
@@ -584,11 +751,29 @@ def create_app(
         raise HTTPException(status_code=410, detail="旧版逐角色命签接口已废弃，请使用全量 cards 接口")
 
     @app.put("/api/v1/destiny/journeys/{journey_id}/selections/{slot_id}")
-    async def select_destiny_card(
-        journey_id: str, slot_id: str, payload: DestinySelectionRequest
-    ):
+    async def select_destiny_card(journey_id: str, slot_id: str, payload: DestinySelectionRequest):
         try:
             return destiny.select(journey_id, slot_id, payload)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (TypeError, ValueError) as exc:
+            status = 409 if "stale" in str(exc) else 422
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+    @app.delete("/api/v1/destiny/journeys/{journey_id}/selections/{slot_id}")
+    async def unselect_destiny_card(journey_id: str, slot_id: str, expected_revision: int | None = None):
+        try:
+            return destiny.unselect(journey_id, slot_id, expected_revision=expected_revision)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (TypeError, ValueError) as exc:
+            status = 409 if "stale" in str(exc) else 422
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+    @app.post("/api/v1/destiny/journeys/{journey_id}/rewind/archetypes")
+    async def rewind_destiny_archetypes(journey_id: str, expected_revision: int | None = None):
+        try:
+            return destiny.rewind_archetypes(journey_id, expected_revision=expected_revision)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except (TypeError, ValueError) as exc:
@@ -606,44 +791,38 @@ def create_app(
             raise HTTPException(status_code=status, detail=str(exc)) from exc
 
     @app.post("/api/v1/destiny/journeys/{journey_id}/synthesize")
-    async def synthesize_destiny_journey(journey_id: str):
+    async def synthesize_destiny_journey(journey_id: str, expected_revision: int | None = Query(default=None)):
         try:
-            return await destiny.synthesize(journey_id)
+            return await destiny.synthesize(journey_id, expected_revision=expected_revision)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except (TimeoutError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        except (TimeoutError, json.JSONDecodeError, TypeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ValueError as exc:
+            status = 409 if "stale" in str(exc) or "当前旅程不能" in str(exc) else 422
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 - provider errors are surfaced for retry
             raise HTTPException(status_code=502, detail=f"最终人物合成失败：{exc}") from exc
 
     @app.post("/api/v1/destiny/journeys/{journey_id}/commit")
-    async def commit_destiny_journey(journey_id: str):
+    async def commit_destiny_journey(journey_id: str, expected_revision: int | None = Query(default=None)):
         try:
             with container.database.transaction(
                 operation="api_commit_destiny_journey", details={"journey_id": journey_id}
             ):
-                record = destiny.commit(journey_id)
+                record = destiny.commit(journey_id, expected_revision=expected_revision)
+                record = promote_destiny_avatar(record)
                 container.memory_service.rebuild(dry_run=False)
             return {"success": True, "character": record}
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except (TypeError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+            status = 409 if "stale" in str(exc) or "正在" in str(exc) else 422
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
 
-    @app.post("/api/v1/characters/fate-options")
-    async def generate_character_fate_options(payload: FateOptionsRequest):
-        try:
-            return await generate_fate_options_once(
-                payload,
-                llm=container.conversation.dependencies.llm,
-                settings=settings,
-            )
-        except (json.JSONDecodeError, TypeError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except (TimeoutError, httpx.HTTPError) as exc:
-            raise HTTPException(status_code=502, detail=f"AI 命格选项生成失败：{exc}") from exc
-        except Exception as exc:  # noqa: BLE001 - provider errors are user-facing here
-            raise HTTPException(status_code=502, detail=f"AI 命格选项生成失败：{exc}") from exc
+    @app.api_route("/api/v1/characters/fate-options", methods=["GET", "POST"])
+    async def legacy_fate_options():
+        raise HTTPException(status_code=410, detail="旧版命格选项接口已废弃，请使用 V7 命格旅程接口")
 
     @app.get("/api/v1/characters")
     async def list_characters(include_archived: bool = Query(default=False)):
@@ -729,9 +908,7 @@ def create_app(
     @app.get("/api/v1/characters/{character_id}/journal")
     async def list_journal(character_id: str, include_archived: bool = Query(default=False)):
         try:
-            items = container.chapters.list_journals(
-                character_id, include_archived=include_archived
-            )
+            items = container.chapters.list_journals(character_id, include_archived=include_archived)
             return {"items": items, "count": len(items)}
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -801,6 +978,41 @@ def create_app(
         items = container.chapters.scenes()
         return {"items": items, "count": len(items)}
 
+    @app.post("/api/v1/scenes/custom")
+    async def upload_custom_scene(
+        file: Annotated[UploadFile, File()],
+        title: Annotated[str, Form()] = "",
+        description: Annotated[str, Form()] = "",
+    ):
+        data = await file.read()
+        if not data or len(data) > 12 * 1024 * 1024:
+            raise HTTPException(status_code=422, detail="背景图片必须在 1 字节到 12 MiB 之间")
+        try:
+            suffix = _avatar_suffix(file.filename or "scene.webp", data)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="背景仅支持 PNG、JPEG、WebP") from exc
+        if suffix == ".gif":
+            raise HTTPException(status_code=422, detail="背景仅支持 PNG、JPEG、WebP")
+        token = uuid4().hex
+        scene_id = f"custom_{token}"
+        filename = f"scene-{token}{suffix}"
+        target = scene_asset_root / filename
+        temporary = target.with_name(f".{filename}.{uuid4().hex}.tmp")
+        try:
+            temporary.write_bytes(data)
+            temporary.replace(target)
+            return container.chapters.create_custom_scene(
+                scene_id=scene_id,
+                title=title or Path(file.filename or "").stem,
+                description=description,
+                asset_id=target.stem,
+                asset_url=f"/api/v1/scene/files/{filename}",
+            )
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            target.unlink(missing_ok=True)
+            raise
+
     @app.get("/api/v1/sessions/{session_id}/scene")
     async def get_session_scene(session_id: str):
         try:
@@ -828,13 +1040,9 @@ def create_app(
         return {"items": container.chapters.activities()}
 
     @app.get("/api/v1/characters/{character_id}/activity-sessions")
-    async def list_activity_sessions(
-        character_id: str, include_finished: bool = Query(default=True)
-    ):
+    async def list_activity_sessions(character_id: str, include_finished: bool = Query(default=True)):
         try:
-            items = container.chapters.list_activity_sessions(
-                character_id, include_finished=include_finished
-            )
+            items = container.chapters.list_activity_sessions(character_id, include_finished=include_finished)
             return {"items": items, "count": len(items)}
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -945,9 +1153,7 @@ def create_app(
     @app.post("/api/v1/characters/{character_id}/restore")
     async def restore_character(character_id: str, payload: CharacterRestoreRequest):
         try:
-            record = container.characters.restore(
-                character_id, payload.version_id, payload.expected_revision
-            )
+            record = container.characters.restore(character_id, payload.version_id, payload.expected_revision)
             container.memory_service.rebuild(dry_run=False)
             return {"success": True, "character": record}
         except KeyError as exc:
@@ -970,9 +1176,7 @@ def create_app(
                 media_type="application/json; charset=utf-8",
                 headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
             )
-        profile_bytes = json.dumps(record["ai_profile"], ensure_ascii=False, indent=2).encode(
-            "utf-8"
-        )
+        profile_bytes = json.dumps(record["ai_profile"], ensure_ascii=False, indent=2).encode("utf-8")
         files: dict[str, bytes] = {"ai-profile.json": profile_bytes}
         avatar_src = str((record.get("avatar") or {}).get("src") or "")
         prefix = "/api/v1/character/files/"
@@ -1012,8 +1216,7 @@ def create_app(
             media_type="application/vnd.mindspace.character+zip",
             headers={
                 "Content-Disposition": (
-                    f'attachment; filename="mindspace-card.mindspace-card"; '
-                    f"filename*=UTF-8''{quote(filename)}"
+                    f"attachment; filename=\"mindspace-card.mindspace-card\"; filename*=UTF-8''{quote(filename)}"
                 )
             },
         )
@@ -1034,9 +1237,7 @@ def create_app(
     async def import_character(file: Annotated[UploadFile, File()]):
         data = await file.read()
         if not data or len(data) > 10 * 1024 * 1024:
-            raise HTTPException(
-                status_code=413, detail="character package must be between 1 byte and 10 MiB"
-            )
+            raise HTTPException(status_code=413, detail="character package must be between 1 byte and 10 MiB")
         try:
             decoded = json.loads(data.decode("utf-8"))
             if isinstance(decoded, dict) and decoded.get("spec") == "chara_card_v2":
@@ -1074,10 +1275,7 @@ def create_app(
                 if any(name not in allowed for name in names):
                     raise ValueError("character package contains unsupported files")
                 manifest = json.loads(archive.read("manifest.json"))
-                if (
-                    manifest.get("format") != "mindspace-card"
-                    or manifest.get("schema_version") != "1.0.0"
-                ):
+                if manifest.get("format") != "mindspace-card" or manifest.get("schema_version") != "1.0.0":
                     raise ValueError("unsupported character package version")
                 payload_files = manifest.get("files")
                 if not isinstance(payload_files, dict):
@@ -1127,163 +1325,20 @@ def create_app(
         ) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    @app.post("/api/v1/character-drafts")
-    async def create_character_draft(payload: CharacterDraftInput):
-        try:
-            return container.characters.create_draft(payload)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    @app.get("/api/v1/character-drafts/{draft_id}")
-    async def get_character_draft(draft_id: str):
-        try:
-            return container.characters.get_draft(draft_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-    @app.put("/api/v1/character-drafts/{draft_id}")
-    async def update_character_draft(draft_id: str, payload: dict[str, Any]):
-        try:
-            updates: dict[str, Any] = {}
-            if "input" in payload:
-                selected = CharacterDraftInput.model_validate(payload["input"])
-                from mindspace_graph.characters import (
-                    compile_blueprint_profile,
-                    local_blueprint_from_draft,
-                    validate_character_combination,
-                )
-
-                conflicts = validate_character_combination(selected)
-                if conflicts:
-                    raise ValueError("；".join(conflicts))
-                blueprint = local_blueprint_from_draft(selected)
-                updates["input"] = selected.model_dump(mode="json")
-                updates["blueprint"] = blueprint
-                updates["profile"] = compile_blueprint_profile(selected, blueprint)
-                updates["generation_mode"] = "local_template"
-                updates["model_call_count"] = 0
-                updates["rewrite_call_count"] = 0
-                updates["rewrite_history"] = []
-                updates["warnings"] = []
-            if "profile" in payload:
-                updates["profile"] = payload["profile"]
-            if "avatar" in payload:
-                avatar = payload["avatar"]
-                if not isinstance(avatar, dict):
-                    raise ValueError("avatar must be an object")
-                src = str(avatar.get("src") or "")
-                if not src.startswith("/assets/characters/"):
-                    raise ValueError("only bundled placeholder avatars can be selected directly")
-                updates["avatar"] = {
-                    "src": src,
-                    "aspect": str(avatar.get("aspect") or "2 / 3"),
-                    "scale": float(avatar.get("scale", 1.0)),
-                    "x": float(avatar.get("x", 0)),
-                    "y": float(avatar.get("y", 0)),
-                }
-            return container.characters.save_draft(draft_id, updates)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    @app.post("/api/v1/character-drafts/{draft_id}/generate")
-    async def generate_character_draft(draft_id: str):
-        try:
-            return await generate_draft_once(
-                container.characters,
-                draft_id,
-                llm=container.conversation.dependencies.llm,
-                settings=settings,
-            )
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    @app.post("/api/v1/character-drafts/{draft_id}/rewrite")
-    async def rewrite_character_draft(draft_id: str, payload: CharacterRewriteInput):
-        try:
-            return await rewrite_draft_blocks_once(
-                container.characters,
-                draft_id,
-                payload,
-                llm=container.conversation.dependencies.llm,
-                settings=settings,
-            )
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    @app.post("/api/v1/character-drafts/{draft_id}/avatar")
-    async def upload_character_draft_avatar(draft_id: str, file: Annotated[UploadFile, File()]):
-        try:
-            container.characters.get_draft(draft_id)
-            data = await file.read()
-            if not data or len(data) > 5 * 1024 * 1024:
-                raise ValueError("avatar must be between 1 byte and 5 MiB")
-            suffix = _avatar_suffix(file.filename or "", data)
-            relative = Path("drafts") / f"{draft_id}{suffix}"
-            target = character_root / relative
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(data)
-            avatar = {
-                "src": f"/api/v1/character/files/{relative.as_posix()}",
-                "aspect": "2 / 3",
-                "scale": 1.0,
-                "x": 0,
-                "y": 0,
-            }
-            draft = container.characters.save_draft(draft_id, {"avatar": avatar})
-            return {"success": True, "avatar": avatar, "draft": draft}
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    @app.post("/api/v1/character-drafts/{draft_id}/commit")
-    async def commit_character_draft(draft_id: str, payload: dict[str, Any] | None = None):
-        try:
-            draft = container.characters.get_draft(draft_id)
-            selected = CharacterDraftInput.model_validate(draft["input"])
-            with container.database.transaction(
-                operation="commit_character_draft", details={"draft_id": draft_id}
-            ):
-                user_profile = container.profiles.load_document("user_profile")
-                if (
-                    str(user_profile.get("identity", {}).get("preferred_name") or "")
-                    != selected.user_name
-                ):
-                    user_profile["identity"]["preferred_name"] = selected.user_name
-                    container.profiles.save_document("user_profile", user_profile)
-                record = container.characters.commit_draft(
-                    draft_id,
-                    (payload or {}).get("profile") if isinstance(payload, dict) else None,
-                )
-                avatar = record.get("avatar") or {}
-                src = str(avatar.get("src") or "")
-                prefix = "/api/v1/character/files/drafts/"
-                if src.startswith(prefix):
-                    draft_file = character_root / "drafts" / src.removeprefix(prefix)
-                    if draft_file.is_file():
-                        target_dir = character_root / str(record["character_id"])
-                        target_dir.mkdir(parents=True, exist_ok=True)
-                        target = target_dir / f"avatar{draft_file.suffix.lower()}"
-                        shutil.copy2(draft_file, target)
-                        avatar["src"] = (
-                            f"/api/v1/character/files/{record['character_id']}/{target.name}"
-                        )
-                        record = container.characters.update(
-                            str(record["character_id"]),
-                            {"revision": record["revision"], "avatar": avatar},
-                        )
-                container.memory_service.rebuild(dry_run=False)
-            return {"success": True, "character": record}
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    @app.api_route(
+        "/api/v1/character-drafts",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    )
+    @app.api_route(
+        "/api/v1/character-drafts/{legacy_path:path}",
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    )
+    async def legacy_character_drafts(legacy_path: str = ""):
+        del legacy_path
+        raise HTTPException(
+            status_code=410,
+            detail="旧角色档案、蓝图和系统提示词创建链已废弃，请使用 V7 命格生成 V2 角色卡",
+        )
 
     @app.post("/api/v1/sessions")
     async def create_session(payload: SessionCreateRequest):
@@ -1317,8 +1372,12 @@ def create_app(
         payload: ChatRequest,
         x_request_id: str | None = Header(default=None),
     ):
+        try:
+            request_id = await container.conversation.prepare_stream(payload, x_request_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return StreamingResponse(
-            container.conversation.stream(payload, x_request_id),
+            container.conversation.stream(payload, request_id),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
@@ -1389,9 +1448,7 @@ def create_app(
     @app.get("/api/v1/sessions/{session_id}")
     async def get_session(session_id: str):
         session = container.sessions.load_session(session_id)
-        session["messages"] = [
-            item for item in session.get("messages", []) if not item.get("hidden")
-        ]
+        session["messages"] = [item for item in session.get("messages", []) if not item.get("hidden")]
         character_id = str(session.get("character_id") or "")
         if character_id:
             try:
@@ -1402,9 +1459,7 @@ def create_app(
 
     @app.delete("/api/v1/sessions/{session_id}")
     async def delete_session(session_id: str):
-        with container.database.transaction(
-            operation="delete_session", details={"session_id": session_id}
-        ):
+        with container.database.transaction(operation="delete_session", details={"session_id": session_id}):
             if not container.sessions.delete_session(session_id):
                 raise HTTPException(status_code=404, detail="session not found")
             container.memory.forget_session(session_id)
@@ -1455,9 +1510,7 @@ def create_app(
 
     @app.post("/api/v1/sessions/{session_id}/clear")
     async def clear_session(session_id: str):
-        with container.database.transaction(
-            operation="clear_session", details={"session_id": session_id}
-        ):
+        with container.database.transaction(operation="clear_session", details={"session_id": session_id}):
             if not container.sessions.clear_session(session_id):
                 raise HTTPException(status_code=404, detail="session not found")
             container.memory.forget_session(session_id)
@@ -1487,9 +1540,7 @@ def create_app(
 
     @app.post("/api/v1/memory/entities")
     async def create_entity(payload: EntityRequest):
-        entity_id = container.entities.resolve(
-            payload.value, scope=payload.scope, entity_type=payload.entity_type
-        )
+        entity_id = container.entities.resolve(payload.value, scope=payload.scope, entity_type=payload.entity_type)
         return {"success": True, "entity_id": entity_id}
 
     @app.post("/api/v1/memory/entities/{entity_id}/aliases")
@@ -1523,9 +1574,7 @@ def create_app(
         include_history: bool = Query(default=False),
         character_id: str = Query(default="", max_length=64),
     ):
-        items = container.memory_service.list_items(
-            include_history=include_history, character_id=character_id
-        )
+        items = container.memory_service.list_items(include_history=include_history, character_id=character_id)
         return {"items": items, "count": len(items)}
 
     @app.put("/api/v1/memory/items/{memory_key:path}")
@@ -1638,9 +1687,7 @@ def create_app(
         character_id: str = Query(default="", max_length=64),
     ):
         try:
-            with container.database.transaction(
-                operation="user_direct_profile_edit", details={"profile": name}
-            ):
+            with container.database.transaction(operation="user_direct_profile_edit", details={"profile": name}):
                 value = container.profiles.save_document(_profile_key(name), payload, character_id)
                 rebuilt = container.memory_service.rebuild(dry_run=False, character_id=character_id)
                 container.audit.record(
@@ -1831,11 +1878,7 @@ def create_app(
                 "X-Audio-Sample-Rate": str(sample_rate),
                 "X-Audio-Channels": "1",
                 "X-TTS-Provider": settings.tts_provider,
-                "X-TTS-Text-Mode": (
-                    "full-response"
-                    if settings.tts_provider == "qwen3-vllm"
-                    else "streamed-segments"
-                ),
+                "X-TTS-Text-Mode": ("full-response" if settings.tts_provider == "qwen3-vllm" else "streamed-segments"),
                 "Cache-Control": "no-store",
                 "X-Accel-Buffering": "no",
             },
@@ -1887,9 +1930,7 @@ def create_app(
     @app.delete("/api/v1/audio/tts/reference")
     async def clear_tts_reference():
         current = str(settings.tts_reference_audio or "")
-        result = container.config.update(
-            {"audio": {"tts_reference_audio": "", "tts_reference_text": ""}}
-        )
+        result = container.config.update({"audio": {"tts_reference_audio": "", "tts_reference_text": ""}})
         if current:
             candidate = Path(current)
             audio_root = (settings.runtime_dir / "data" / "audio").resolve()
@@ -1906,9 +1947,7 @@ def create_app(
         if not current:
             raise HTTPException(status_code=409, detail="请先上传参考音频")
         try:
-            recognized = await audio.transcribe_reference(
-                Path(current), request_id=f"tts-reference-{uuid4().hex}"
-            )
+            recognized = await audio.transcribe_reference(Path(current), request_id=f"tts-reference-{uuid4().hex}")
         except AudioProviderUnavailable as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         text = str(recognized.get("text") or "").strip()
@@ -1956,9 +1995,7 @@ def create_app(
                     if message.get("bytes") and not mock_started and not mock_input_locked:
                         mock_started = True
                         await websocket.send_json({"event": "asr.speech_start", "data": {}})
-                        await websocket.send_json(
-                            {"event": "asr.partial", "data": {"text": "这是一条测试"}}
-                        )
+                        await websocket.send_json({"event": "asr.partial", "data": {"text": "这是一条测试"}})
                     if message.get("text"):
                         control = json.loads(message["text"])
                         if control.get("action") == "input_gate":
@@ -1982,9 +2019,7 @@ def create_app(
                 return
 
         if provider != "funasr":
-            await websocket.send_json(
-                {"event": "asr.error", "data": {"error": f"unsupported provider: {provider}"}}
-            )
+            await websocket.send_json({"event": "asr.error", "data": {"error": f"unsupported provider: {provider}"}})
             await websocket.close(code=1011)
             return
 
@@ -1997,20 +2032,14 @@ def create_app(
             def apply_voice_threshold(control: dict[str, Any], playing: bool) -> None:
                 stream_state["playing"] = playing
                 backoff_level = max(0, min(2, int(control.get("barge_backoff_level") or 0)))
-                minimum_key = (
-                    "asr_barge_in_min_speech_ms" if playing else "asr_listening_min_speech_ms"
-                )
+                minimum_key = "asr_barge_in_min_speech_ms" if playing else "asr_listening_min_speech_ms"
                 noise_floor = stream_state.get("noise_floor_db")
                 control["energy_threshold_db"] = _voice_energy_threshold_db(
                     audio_config,
                     playing=playing,
-                    noise_floor_db=(
-                        float(noise_floor) if isinstance(noise_floor, (int, float)) else None
-                    ),
+                    noise_floor_db=(float(noise_floor) if isinstance(noise_floor, (int, float)) else None),
                 ) + (3.0 * backoff_level if playing else 0.0)
-                control["min_speech_ms"] = int(audio_config[minimum_key]) + (
-                    120 * backoff_level if playing else 0
-                )
+                control["min_speech_ms"] = int(audio_config[minimum_key]) + (120 * backoff_level if playing else 0)
                 control["candidate_release_ms"] = int(audio_config["asr_candidate_release_ms"])
                 control["playback_active"] = playing
 
@@ -2029,9 +2058,7 @@ def create_app(
                             control["deferred_during_playback"] = bool(
                                 audio_config.get("asr_deferred_during_playback", True)
                             )
-                            control["dynamic_endpointing"] = bool(
-                                audio_config.get("asr_dynamic_endpointing", True)
-                            )
+                            control["dynamic_endpointing"] = bool(audio_config.get("asr_dynamic_endpointing", True))
                             control["final_refinement_enabled"] = bool(
                                 audio_config.get("asr_final_refinement_enabled", True)
                             )
@@ -2044,13 +2071,9 @@ def create_app(
                             control["final_refinement_max_audio_ms"] = int(
                                 audio_config.get("asr_final_refinement_max_audio_ms", 15000)
                             )
-                            apply_voice_threshold(
-                                control, bool(control.get("playback_active", False))
-                            )
+                            apply_voice_threshold(control, bool(control.get("playback_active", False)))
                             if bool(audio_config.get("asr_hotwords_enabled", True)):
-                                control["vocabulary"] = container.asr_vocabulary.snapshot(
-                                    include_entries=False
-                                )
+                                control["vocabulary"] = container.asr_vocabulary.snapshot(include_entries=False)
                         elif control.get("action") == "playback_state":
                             playing = bool(control.get("playing", False))
                             noise_floor = control.get("noise_floor_db")
@@ -2063,9 +2086,7 @@ def create_app(
                 async for raw in upstream:
                     event = json.loads(raw)
                     if event.get("event") in {"asr.final", "asr.deferred"}:
-                        container.asr_vocabulary.record_observation(
-                            event.get("data") or {}, event=str(event["event"])
-                        )
+                        container.asr_vocabulary.record_observation(event.get("data") or {}, event=str(event["event"]))
                     await websocket.send_json(event)
 
             try:
@@ -2125,15 +2146,9 @@ def create_app(
             deferred_during_playback=bool(audio_config.get("asr_deferred_during_playback", True)),
             dynamic_endpointing=bool(audio_config.get("asr_dynamic_endpointing", True)),
             final_refinement_enabled=bool(audio_config.get("asr_final_refinement_enabled", True)),
-            final_refinement_timeout_ms=int(
-                audio_config.get("asr_final_refinement_timeout_ms", 1400)
-            ),
-            final_refinement_min_audio_ms=int(
-                audio_config.get("asr_final_refinement_min_audio_ms", 320)
-            ),
-            final_refinement_max_audio_ms=int(
-                audio_config.get("asr_final_refinement_max_audio_ms", 15000)
-            ),
+            final_refinement_timeout_ms=int(audio_config.get("asr_final_refinement_timeout_ms", 1400)),
+            final_refinement_min_audio_ms=int(audio_config.get("asr_final_refinement_min_audio_ms", 320)),
+            final_refinement_max_audio_ms=int(audio_config.get("asr_final_refinement_max_audio_ms", 15000)),
         )
         if bool(audio_config.get("asr_hotwords_enabled", True)):
             vocabulary = container.asr_vocabulary.snapshot(include_entries=False)
@@ -2163,11 +2178,7 @@ def create_app(
                         session.reset()
                     elif action == "playback_state":
                         playing = bool(control.get("playing", False))
-                        minimum_key = (
-                            "asr_barge_in_min_speech_ms"
-                            if playing
-                            else "asr_listening_min_speech_ms"
-                        )
+                        minimum_key = "asr_barge_in_min_speech_ms" if playing else "asr_listening_min_speech_ms"
                         noise_floor = control.get("noise_floor_db")
                         backoff_level = max(0, min(2, int(control.get("barge_backoff_level") or 0)))
                         session.configure_playback(
@@ -2179,17 +2190,14 @@ def create_app(
                                         audio_config,
                                         playing=playing,
                                         noise_floor_db=(
-                                            float(noise_floor)
-                                            if isinstance(noise_floor, (int, float))
-                                            else None
+                                            float(noise_floor) if isinstance(noise_floor, (int, float)) else None
                                         ),
                                     )
                                     + (3.0 * backoff_level if playing else 0.0)
                                 )
                                 / 20
                             ),
-                            min_speech_ms=int(audio_config[minimum_key])
-                            + (120 * backoff_level if playing else 0),
+                            min_speech_ms=int(audio_config[minimum_key]) + (120 * backoff_level if playing else 0),
                             candidate_release_ms=int(audio_config["asr_candidate_release_ms"]),
                             playback_text=str(control.get("playback_text") or ""),
                         )
@@ -2210,9 +2218,7 @@ def create_app(
                         await websocket.send_json({"event": "asr.cancelled", "data": {}})
                     elif action == "stop":
                         silence = b"\x00\x00" * int(options.sample_rate * 0.5)
-                        raw_events = await asyncio.to_thread(
-                            session.feed, silence, force_final=True
-                        )
+                        raw_events = await asyncio.to_thread(session.feed, silence, force_final=True)
                 for event in raw_events:
                     if event.get("event") in {"asr.final", "asr.deferred"}:
                         pcm, playback_active = session.pop_finalized_audio()
@@ -2224,9 +2230,7 @@ def create_app(
                                 playback_active=playback_active,
                             )
                             apply_final_refinement(event, refinement, session.corrector)
-                        container.asr_vocabulary.record_observation(
-                            event.get("data") or {}, event=str(event["event"])
-                        )
+                        container.asr_vocabulary.record_observation(event.get("data") or {}, event=str(event["event"]))
                     await websocket.send_json(event)
         except (WebSocketDisconnect, RuntimeError):
             session.reset()

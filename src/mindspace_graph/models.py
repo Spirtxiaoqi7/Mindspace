@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import uuid4
@@ -154,15 +156,11 @@ class ChatRequest(BaseModel):
     mode: Literal["primary", "regenerate"] = "primary"
     interaction_mode: Literal["text", "voice"] = "text"
     presentation_mode: Literal["auto", "dialogue", "scene"] = "auto"
-    voice_tts_provider: Literal[
-        "browser", "mock", "cosyvoice", "siliconflow", "gpt-sovits", "qwen3-vllm"
-    ] = "browser"
+    voice_tts_provider: Literal["browser", "mock", "cosyvoice", "siliconflow", "gpt-sovits", "qwen3-vllm"] = "browser"
     adult_mode: bool = False
     r18_style_id: str = Field(default="high_intensity", min_length=1, max_length=64)
     initiative: bool = False
-    initiative_trigger: Literal[
-        "none", "manual", "idle_continuation", "continuous_companionship"
-    ] = "none"
+    initiative_trigger: Literal["none", "manual", "idle_continuation", "continuous_companionship"] = "none"
     initiative_sequence: int = Field(default=0, ge=0, le=50)
     initiative_sequence_limit: int = Field(default=0, ge=0, le=50)
     client_sent_at: datetime | None = None
@@ -195,6 +193,35 @@ class ChatRequest(BaseModel):
         if not value:
             raise ValueError("message must not be blank")
         return value
+
+    def idempotency_digest(self) -> str:
+        """Hash every client-controlled field that can change one turn's behavior.
+
+        Server-owned resolution data is intentionally excluded because it is
+        rebuilt from the durable session when a request is accepted.  Keeping
+        this policy with the boundary model prevents service code from drifting
+        into a partial hand-written field allowlist.
+        """
+
+        server_owned = {
+            "server_received_at",
+            "activity_context",
+            "scene_context",
+            "user_name",
+            "user_persona",
+            "reply_length_preference",
+            "character_name",
+            "system_prompt",
+            "api",
+            "retrieval",
+        }
+        payload = self.model_dump(
+            mode="json",
+            exclude=server_owned,
+            exclude_none=True,
+        )
+        encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 class VoiceDeliveryState(BaseModel):
@@ -272,10 +299,20 @@ class ModelUsage(BaseModel):
     provider: str = "openai-compatible"
     model: str = ""
     request_kind: Literal[
-        "generation", "repair", "compaction", "role_audit", "capability_plan", "preflight",
-        "research_review", "emotion_post", "memory_extract", "character_generate",
-        "destiny_archetypes", "destiny_cards", "destiny_synthesis",
-        "destiny_synthesis_repair"
+        "generation",
+        "repair",
+        "compaction",
+        "role_audit",
+        "capability_plan",
+        "preflight",
+        "research_review",
+        "emotion_post",
+        "memory_extract",
+        "character_generate",
+        "destiny_archetypes",
+        "destiny_cards",
+        "destiny_synthesis",
+        "destiny_synthesis_repair",
     ] = "generation"
     prompt_tokens: int = Field(default=0, ge=0)
     cached_tokens: int = Field(default=0, ge=0)

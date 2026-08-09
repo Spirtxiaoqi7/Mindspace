@@ -72,12 +72,14 @@ def test_flat_base_profile_migrates_back_to_expressive_custom_voice(tmp_path):
     path = settings.runtime_dir / "config" / "settings.json"
     path.parent.mkdir(parents=True)
     path.write_text(
-        json.dumps({
-            "audio": {
-                "tts_qwen3_vllm_voice": "mindspace_mature_alluring",
-                "tts_qwen3_vllm_task_type": "Base",
+        json.dumps(
+            {
+                "audio": {
+                    "tts_qwen3_vllm_voice": "mindspace_mature_alluring",
+                    "tts_qwen3_vllm_task_type": "Base",
+                }
             }
-        }),
+        ),
         encoding="utf-8",
     )
 
@@ -188,12 +190,8 @@ def test_legacy_fast_voice_merge_window_migrates_without_overwriting_custom_valu
         encoding="utf-8",
     )
 
-    assert ProductConfigStore(legacy, settings).snapshot()["audio"][
-        "asr_utterance_merge_ms"
-    ] == 1100
-    assert ProductConfigStore(custom, settings).snapshot()["audio"][
-        "asr_utterance_merge_ms"
-    ] == 1450
+    assert ProductConfigStore(legacy, settings).snapshot()["audio"]["asr_utterance_merge_ms"] == 1100
+    assert ProductConfigStore(custom, settings).snapshot()["audio"]["asr_utterance_merge_ms"] == 1450
 
 
 def test_legacy_voice_sensitivity_defaults_migrate_without_overwriting_custom_value(
@@ -423,9 +421,7 @@ def test_stream_chat_emits_progress_final_and_persists_session(tmp_path):
     assert "event: response.ready" in response.text
     assert "event: run.completed" in response.text
     envelopes = [
-        json.loads(line.removeprefix("data: "))
-        for line in response.text.splitlines()
-        if line.startswith("data: ")
+        json.loads(line.removeprefix("data: ")) for line in response.text.splitlines() if line.startswith("data: ")
     ]
     assert [item["seq"] for item in envelopes] == list(range(1, len(envelopes) + 1))
     assert all(item["run_id"] == "req-integration" for item in envelopes)
@@ -451,19 +447,13 @@ def test_stream_chat_emits_progress_final_and_persists_session(tmp_path):
     assert memory.json()["active"] == []
 
     redacted = client.get("/api/v1/runs/req-integration/prompt-inspection")
-    revealed = client.get(
-        "/api/v1/runs/req-integration/prompt-inspection?reveal=true"
-    )
+    revealed = client.get("/api/v1/runs/req-integration/prompt-inspection?reveal=true")
     assert redacted.status_code == 200
     assert redacted.json()["revealed"] is False
-    assert all(
-        item["content"].startswith("[已脱敏：") for item in redacted.json()["layers"]
-    )
+    assert all(item["content"].startswith("[已脱敏：") for item in redacted.json()["layers"])
     assert revealed.status_code == 200
     assert revealed.json()["sha256"] == redacted.json()["sha256"]
-    assert any(
-        "请解释服务调度" in item["content"] for item in revealed.json()["layers"]
-    )
+    assert any("请解释服务调度" in item["content"] for item in revealed.json()["layers"])
 
 
 def test_voice_stream_emits_acoustic_state_only_for_qwen(tmp_path):
@@ -475,12 +465,12 @@ def test_voice_stream_emits_acoustic_state_only_for_qwen(tmp_path):
         "retrieval": {"similarity_threshold": 0},
     }
 
-    streamed = TestClient(
-        create_app(make_settings(tmp_path / "streamed", tts_provider="mock"))
-    ).post("/api/v1/chat/stream", json=payload)
-    qwen = TestClient(
-        create_app(make_settings(tmp_path / "qwen", tts_provider="qwen3-vllm"))
-    ).post("/api/v1/chat/stream", json=payload)
+    streamed = TestClient(create_app(make_settings(tmp_path / "streamed", tts_provider="mock"))).post(
+        "/api/v1/chat/stream", json=payload
+    )
+    qwen = TestClient(create_app(make_settings(tmp_path / "qwen", tts_provider="qwen3-vllm"))).post(
+        "/api/v1/chat/stream", json=payload
+    )
 
     assert streamed.status_code == 200
     assert "event: response.voice_cue" not in streamed.text
@@ -502,9 +492,7 @@ def test_completed_stream_can_resume_by_sequence_without_reexecuting(tmp_path):
         headers={"X-Request-ID": "resume-run"},
     )
     envelopes = [
-        json.loads(line.removeprefix("data: "))
-        for line in initial.text.splitlines()
-        if line.startswith("data: ")
+        json.loads(line.removeprefix("data: ")) for line in initial.text.splitlines() if line.startswith("data: ")
     ]
     cursor = envelopes[-3]["seq"]
 
@@ -513,15 +501,11 @@ def test_completed_stream_can_resume_by_sequence_without_reexecuting(tmp_path):
         headers={"Last-Event-ID": str(cursor)},
     )
     replayed = [
-        json.loads(line.removeprefix("data: "))
-        for line in resumed.text.splitlines()
-        if line.startswith("data: ")
+        json.loads(line.removeprefix("data: ")) for line in resumed.text.splitlines() if line.startswith("data: ")
     ]
 
     assert resumed.status_code == 200
-    assert [item["seq"] for item in replayed] == [
-        item["seq"] for item in envelopes if item["seq"] > cursor
-    ]
+    assert [item["seq"] for item in replayed] == [item["seq"] for item in envelopes if item["seq"] > cursor]
     assert replayed[-1]["event"] == "run.completed"
     assert client.get("/api/v1/runs/resume-run").json() == {
         "run_id": "resume-run",
@@ -561,9 +545,7 @@ def test_asr_uncertainty_is_prompt_only_and_never_persisted_as_user_fact(tmp_pat
     )
 
     assert response.status_code == 200
-    inspection = client.get(
-        "/api/v1/runs/asr-evidence-run/prompt-inspection?reveal=true"
-    ).json()
+    inspection = client.get("/api/v1/runs/asr-evidence-run/prompt-inspection?reveal=true").json()
     assert any("阿斯塔利昂" in layer["content"] for layer in inspection["layers"])
     session = client.get("/api/v1/sessions/asr-evidence-session").json()
     assert session["messages"][0]["content"] == "我想找帮我配音"
@@ -596,9 +578,7 @@ def test_delete_reply_keeps_user_and_reconciles_on_next_successful_turn(tmp_path
 
     assert deleted.status_code == 200
     assert deleted.json()["pending_json_reconciliation"] is True
-    assert [
-        item["role"] for item in client.get("/api/v1/sessions/delete-session").json()["messages"]
-    ] == ["user"]
+    assert [item["role"] for item in client.get("/api/v1/sessions/delete-session").json()["messages"]] == ["user"]
     assert app.state.container.profiles.load_bundle().model_dump(mode="json") == before_profiles
     assert len(app.state.container.sessions.load_pending_deletions("delete-session")) == 1
     assert all(
@@ -650,9 +630,7 @@ def test_initiative_chat_returns_only_the_assistant_message_publicly(tmp_path):
     assert "本轮主动类型=continue" in stored[0]["content"]
     assert stored[0]["hidden"] is True
 
-    deleted = client.delete(
-        f"/api/v1/sessions/initiative-api/messages/{session['messages'][0]['message_id']}"
-    )
+    deleted = client.delete(f"/api/v1/sessions/initiative-api/messages/{session['messages'][0]['message_id']}")
     assert deleted.json()["pending_json_reconciliation"] is False
     assert client.get("/api/v1/sessions/initiative-api").json()["messages"] == []
 
@@ -814,10 +792,7 @@ def test_settings_profiles_knowledge_and_destructive_confirmations(tmp_path):
     )
     assert restored.status_code == 200
     assert restored.json()["document"]["identity"]["preferred_name"] != "小林"
-    assert (
-        restored.json()["document"]["revision"]
-        == updated.json()["document"]["revision"] + 1
-    )
+    assert restored.json()["document"]["revision"] == updated.json()["document"]["revision"] + 1
 
     added = client.post(
         "/api/v1/knowledge",
@@ -926,6 +901,4 @@ def test_avatar_config_normalizes_legacy_values_and_upload_returns_config(tmp_pa
         files={"file": ("portrait.webp", b"RIFF" + b"\x00" * 16, "image/webp")},
     )
     assert uploaded.status_code == 200
-    assert uploaded.json()["config"]["assistant"]["src"].startswith(
-        "/api/v1/avatar/files/assistant-"
-    )
+    assert uploaded.json()["config"]["assistant"]["src"].startswith("/api/v1/avatar/files/assistant-")

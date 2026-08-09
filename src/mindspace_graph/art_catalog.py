@@ -68,9 +68,7 @@ class ArtCatalogService:
 
     def packs(self) -> list[dict[str, Any]]:
         manifest = self._load_json(self.builtin_manifest)
-        installed = {
-            item["pack_id"]: item for item in self.catalog().get("installed_packs") or []
-        }
+        installed = {item["pack_id"]: item for item in self.catalog().get("installed_packs") or []}
         result = []
         for pack in manifest.get("packs") or []:
             item = dict(pack)
@@ -78,10 +76,7 @@ class ArtCatalogService:
             part = self.download_root / f"{item.get('pack_id')}.zip.part"
             item["downloaded_bytes"] = part.stat().st_size if part.exists() else 0
             with self._state_lock:
-                if (
-                    item["status"] != "installed"
-                    and item.get("pack_id") in self._paused
-                ):
+                if item["status"] != "installed" and item.get("pack_id") in self._paused:
                     item["status"] = "paused"
             result.append(item)
         return result
@@ -152,9 +147,7 @@ class ArtCatalogService:
                     archive.unlink(missing_ok=True)
         raise RuntimeError(f"art pack download failed: {error}")
 
-    def _download(
-        self, pack_id: str, url: str, target: Path, expected_bytes: int
-    ) -> None:
+    def _download(self, pack_id: str, url: str, target: Path, expected_bytes: int) -> None:
         existing = target.stat().st_size if target.exists() else 0
         if existing > expected_bytes:
             target.unlink()

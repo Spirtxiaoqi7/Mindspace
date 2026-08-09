@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import sys
 import threading
 import time
 from array import array
@@ -54,10 +53,7 @@ def select_input_endpoints(sounddevice: Any, remembered: dict[str, Any] | None =
 
     devices = list(sounddevice.query_devices())
     hostapis = list(sounddevice.query_hostapis())
-    api_names = {
-        index: str(api.get("name") or "unknown")
-        for index, api in enumerate(hostapis)
-    }
+    api_names = {index: str(api.get("name") or "unknown") for index, api in enumerate(hostapis)}
     priority = {
         "windows wasapi": 0,
         "windows wdm-ks": 1,
@@ -82,9 +78,7 @@ def select_input_endpoints(sounddevice: Any, remembered: dict[str, Any] | None =
             )
         )
     if not candidates:
-        raise RuntimeError(
-            "Windows 未检测到可用的麦克风输入端点；请重新插拔或启用 HyperX Cloud III 麦克风"
-        )
+        raise RuntimeError("Windows 未检测到可用的麦克风输入端点；请重新插拔或启用 HyperX Cloud III 麦克风")
 
     def sort_key(endpoint: InputEndpoint) -> tuple[int, int, int]:
         is_remembered = bool(remembered) and (
@@ -262,19 +256,13 @@ class NativeMicrophoneCapture:
         try:
             import sounddevice  # type: ignore[import-not-found]
 
-            self._candidates = select_input_endpoints(
-                sounddevice, self._read_remembered_endpoint()
-            )
+            self._candidates = select_input_endpoints(sounddevice, self._read_remembered_endpoint())
             self._candidate_cursor = min(self._candidate_cursor, len(self._candidates) - 1)
             self._open_current_candidate(sounddevice)
         except Exception as exc:  # noqa: BLE001
             self._state = "error"
             self._error = str(exc)
-            self._error_code = (
-                "no_input_device"
-                if "未检测到可用的麦克风输入端点" in self._error
-                else "open_failed"
-            )
+            self._error_code = "no_input_device" if "未检测到可用的麦克风输入端点" in self._error else "open_failed"
 
     def stop(self, *, clear_subscribers: bool = True) -> None:
         stream, self._stream = self._stream, None
@@ -298,8 +286,12 @@ class NativeMicrophoneCapture:
         """Advance one endpoint or perform one bounded ready-stream recovery."""
 
         now = time.perf_counter()
-        opening_stalled = self._state == "opening" and self._started_at and now - self._started_at >= opening_timeout_seconds
-        ready_stalled = self._state == "ready" and self._last_pcm_at and now - self._last_pcm_at >= ready_timeout_seconds
+        opening_stalled = (
+            self._state == "opening" and self._started_at and now - self._started_at >= opening_timeout_seconds
+        )
+        ready_stalled = (
+            self._state == "ready" and self._last_pcm_at and now - self._last_pcm_at >= ready_timeout_seconds
+        )
         if not (opening_stalled or ready_stalled):
             return False
         if ready_stalled and self._ready_recovery_used:
@@ -337,7 +329,9 @@ class NativeMicrophoneCapture:
             self._subscribers.discard((loop, queue))
 
     def status(self) -> dict[str, Any]:
-        first_pcm_ms = round((self._first_pcm_at - self._started_at) * 1000) if self._first_pcm_at and self._started_at else 0
+        first_pcm_ms = (
+            round((self._first_pcm_at - self._started_at) * 1000) if self._first_pcm_at and self._started_at else 0
+        )
         last_pcm_age_ms = round((time.perf_counter() - self._last_pcm_at) * 1000) if self._last_pcm_at else 0
         with self._lock:
             subscribers = len(self._subscribers)

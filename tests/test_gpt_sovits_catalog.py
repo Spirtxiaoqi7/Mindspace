@@ -25,13 +25,8 @@ def test_full_character_catalog_is_version_audited() -> None:
 def test_catalog_loader_matches_json_and_keeps_paths_in_model_root(tmp_path: Path) -> None:
     assert len(GPT_SOVITS_VOICES) == 48
     paths = voice_paths(tmp_path, "v4-elysia-2026")
-    assert (
-        paths["gpt_weight"]
-        == (tmp_path / "tts/gpt-sovits/runtime/GPT_SoVITS/pretrained_models/s1v3.ckpt").resolve()
-    )
-    assert all(
-        path == tmp_path.resolve() or tmp_path.resolve() in path.parents for path in paths.values()
-    )
+    assert paths["gpt_weight"] == (tmp_path / "tts/gpt-sovits/runtime/GPT_SoVITS/pretrained_models/s1v3.ckpt").resolve()
+    assert all(path == tmp_path.resolve() or tmp_path.resolve() in path.parents for path in paths.values())
 
 
 def test_catalog_path_guard_rejects_escape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

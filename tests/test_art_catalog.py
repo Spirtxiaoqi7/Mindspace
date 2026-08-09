@@ -18,9 +18,7 @@ def test_builtin_art_manifest_v2_and_approved_expansion_are_valid():
     web_root = Path(__file__).parents[1] / "src" / "mindspace_graph" / "web"
     archive_root = web_root / "archive"
     manifest = json.loads((archive_root / "manifest.json").read_text(encoding="utf-8"))
-    preview_index = json.loads(
-        (archive_root / "previews" / "index.json").read_text(encoding="utf-8")
-    )
+    preview_index = json.loads((archive_root / "previews" / "index.json").read_text(encoding="utf-8"))
 
     assert manifest["schema_version"] == "2.0.0"
     assert manifest["preview_index"] == "/assets/archive/previews/index.json"
@@ -38,9 +36,7 @@ def test_builtin_art_manifest_v2_and_approved_expansion_are_valid():
         "journal_covers": 8,
         "compatibility_extras": 7,
     }
-    assert sum(path.stat().st_size for path in archive_root.rglob("*") if path.is_file()) < (
-        15 * 1024 * 1024
-    )
+    assert sum(path.stat().st_size for path in archive_root.rglob("*") if path.is_file()) < (15 * 1024 * 1024)
 
     for item in preview_index["items"]:
         path = web_root / item["path"].removeprefix("/assets/")

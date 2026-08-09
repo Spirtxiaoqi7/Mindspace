@@ -30,9 +30,7 @@ def request(*, round_num: int = 1) -> ChatRequest:
         user_name="林澈",
         user_persona="林澈是成年音效设计师，慢热，重视边界。",
         character_name="弦月",
-        system_prompt=(
-            "弦月温柔、敏锐、坦率，习惯直接沟通并尊重用户边界；冲突时先倾听，修复时明确道歉并调整。"
-        ),
+        system_prompt=("弦月温柔、敏锐、坦率，习惯直接沟通并尊重用户边界；冲突时先倾听，修复时明确道歉并调整。"),
     )
 
 
@@ -163,9 +161,7 @@ def test_prompt_never_exposes_profile_write_bootstrap_to_the_chat_model():
 
     active_prompt = "\n".join(item["content"] for item in active_messages)
     closed_prompt = "\n".join(item["content"] for item in closed_messages)
-    active_system = "\n".join(
-        item["content"] for item in active_messages if item["role"] == "system"
-    )
+    active_system = "\n".join(item["content"] for item in active_messages if item["role"] == "system")
 
     assert "人物档案初始化窗口" not in active_prompt
     assert "trigger=profile_bootstrap" not in active_prompt

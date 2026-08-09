@@ -40,6 +40,7 @@ def create_worker_app(model_root: Path, device: str) -> FastAPI:
                 await asyncio.to_thread(runtime.load_refiner)
         await capture_start
         if native_capture.status()["available"]:
+
             async def supervise_capture() -> None:
                 while True:
                     await asyncio.sleep(1)
@@ -165,9 +166,7 @@ def create_worker_app(model_root: Path, device: str) -> FastAPI:
             mean_square = sum(sample * sample for sample in samples) / len(samples)
             return min(1.0, (mean_square**0.5) / 12_000)
 
-        receive_task: asyncio.Task[dict[str, Any]] | None = asyncio.create_task(
-            websocket.receive()
-        )
+        receive_task: asyncio.Task[dict[str, Any]] | None = asyncio.create_task(websocket.receive())
         pcm_task: asyncio.Task[bytes] | None = (
             asyncio.create_task(native_queue.get()) if native_queue is not None else None
         )
@@ -175,12 +174,8 @@ def create_worker_app(model_root: Path, device: str) -> FastAPI:
         last_level_at = 0.0
         try:
             while True:
-                pending_tasks = {
-                    task for task in (receive_task, pcm_task) if task is not None
-                }
-                done, _pending = await asyncio.wait(
-                    pending_tasks, return_when=asyncio.FIRST_COMPLETED
-                )
+                pending_tasks = {task for task in (receive_task, pcm_task) if task is not None}
+                done, _pending = await asyncio.wait(pending_tasks, return_when=asyncio.FIRST_COMPLETED)
                 events: list[dict[str, Any]] = []
                 if pcm_task is not None and pcm_task in done:
                     pcm = pcm_task.result()
@@ -208,9 +203,7 @@ def create_worker_app(model_root: Path, device: str) -> FastAPI:
                     receive_task = asyncio.create_task(websocket.receive())
                     if message.get("bytes") is not None:
                         if not native_enabled and session_active and not input_locked:
-                            events.extend(
-                                await asyncio.to_thread(session.feed, message["bytes"])
-                            )
+                            events.extend(await asyncio.to_thread(session.feed, message["bytes"]))
                     elif message.get("text"):
                         control = json.loads(message["text"])
                         action = control.get("action")
@@ -222,32 +215,16 @@ def create_worker_app(model_root: Path, device: str) -> FastAPI:
                             session_active = True
                             session.reset()
                             options.silence_ms = int(control.get("silence_ms") or 600)
-                            threshold_db = float(
-                                control.get("energy_threshold_db") or -35
-                            )
+                            threshold_db = float(control.get("energy_threshold_db") or -35)
                             options.energy_threshold = 10 ** (threshold_db / 20)
-                            options.min_speech_ms = int(
-                                control.get("min_speech_ms") or 120
-                            )
+                            options.min_speech_ms = int(control.get("min_speech_ms") or 120)
                             options.auto_send = bool(control.get("auto_send", True))
-                            options.candidate_release_ms = int(
-                                control.get("candidate_release_ms") or 240
-                            )
-                            options.playback_active = bool(
-                                control.get("playback_active", False)
-                            )
-                            options.playback_text = str(
-                                control.get("playback_text") or ""
-                            )[:4000]
-                            options.deferred_during_playback = bool(
-                                control.get("deferred_during_playback", True)
-                            )
-                            options.dynamic_endpointing = bool(
-                                control.get("dynamic_endpointing", True)
-                            )
-                            options.final_refinement_enabled = bool(
-                                control.get("final_refinement_enabled", True)
-                            )
+                            options.candidate_release_ms = int(control.get("candidate_release_ms") or 240)
+                            options.playback_active = bool(control.get("playback_active", False))
+                            options.playback_text = str(control.get("playback_text") or "")[:4000]
+                            options.deferred_during_playback = bool(control.get("deferred_during_playback", True))
+                            options.dynamic_endpointing = bool(control.get("dynamic_endpointing", True))
+                            options.final_refinement_enabled = bool(control.get("final_refinement_enabled", True))
                             options.final_refinement_timeout_ms = int(
                                 control.get("final_refinement_timeout_ms") or 1400
                             )
@@ -259,25 +236,17 @@ def create_worker_app(model_root: Path, device: str) -> FastAPI:
                             )
                             vocabulary = control.get("vocabulary")
                             if isinstance(vocabulary, dict):
-                                options.vocabulary_revision = str(
-                                    vocabulary.get("revision") or ""
-                                )
+                                options.vocabulary_revision = str(vocabulary.get("revision") or "")
                                 options.decoder_hotwords = tuple(
-                                    str(item)
-                                    for item in vocabulary.get("decoder_hotwords", [])
-                                    if str(item).strip()
+                                    str(item) for item in vocabulary.get("decoder_hotwords", []) if str(item).strip()
                                 )
                                 options.explicit_corrections = {
                                     str(key): str(value)
-                                    for key, value in dict(
-                                        vocabulary.get("explicit") or {}
-                                    ).items()
+                                    for key, value in dict(vocabulary.get("explicit") or {}).items()
                                     if str(key).strip() and str(value).strip()
                                 }
                                 options.fuzzy_targets = tuple(
-                                    item
-                                    for item in vocabulary.get("fuzzy_targets", [])
-                                    if isinstance(item, dict)
+                                    item for item in vocabulary.get("fuzzy_targets", []) if isinstance(item, dict)
                                 )
                                 session.corrector = ASRTextCorrector(options)
                             await emit(
@@ -290,22 +259,10 @@ def create_worker_app(model_root: Path, device: str) -> FastAPI:
                         elif action == "playback_state":
                             session.configure_playback(
                                 playing=bool(control.get("playing", False)),
-                                energy_threshold=10
-                                ** (
-                                    float(
-                                        control.get("energy_threshold_db") or -35
-                                    )
-                                    / 20
-                                ),
-                                min_speech_ms=int(
-                                    control.get("min_speech_ms") or 120
-                                ),
-                                candidate_release_ms=int(
-                                    control.get("candidate_release_ms") or 240
-                                ),
-                                playback_text=str(
-                                    control.get("playback_text") or ""
-                                ),
+                                energy_threshold=10 ** (float(control.get("energy_threshold_db") or -35) / 20),
+                                min_speech_ms=int(control.get("min_speech_ms") or 120),
+                                candidate_release_ms=int(control.get("candidate_release_ms") or 240),
+                                playback_text=str(control.get("playback_text") or ""),
                             )
                         elif action == "input_gate":
                             input_locked = bool(control.get("locked", False))
@@ -324,11 +281,7 @@ def create_worker_app(model_root: Path, device: str) -> FastAPI:
                         elif action == "stop":
                             session_active = False
                             silence = b"\x00\x00" * int(options.sample_rate * 0.5)
-                            events.extend(
-                                await asyncio.to_thread(
-                                    session.feed, silence, force_final=True
-                                )
-                            )
+                            events.extend(await asyncio.to_thread(session.feed, silence, force_final=True))
                 await send_events(events)
         except (WebSocketDisconnect, RuntimeError):
             session.reset()

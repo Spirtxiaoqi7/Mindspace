@@ -3289,7 +3289,7 @@ function App() {
 
   return <div className={`app-shell ${inspectorOpen ? "inspector-visible" : "inspector-hidden"}`}>
     <aside className={`sidebar ${sidebarOpen ? "mobile-open" : ""}`}>
-      <div className="brand-row"><button className="brand-mark" onClick={() => navigate("modes")} title="返回主页" aria-label="Mindspace 主页"><img src="/assets/assets/mindspace-brand-icon.png" alt="" /></button><div><strong>Mindspace</strong><small>PRIVATE COMPANION</small></div><button className="icon-button mobile-only" onClick={() => setSidebarOpen(false)} aria-label="关闭会话栏">×</button></div>
+      <div className="brand-row"><button className="brand-mark" onClick={() => navigate("modes")} title="返回主页" aria-label="Mindspace 主页"><img src={`${import.meta.env.BASE_URL}assets/mindspace-brand-icon.png?v=0.8.1`} alt="" /></button><div><strong>Mindspace</strong><small>PRIVATE COMPANION</small></div><button className="icon-button mobile-only" onClick={() => setSidebarOpen(false)} aria-label="关闭会话栏">×</button></div>
       <button className="new-chat home-entry" onClick={() => navigate("modes")}><span>⌂</span> 主页</button>
       <label className="search-box"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索会话" aria-label="搜索会话" /></label>
       <div className="session-heading"><span>最近会话</span><small>{filteredSessions.length}</small></div>
@@ -3306,7 +3306,7 @@ function App() {
       {conversationScene?.scene && <div
         key={conversationScene.scene.scene_id}
         className="chat-scene-background"
-        style={{ backgroundImage: `url("${sceneAssetPath(conversationScene.scene.asset_id)}")` }}
+        style={{ backgroundImage: `url("${sceneAssetPath(conversationScene.scene)}")` }}
         aria-hidden="true"
       />}
       <header className="topbar"><button className="mobile-only mobile-menu" onClick={() => setSidebarOpen(true)} aria-label="打开会话栏">☰</button><div className="title-block"><span className="topbar-kicker">CONVERSATION</span><h1>{title}</h1><span>{characterName} · {generating ? "正在回应" : `第 ${round} 轮 · 已就绪`}</span></div><div className="top-actions"><button className="top-character-entry" onClick={() => { setProfileEditorRole("assistant"); setModal("profile"); }} title="打开人设工作区"><span className="top-character-avatar" style={avatarStyle(effectiveAvatars.assistant)} aria-hidden="true"><img src={effectiveAvatars.assistant.src} alt="" /></span><span>{characterName}</span></button><button className="top-settings-entry" onClick={() => openSettings("model")} title={llmReady ? `${str(settings?.llm.model || "API 已连接")} · 打开设置` : "API 尚未配置 · 打开设置"}><i className={llmReady ? "ready" : "warning"} />⚙ <span>设置</span></button></div></header>
@@ -3921,6 +3921,10 @@ const PROFILE_FIELD_LABELS: Record<string, string> = {
   examples: "分类对话示例", casual: "日常示例",
   disagreement: "分歧示例", initiative: "主动表达示例", scene_transition: "转场示例",
   intimate: "亲密互动示例", roleplay_state: "角色场景状态", scene: "当前场景",
+  description: "角色基础信息", scenario: "关系与日常情境", first_mes: "首次开场",
+  alternate_greetings: "备用开场", mes_example: "对话示例", memory: "长期记忆",
+  preferences: "偏好记忆", tasks: "任务记忆", relationship: "关系类型",
+  relationship_context: "关系补充", user_alias: "AI 对你的称呼",
   location: "地点", time_anchor: "时间锚点", character_outfit: "角色穿着",
   character_posture: "角色姿态", character_activity: "角色正在做的事", active_objects: "场景物件",
   open_threads: "未完互动", last_transition: "最近转场", updated_round: "更新轮次",
@@ -3947,21 +3951,154 @@ function ProfileFieldEditor({ fieldKey, value, path, onChange }: { fieldKey: str
   if (typeof value === "boolean") {
     return <label className="profile-form-field profile-form-check"><input aria-label={label} type="checkbox" checked={value} onChange={(event) => onChange(path, event.target.checked)} /><span>{label}</span></label>;
   }
-  if (fieldKey === "gender" && path.includes("identity")) {
+  if (fieldKey === "gender") {
     return <label className="profile-form-field"><span>{label}</span><select aria-label={label} value={String(value)} onChange={(event) => onChange(path, event.target.value)}><option value="男">男</option><option value="女">女</option><option value="不指定">不指定</option></select><small>用户手动保存后作为模型最高优先级身份；AI 不能自行改写。通用代词始终使用TA。</small></label>;
+  }
+  if (["description", "personality", "scenario", "first_mes", "mes_example", "relationship_context"].includes(fieldKey)) {
+    return <label className="profile-form-field profile-form-list"><span>{label}</span><textarea aria-label={label} value={value == null ? "" : String(value)} onChange={(event) => onChange(path, event.target.value)} /></label>;
   }
   return <label className="profile-form-field"><span>{label}</span><input aria-label={label} type={typeof value === "number" ? "number" : "text"} value={value == null ? "" : String(value)} onChange={(event) => onChange(path, typeof value === "number" ? Number(event.target.value) : event.target.value)} /></label>;
 }
 
+function profileObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function profileStringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item || "").trim()).filter(Boolean) : [];
+}
+
+function v2ProfileEditorDocument(record: Record<string, unknown>): Record<string, unknown> {
+  const card = profileObject(record.card);
+  const data = profileObject(card.data);
+  const extensions = profileObject(data.extensions);
+  const mindspace = profileObject(extensions.mindspace);
+  const memory = profileObject(record.memory);
+  const cardMemory = profileObject(data.memory);
+  return {
+    revision: Number(record.revision || 0),
+    name: str(data.name),
+    gender: str(mindspace.gender || record.gender || "不指定"),
+    user_alias: str(record.user_alias || mindspace.user_alias),
+    relationship: str(mindspace.relationship || record.relationship_label),
+    relationship_context: str(mindspace.relationship_context),
+    description: str(data.description),
+    personality: str(data.personality),
+    scenario: str(data.scenario),
+    first_mes: str(data.first_mes),
+    alternate_greetings: profileStringList(data.alternate_greetings),
+    mes_example: str(data.mes_example),
+    memory: {
+      preferences: profileStringList(memory.preferences || cardMemory.preferences),
+      tasks: profileStringList(memory.tasks || cardMemory.tasks),
+    },
+  };
+}
+
 function ProfileDialog({ characterId, initialName, onClose, onDirty, onOpenConnection, onSaved, notify }: { characterId: string; initialName: Role | "state"; onClose: () => void; onDirty: (dirty: boolean) => void; onOpenConnection: () => void; onSaved: () => void; notify: (message: string) => void }) {
   const [name, setName] = useState(initialName); const [document, setDocument] = useState(""); const [savedDocument, setSavedDocument] = useState(""); const [history, setHistory] = useState<ProfileHistoryItem[]>([]); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [mode, setMode] = useState<"form" | "json">("form"); const [error, setError] = useState("");
+  const [v2Card, setV2Card] = useState<Record<string, unknown> | null>(null);
+  const [characterUsesV2, setCharacterUsesV2] = useState(false);
   const parsed = useMemo(() => { try { const value = JSON.parse(document); return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null; } catch { return null; } }, [document]);
   const characterQuery = name === "user" || !characterId ? "" : `?character_id=${encodeURIComponent(characterId)}`;
-  const load = useCallback(async () => { setLoading(true); setError(""); try { const [value, versions] = await Promise.all([request<Record<string, unknown>>(`/api/v1/profiles/${name}${characterQuery}`), request<{ items: ProfileHistoryItem[] }>(`/api/v1/profiles/${name}/history${characterQuery}`).catch(() => ({ items: [] }))]); const serialized = JSON.stringify(value, null, 2); setDocument(serialized); setSavedDocument(serialized); setHistory(versions.items); } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); } finally { setLoading(false); } }, [characterQuery, name, notify]);
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      if (name === "assistant" && characterId) {
+        const [record, versions] = await Promise.all([
+          request<Record<string, unknown>>(`/api/v1/characters/${encodeURIComponent(characterId)}`),
+          request<{ items: ProfileHistoryItem[] }>(`/api/v1/characters/${encodeURIComponent(characterId)}/history`).catch(() => ({ items: [] })),
+        ]);
+        const card = profileObject(record.card);
+        if (Object.keys(card).length) {
+          const serialized = JSON.stringify(v2ProfileEditorDocument(record), null, 2);
+          setV2Card(card); setCharacterUsesV2(true); setDocument(serialized); setSavedDocument(serialized); setHistory(versions.items);
+          return;
+        }
+        setV2Card(null); setCharacterUsesV2(false);
+      } else {
+        setV2Card(null);
+      }
+      const [value, versions] = await Promise.all([
+        request<Record<string, unknown>>(`/api/v1/profiles/${name}${characterQuery}`),
+        request<{ items: ProfileHistoryItem[] }>(`/api/v1/profiles/${name}/history${characterQuery}`).catch(() => ({ items: [] })),
+      ]);
+      const serialized = JSON.stringify(value, null, 2); setDocument(serialized); setSavedDocument(serialized); setHistory(versions.items);
+    } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); }
+    finally { setLoading(false); }
+  }, [characterId, characterQuery, name, notify]);
   useEffect(() => { void load(); }, [load]); useEffect(() => { onDirty(document !== savedDocument); return () => onDirty(false); }, [document, onDirty, savedDocument]);
   const updateValue = useCallback((path: string[], value: unknown) => { if (!parsed) return; const next = structuredClone(parsed); let cursor: Record<string, unknown> = next; path.slice(0, -1).forEach((key) => { cursor = cursor[key] as Record<string, unknown>; }); cursor[path[path.length - 1]] = value; setDocument(JSON.stringify(next, null, 2)); setError(""); }, [parsed]);
-  const save = async () => { if (!parsed) { setError("JSON 格式无效，请修正后再保存。"); return; } setSaving(true); setError(""); try { const result = await request<{ document: Record<string, unknown> }>(`/api/v1/profiles/${name}${characterQuery}`, { method: "PUT", body: JSON.stringify(parsed) }); const serialized = JSON.stringify(result.document, null, 2); setDocument(serialized); setSavedDocument(serialized); onSaved(); notify("档案已保存，人物名称与后续对话将使用新版本"); } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); } finally { setSaving(false); } };
-  const restorePrevious = async () => { const previous = history[0]; if (!previous || !parsed) return; if (!(await styledConfirm({ title: `恢复修订 ${previous.revision}？`, message: "当前版本仍会保留在历史中，并会生成一个新的修订版本。", confirmLabel: "恢复版本" }))) return; setSaving(true); setError(""); try { const result = await request<{ document: Record<string, unknown> }>(`/api/v1/profiles/${name}/restore${characterQuery}`, { method: "POST", body: JSON.stringify({ version_id: previous.version_id, expected_revision: parsed.revision }) }); const serialized = JSON.stringify(result.document, null, 2); setDocument(serialized); setSavedDocument(serialized); notify("已恢复上一版本，并生成新的修订"); await load(); } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); } finally { setSaving(false); } };
+  const save = async () => {
+    if (!parsed) { setError("JSON 格式无效，请修正后再保存。"); return; }
+    setSaving(true); setError("");
+    try {
+      if (v2Card && name === "assistant" && characterId) {
+        const roleName = str(parsed.name).trim();
+        if (!roleName) throw new Error("角色名称不能为空");
+        const baseData = profileObject(v2Card.data);
+        const baseExtensions = profileObject(baseData.extensions);
+        const baseMindspace = profileObject(baseExtensions.mindspace);
+        const parsedMemory = profileObject(parsed.memory);
+        const memory = {
+          preferences: profileStringList(parsedMemory.preferences),
+          tasks: profileStringList(parsedMemory.tasks),
+        };
+        const relationship = str(parsed.relationship).trim();
+        const userAlias = str(parsed.user_alias).trim();
+        const nextCard = {
+          ...v2Card,
+          data: {
+            ...baseData,
+            name: roleName,
+            description: str(parsed.description),
+            personality: str(parsed.personality),
+            scenario: str(parsed.scenario),
+            first_mes: str(parsed.first_mes),
+            alternate_greetings: profileStringList(parsed.alternate_greetings),
+            mes_example: str(parsed.mes_example),
+            memory,
+            extensions: {
+              ...baseExtensions,
+              mindspace: {
+                ...baseMindspace,
+                gender: str(parsed.gender || "不指定"),
+                relationship,
+                relationship_context: str(parsed.relationship_context),
+                user_alias: userAlias,
+              },
+            },
+          },
+        };
+        const result = await request<{ character: Record<string, unknown> }>(`/api/v1/characters/${encodeURIComponent(characterId)}`, {
+          method: "PUT",
+          body: JSON.stringify({ revision: Number(parsed.revision || 0), card: nextCard, memory, user_alias: userAlias, relationship_label: relationship }),
+        });
+        const serialized = JSON.stringify(v2ProfileEditorDocument(result.character), null, 2);
+        setV2Card(profileObject(result.character.card)); setDocument(serialized); setSavedDocument(serialized);
+        const versions = await request<{ items: ProfileHistoryItem[] }>(`/api/v1/characters/${encodeURIComponent(characterId)}/history`).catch(() => ({ items: [] }));
+        setHistory(versions.items); onSaved(); notify("V2 角色卡已保存，后续对话将使用新版本");
+      } else {
+        const result = await request<{ document: Record<string, unknown> }>(`/api/v1/profiles/${name}${characterQuery}`, { method: "PUT", body: JSON.stringify(parsed) });
+        const serialized = JSON.stringify(result.document, null, 2); setDocument(serialized); setSavedDocument(serialized); onSaved(); notify("档案已保存，人物名称与后续对话将使用新版本");
+      }
+    } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); }
+    finally { setSaving(false); }
+  };
+  const restorePrevious = async () => {
+    const previous = history[0]; if (!previous || !parsed) return;
+    if (!(await styledConfirm({ title: `恢复修订 ${previous.revision}？`, message: "当前版本仍会保留在历史中，并会生成一个新的修订版本。", confirmLabel: "恢复版本" }))) return;
+    setSaving(true); setError("");
+    try {
+      if (v2Card && name === "assistant" && characterId) {
+        await request(`/api/v1/characters/${encodeURIComponent(characterId)}/restore`, { method: "POST", body: JSON.stringify({ version_id: previous.version_id, expected_revision: Number(parsed.revision || 0) }) });
+      } else {
+        await request(`/api/v1/profiles/${name}/restore${characterQuery}`, { method: "POST", body: JSON.stringify({ version_id: previous.version_id, expected_revision: parsed.revision }) });
+      }
+      notify("已恢复上一版本，并生成新的修订"); await load(); onSaved();
+    } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); }
+    finally { setSaving(false); }
+  };
   const switchProfile = async (id: Role | "state") => { if (document !== savedDocument && !(await styledConfirm({ title: "放弃未保存的修改？", message: "切换档案后，本页尚未保存的编辑会丢失。", confirmLabel: "继续切换", danger: true }))) return; setName(id); };
   return <Modal
     title="人设工作区"
@@ -3974,11 +4111,11 @@ function ProfileDialog({ characterId, initialName, onClose, onDirty, onOpenConne
     </>}
   >
     <div className="profile-tabs persona-workspace-tabs">
-      {([["user", "用户档案"], ["assistant", "AI 档案"], ["state", "运行状态"]] as Array<[Role | "state", string]>).map(([id, label]) => <button className={name === id ? "active" : ""} key={id} onClick={() => switchProfile(id)}>{label}</button>)}
+      {(characterUsesV2 ? [["user", "用户档案"], ["assistant", "V2 角色卡"]] : [["user", "用户档案"], ["assistant", "AI 档案"], ["state", "运行状态"]]).map(([id, label]) => <button className={name === id ? "active" : ""} key={id} onClick={() => switchProfile(id as Role | "state")}>{label}</button>)}
       <button className="profile-connection-tab" onClick={onOpenConnection}>API 连接 <span>↗</span></button>
     </div>
     <div className="profile-editor-toolbar">
-      <p className="advanced-note">用户修改直接生效并生成新 revision；AI 后续写回必须基于该 revision。当前保留 {history.length} 个可恢复版本。</p>
+      <p className="advanced-note">{v2Card ? "这里直接编辑标准 chara_card_v2；名称、性别、关系、角色文本和偏好/任务记忆保存后立即进入后续对话。" : "用户修改直接生效并生成新 revision；AI 后续写回必须基于该 revision。"} 当前保留 {history.length} 个可恢复版本。</p>
       <div><button className={mode === "form" ? "active" : ""} onClick={() => setMode("form")}>表单编辑</button><button className={mode === "json" ? "active" : ""} onClick={() => setMode("json")}>高级 JSON</button></div>
     </div>
     {error && <div className="profile-editor-error" role="alert">{error}</div>}

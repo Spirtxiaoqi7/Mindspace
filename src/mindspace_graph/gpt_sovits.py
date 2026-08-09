@@ -17,9 +17,19 @@ def _load_catalog() -> dict[str, dict[str, Any]]:
         raise RuntimeError("GPT-SoVITS 音色目录为空")
     result: dict[str, dict[str, Any]] = {}
     required = {
-        "id", "label", "character", "franchise", "family", "sample_rate",
-        "component_id", "directory", "gpt_weight", "sovits_weight",
-        "reference_audio", "reference_text", "reference_language",
+        "id",
+        "label",
+        "character",
+        "franchise",
+        "family",
+        "sample_rate",
+        "component_id",
+        "directory",
+        "gpt_weight",
+        "sovits_weight",
+        "reference_audio",
+        "reference_text",
+        "reference_language",
     }
     for voice in voices:
         if not isinstance(voice, dict) or required - voice.keys():
@@ -62,9 +72,7 @@ def voice_paths(model_root: Path, voice_id: str) -> dict[str, Path]:
 
 def voice_is_installed(model_root: Path, voice_id: str) -> bool:
     paths = voice_paths(model_root, voice_id)
-    return all(
-        path.is_file() and path.stat().st_size > 0 for key, path in paths.items() if key != "root"
-    )
+    return all(path.is_file() and path.stat().st_size > 0 for key, path in paths.items() if key != "root")
 
 
 def public_voice_catalog(model_root: Path, active_voice: str) -> dict[str, Any]:
@@ -76,8 +84,12 @@ def public_voice_catalog(model_root: Path, active_voice: str) -> dict[str, Any]:
                 for key, value in voice.items()
                 if key
                 not in {
-                    "directory", "gpt_weight", "sovits_weight", "reference_audio",
-                    "prosody", "download",
+                    "directory",
+                    "gpt_weight",
+                    "sovits_weight",
+                    "reference_audio",
+                    "prosody",
+                    "download",
                 }
             }
             | {

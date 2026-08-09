@@ -10,15 +10,31 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-
 # Delivery presets only: CustomVoice's selected speaker remains fixed.  The
 # finite library gives the model useful range without accepting arbitrary TTS
 # instructions that could leak into speech or destabilize the voice identity.
-VOICE_CUES = frozenset({
-    "neutral", "thoughtful", "warm", "firm", "playful", "intimate",
-    "reflective", "tender", "teasing", "lively", "dramatic", "breathy",
-    "laughing", "sighing", "seductive", "alluring", "moaning", "satisfied",
-})
+VOICE_CUES = frozenset(
+    {
+        "neutral",
+        "thoughtful",
+        "warm",
+        "firm",
+        "playful",
+        "intimate",
+        "reflective",
+        "tender",
+        "teasing",
+        "lively",
+        "dramatic",
+        "breathy",
+        "laughing",
+        "sighing",
+        "seductive",
+        "alluring",
+        "moaning",
+        "satisfied",
+    }
+)
 ADULT_VOICE_CUES = frozenset({"seductive", "alluring", "moaning", "satisfied"})
 DEFAULT_VOICE_CUE = "neutral"
 _VOICE_CUE = re.compile(r"^\s*\[\[voice:([a-z_]+)\]\]\s*", flags=re.IGNORECASE)

@@ -80,9 +80,7 @@ def summary_prompt_view(summary: dict[str, Any], *, adult_mode: bool) -> dict[st
     view.pop("adult_facts", None)
     lane_overviews = dict(view.get("lane_overviews") or {})
     lane_overviews.pop("ADULT", None)
-    view["lane_overviews"] = {
-        key: _redact_adult_overview(str(value)) for key, value in lane_overviews.items()
-    }
+    view["lane_overviews"] = {key: _redact_adult_overview(str(value)) for key, value in lane_overviews.items()}
     view["continuity_overview"] = _redact_adult_overview(str(view.get("continuity_overview") or ""))
     if had_adult_facts and "成人亲密经历" not in view["continuity_overview"]:
         view["continuity_overview"] = "；".join(
@@ -168,9 +166,7 @@ def authoritative_profile_message(profiles: ProfileBundle) -> dict[str, str]:
     }
 
 
-def authoritative_patch_message(
-    receipt: JsonWriteReceipt, revisions: dict[str, int]
-) -> dict[str, str] | None:
+def authoritative_patch_message(receipt: JsonWriteReceipt, revisions: dict[str, int]) -> dict[str, str] | None:
     if not receipt.applied or not receipt.patches:
         return None
     payload = {
@@ -430,10 +426,7 @@ class ContextLedger:
                 );
                 """
             )
-            columns = {
-                str(row["name"])
-                for row in db.execute("PRAGMA table_info(context_events)").fetchall()
-            }
+            columns = {str(row["name"]) for row in db.execute("PRAGMA table_info(context_events)").fetchall()}
             for name, definition in {
                 "source": "TEXT NOT NULL DEFAULT 'server_internal'",
                 "confidence": "REAL NOT NULL DEFAULT 0",
@@ -471,9 +464,7 @@ class ContextLedger:
             return
         with self._connect() as db:
             for usage in usages:
-                value = (
-                    usage.model_dump(mode="json") if hasattr(usage, "model_dump") else dict(usage)
-                )
+                value = usage.model_dump(mode="json") if hasattr(usage, "model_dump") else dict(usage)
                 db.execute(
                     """
                     INSERT INTO model_usage(
@@ -498,9 +489,7 @@ class ContextLedger:
                     ),
                 )
 
-    def enqueue_role_audit(
-        self, *, session_id: str, round_num: int, payload: dict[str, Any]
-    ) -> str:
+    def enqueue_role_audit(self, *, session_id: str, round_num: int, payload: dict[str, Any]) -> str:
         job_id = uuid4().hex
         with self._connect() as db:
             db.execute(
@@ -562,15 +551,12 @@ class ContextLedger:
                 ),
             )
             db.execute(
-                "UPDATE role_audit_jobs SET status='done', lease_until=NULL, "
-                "updated_at=? WHERE job_id=?",
+                "UPDATE role_audit_jobs SET status='done', lease_until=NULL, updated_at=? WHERE job_id=?",
                 (_now(), job["job_id"]),
             )
             summary = str(value.get("recent_event_summary") or "").strip()
             progression = str(value.get("event_progression") or "").strip()
-            open_threads = [
-                str(item).strip() for item in value.get("open_threads", []) if str(item).strip()
-            ][:3]
+            open_threads = [str(item).strip() for item in value.get("open_threads", []) if str(item).strip()][:3]
             correction = ""
             if (
                 not bool(value.get("is_consistent", True))
@@ -633,13 +619,10 @@ class ContextLedger:
 
     def fail_role_audit(self, job_id: str, error: str) -> None:
         with self._connect() as db:
-            row = db.execute(
-                "SELECT attempts FROM role_audit_jobs WHERE job_id=?", (job_id,)
-            ).fetchone()
+            row = db.execute("SELECT attempts FROM role_audit_jobs WHERE job_id=?", (job_id,)).fetchone()
             terminal = row is not None and int(row["attempts"]) >= 3
             db.execute(
-                "UPDATE role_audit_jobs SET status=?, lease_until=NULL, last_error=?, updated_at=? "
-                "WHERE job_id=?",
+                "UPDATE role_audit_jobs SET status=?, lease_until=NULL, last_error=?, updated_at=? WHERE job_id=?",
                 ("failed" if terminal else "queued", error[:1000], _now(), job_id),
             )
 
@@ -651,23 +634,17 @@ class ContextLedger:
         return max(1, (byte_count + 3) // 4)
 
     def _ensure_session(self, db: sqlite3.Connection, session_id: str) -> sqlite3.Row:
-        row = db.execute(
-            "SELECT * FROM context_sessions WHERE session_id = ?", (session_id,)
-        ).fetchone()
+        row = db.execute("SELECT * FROM context_sessions WHERE session_id = ?", (session_id,)).fetchone()
         if row is not None:
             return row
         db.execute(
             "INSERT INTO context_sessions(session_id, updated_at) VALUES(?, ?)",
             (session_id, _now()),
         )
-        return db.execute(
-            "SELECT * FROM context_sessions WHERE session_id = ?", (session_id,)
-        ).fetchone()
+        return db.execute("SELECT * FROM context_sessions WHERE session_id = ?", (session_id,)).fetchone()
 
     def _next_sequence(self, db: sqlite3.Connection, session_id: str) -> int:
-        row = db.execute(
-            "SELECT next_sequence FROM context_sessions WHERE session_id = ?", (session_id,)
-        ).fetchone()
+        row = db.execute("SELECT next_sequence FROM context_sessions WHERE session_id = ?", (session_id,)).fetchone()
         sequence = int(row["next_sequence"])
         db.execute(
             "UPDATE context_sessions SET next_sequence = ?, updated_at = ? WHERE session_id = ?",
@@ -748,8 +725,7 @@ class ContextLedger:
         cutoff_sequence: int = 0,
     ) -> int:
         db.execute(
-            "UPDATE context_epochs SET status = 'superseded' "
-            "WHERE session_id = ? AND status = 'active'",
+            "UPDATE context_epochs SET status = 'superseded' WHERE session_id = ? AND status = 'active'",
             (session_id,),
         )
         cursor = db.execute(
@@ -837,9 +813,7 @@ class ContextLedger:
                     history=history,
                     rewrite_version=int(session["rewrite_version"]),
                 )
-                epoch = db.execute(
-                    "SELECT * FROM context_epochs WHERE epoch_id = ?", (epoch_id,)
-                ).fetchone()
+                epoch = db.execute("SELECT * FROM context_epochs WHERE epoch_id = ?", (epoch_id,)).fetchone()
             events = db.execute(
                 """
                 SELECT sequence, kind, role, content, metadata_json, ui_visible
@@ -850,22 +824,14 @@ class ContextLedger:
             ).fetchall()
             dialogue_events = _recent_dialogue_events(events, allow_adult=adult_mode)
             prefix_messages = json.loads(epoch["base_messages_json"])
-            stored_summary = (
-                json.loads(epoch["compacted_summary_json"])
-                if epoch["compacted_summary_json"]
-                else None
-            )
+            stored_summary = json.loads(epoch["compacted_summary_json"]) if epoch["compacted_summary_json"] else None
             if stored_summary and len(prefix_messages) > 3:
                 prefix_messages[3] = _summary_message(stored_summary, adult_mode=adult_mode)
-            dialogue_messages = [
-                {"role": row["role"], "content": row["content"]} for row in dialogue_events
-            ]
+            dialogue_messages = [{"role": row["role"], "content": row["content"]} for row in dialogue_events]
             messages = [*prefix_messages, *dialogue_messages]
             head = max((int(row["sequence"]) for row in events), default=0)
             estimated_tokens = self.estimate_tokens(messages)
-            emergency_truncated = bool(
-                self.hard_token_limit and estimated_tokens > self.hard_token_limit
-            )
+            emergency_truncated = bool(self.hard_token_limit and estimated_tokens > self.hard_token_limit)
             if emergency_truncated:
                 # Never synchronously wait for a summarization model. Build a
                 # temporary request view while preserving the canonical ledger
@@ -873,14 +839,11 @@ class ContextLedger:
                 bounded_base = expected_base
                 old_base = json.loads(epoch["base_messages_json"])
                 if len(old_base) > 3 and any(
-                    label in old_base[3].get("content", "")
-                    for label in ("【历史压缩摘要】", "【当前连续性包】")
+                    label in old_base[3].get("content", "") for label in ("【历史压缩摘要】", "【当前连续性包】")
                 ):
                     bounded_base = [
                         *expected_base,
-                        _summary_message(stored_summary, adult_mode=adult_mode)
-                        if stored_summary
-                        else old_base[3],
+                        _summary_message(stored_summary, adult_mode=adult_mode) if stored_summary else old_base[3],
                     ]
                 warning = {
                     "role": "user",
@@ -891,8 +854,7 @@ class ContextLedger:
                 }
                 budget = max(
                     256,
-                    int(self.hard_token_limit or estimated_tokens)
-                    - self.estimate_tokens([*bounded_base, warning]),
+                    int(self.hard_token_limit or estimated_tokens) - self.estimate_tokens([*bounded_base, warning]),
                 )
                 selected: list[dict[str, str]] = []
                 used = 0
@@ -962,21 +924,13 @@ class ContextLedger:
                     retrieval_eligible=bool(item.get("retrieval_eligible", False)),
                     persistence_eligible=bool(item.get("persistence_eligible", True)),
                     source=(str(item["source"]) if item.get("source") is not None else None),
-                    confidence=(
-                        float(item["confidence"]) if item.get("confidence") is not None else None
-                    ),
-                    visibility=(
-                        str(item["visibility"]) if item.get("visibility") is not None else None
-                    ),
+                    confidence=(float(item["confidence"]) if item.get("confidence") is not None else None),
+                    visibility=(str(item["visibility"]) if item.get("visibility") is not None else None),
                 )
                 if sequence:
                     sequences.append(sequence)
             turn_metadata = next(
-                (
-                    dict(item.get("metadata") or {})
-                    for item in pending_events
-                    if item.get("kind") == "current_user"
-                ),
+                (dict(item.get("metadata") or {}) for item in pending_events if item.get("kind") == "current_user"),
                 {},
             )
             sequences.append(
@@ -1046,9 +1000,7 @@ class ContextLedger:
         if not request_id:
             return None
         with self._connect() as db:
-            row = db.execute(
-                "SELECT * FROM turn_commits WHERE request_id=?", (request_id,)
-            ).fetchone()
+            row = db.execute("SELECT * FROM turn_commits WHERE request_id=?", (request_id,)).fetchone()
         return dict(row) if row is not None else None
 
     def take_compaction_evaluations(self, limit: int = 32) -> list[str]:
@@ -1085,15 +1037,12 @@ class ContextLedger:
         with self._connect() as db:
             if not db.in_transaction:
                 db.execute("BEGIN IMMEDIATE")
-            session = db.execute(
-                "SELECT * FROM context_sessions WHERE session_id = ?", (session_id,)
-            ).fetchone()
+            session = db.execute("SELECT * FROM context_sessions WHERE session_id = ?", (session_id,)).fetchone()
             if session is None or session["active_epoch_id"] is None:
                 return None
             epoch_id = int(session["active_epoch_id"])
             epoch = db.execute(
-                "SELECT base_messages_json, compacted_summary_json FROM context_epochs "
-                "WHERE epoch_id = ?",
+                "SELECT base_messages_json, compacted_summary_json FROM context_epochs WHERE epoch_id = ?",
                 (epoch_id,),
             ).fetchone()
             base = json.loads(epoch["base_messages_json"])
@@ -1120,13 +1069,9 @@ class ContextLedger:
             maximum_round = max(user_rounds, default=0)
             has_summary = bool(epoch["compacted_summary_json"])
             bootstrap_due = bool(
-                not has_summary
-                and maximum_round >= bootstrap_rounds
-                and len(user_rows) > retain_recent_turns
+                not has_summary and maximum_round >= bootstrap_rounds and len(user_rows) > retain_recent_turns
             )
-            segment_due = bool(
-                has_summary and len(user_rows) >= retain_recent_turns + max(1, segment_turns)
-            )
+            segment_due = bool(has_summary and len(user_rows) >= retain_recent_turns + max(1, segment_turns))
             lane_transition_due = bool(
                 has_summary
                 and maximum_round >= bootstrap_rounds
@@ -1135,14 +1080,12 @@ class ContextLedger:
                 and lanes[-1] != lanes[-2]
             )
             capacity_due = bool(
-                self.estimate_tokens(messages) >= int(context_window * soft_ratio)
-                or patch_count >= patch_limit
+                self.estimate_tokens(messages) >= int(context_window * soft_ratio) or patch_count >= patch_limit
             )
             if not (bootstrap_due or segment_due or lane_transition_due or capacity_due):
                 return None
             existing = db.execute(
-                "SELECT job_id FROM compaction_jobs "
-                "WHERE session_id = ? AND status IN ('queued', 'running') LIMIT 1",
+                "SELECT job_id FROM compaction_jobs WHERE session_id = ? AND status IN ('queued', 'running') LIMIT 1",
                 (session_id,),
             ).fetchone()
             if existing:
@@ -1217,8 +1160,7 @@ class ContextLedger:
     def next_compaction_delay(self) -> float | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT not_before FROM compaction_jobs "
-                "WHERE status = 'queued' ORDER BY not_before LIMIT 1"
+                "SELECT not_before FROM compaction_jobs WHERE status = 'queued' ORDER BY not_before LIMIT 1"
             ).fetchone()
         if row is None:
             return None
@@ -1262,19 +1204,11 @@ class ContextLedger:
                         "companion_lane": metadata.get("companion_lane", "DAILY"),
                     }
                 )
-            message_ids = [
-                str(item["message_id"])
-                for item in dialogue
-                if str(item.get("message_id") or "").strip()
-            ]
-            rounds = [
-                int(item["round"]) for item in dialogue if str(item.get("round") or "").isdigit()
-            ]
+            message_ids = [str(item["message_id"]) for item in dialogue if str(item.get("message_id") or "").strip()]
+            rounds = [int(item["round"]) for item in dialogue if str(item.get("round") or "").isdigit()]
             return {
                 "previous_summary": (
-                    json.loads(epoch["compacted_summary_json"])
-                    if epoch and epoch["compacted_summary_json"]
-                    else None
+                    json.loads(epoch["compacted_summary_json"]) if epoch and epoch["compacted_summary_json"] else None
                 ),
                 "cutoff_sequence": job.cutoff_sequence,
                 "source": {
@@ -1298,9 +1232,7 @@ class ContextLedger:
         with self._connect() as db:
             if not db.in_transaction:
                 db.execute("BEGIN IMMEDIATE")
-            session = db.execute(
-                "SELECT * FROM context_sessions WHERE session_id = ?", (job.session_id,)
-            ).fetchone()
+            session = db.execute("SELECT * FROM context_sessions WHERE session_id = ?", (job.session_id,)).fetchone()
             if (
                 session is None
                 or int(session["active_epoch_id"] or 0) != job.source_epoch_id
@@ -1311,9 +1243,7 @@ class ContextLedger:
                     (_now(), job.job_id),
                 )
                 return False
-            old_epoch = db.execute(
-                "SELECT * FROM context_epochs WHERE epoch_id = ?", (job.source_epoch_id,)
-            ).fetchone()
+            old_epoch = db.execute("SELECT * FROM context_epochs WHERE epoch_id = ?", (job.source_epoch_id,)).fetchone()
             old_base = json.loads(old_epoch["base_messages_json"])
             static_messages = old_base[:2]
             summary_message = _summary_message(summary, adult_mode=False)
@@ -1375,8 +1305,7 @@ class ContextLedger:
                 (job.source_epoch_id,),
             )
             db.execute(
-                "UPDATE context_sessions SET active_epoch_id = ?, updated_at = ? "
-                "WHERE session_id = ?",
+                "UPDATE context_sessions SET active_epoch_id = ?, updated_at = ? WHERE session_id = ?",
                 (new_epoch, _now(), job.session_id),
             )
             db.execute(
@@ -1388,9 +1317,7 @@ class ContextLedger:
 
     def fail_compaction(self, job_id: str, error: str, *, retry: bool = True) -> None:
         with self._connect() as db:
-            row = db.execute(
-                "SELECT attempts FROM compaction_jobs WHERE job_id = ?", (job_id,)
-            ).fetchone()
+            row = db.execute("SELECT attempts FROM compaction_jobs WHERE job_id = ?", (job_id,)).fetchone()
             terminal = row is not None and int(row["attempts"]) >= 3
             status = "queued" if retry and not terminal else "failed"
             retry_at = (datetime.now(UTC) + timedelta(seconds=30)).isoformat()
@@ -1404,16 +1331,13 @@ class ContextLedger:
         with self._connect() as db:
             if not db.in_transaction:
                 db.execute("BEGIN IMMEDIATE")
-            session = db.execute(
-                "SELECT * FROM context_sessions WHERE session_id = ?", (session_id,)
-            ).fetchone()
+            session = db.execute("SELECT * FROM context_sessions WHERE session_id = ?", (session_id,)).fetchone()
             if session is None or session["active_epoch_id"] is None:
                 return
             rewrite_version = int(session["rewrite_version"]) + 1
             epoch_id = int(session["active_epoch_id"])
             db.execute(
-                "UPDATE context_sessions SET rewrite_version = ?, updated_at = ? "
-                "WHERE session_id = ?",
+                "UPDATE context_sessions SET rewrite_version = ?, updated_at = ? WHERE session_id = ?",
                 (rewrite_version, _now(), session_id),
             )
             db.execute(
@@ -1472,24 +1396,17 @@ class ContextLedger:
 
     def diagnostics(self, session_id: str) -> dict[str, Any]:
         with self._connect() as db:
-            session = db.execute(
-                "SELECT * FROM context_sessions WHERE session_id = ?", (session_id,)
-            ).fetchone()
+            session = db.execute("SELECT * FROM context_sessions WHERE session_id = ?", (session_id,)).fetchone()
             if session is None:
                 return {"initialized": False}
             epoch_id = int(session["active_epoch_id"] or 0)
-            epoch = db.execute(
-                "SELECT * FROM context_epochs WHERE epoch_id = ?", (epoch_id,)
-            ).fetchone()
+            epoch = db.execute("SELECT * FROM context_epochs WHERE epoch_id = ?", (epoch_id,)).fetchone()
             events = db.execute(
-                "SELECT role, content FROM context_events WHERE epoch_id = ? "
-                "AND model_visible = 1 ORDER BY sequence",
+                "SELECT role, content FROM context_events WHERE epoch_id = ? AND model_visible = 1 ORDER BY sequence",
                 (epoch_id,),
             ).fetchall()
             total_events = int(
-                db.execute(
-                    "SELECT COUNT(*) FROM context_events WHERE epoch_id=?", (epoch_id,)
-                ).fetchone()[0]
+                db.execute("SELECT COUNT(*) FROM context_events WHERE epoch_id=?", (epoch_id,)).fetchone()[0]
             )
             base = json.loads(epoch["base_messages_json"]) if epoch else []
             messages = [
@@ -1497,8 +1414,7 @@ class ContextLedger:
                 *({"role": row["role"], "content": row["content"]} for row in events),
             ]
             jobs = db.execute(
-                "SELECT status, COUNT(*) AS count FROM compaction_jobs "
-                "WHERE session_id = ? GROUP BY status",
+                "SELECT status, COUNT(*) AS count FROM compaction_jobs WHERE session_id = ? GROUP BY status",
                 (session_id,),
             ).fetchall()
             usage = db.execute(
@@ -1523,8 +1439,6 @@ class ContextLedger:
                     "prompt_tokens": prompt_tokens,
                     "cached_tokens": int(usage["cached_tokens"]),
                     "completion_tokens": int(usage["completion_tokens"]),
-                    "cache_hit_ratio": (
-                        int(usage["cached_tokens"]) / prompt_tokens if prompt_tokens else None
-                    ),
+                    "cache_hit_ratio": (int(usage["cached_tokens"]) / prompt_tokens if prompt_tokens else None),
                 },
             }

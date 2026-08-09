@@ -44,15 +44,13 @@ from mindspace_graph.product_config import ProductConfigStore
 from mindspace_graph.product_database import ProductDatabase
 from mindspace_graph.prompt_inspection import PromptInspectionStore
 from mindspace_graph.role_audit import RoleAuditService
-from mindspace_graph.roleplay import effective_roleplay_max_tokens, effective_roleplay_temperature
 from mindspace_graph.role_runtime import build_runtime_role_state
+from mindspace_graph.roleplay import effective_roleplay_max_tokens, effective_roleplay_temperature
 from mindspace_graph.settings import AppSettings
 from mindspace_graph.shared_chapters import SharedChapterService
 
 RETRIEVAL_INDEX_ONLY_ROUNDS = 15
-_EXPLICIT_RECALL = re.compile(
-    r"(?:查(?:一下)?知识库|检索知识库|回忆(?:一下)?|你还记得|帮我想起|找回以前)"
-)
+_EXPLICIT_RECALL = re.compile(r"(?:查(?:一下)?知识库|检索知识库|回忆(?:一下)?|你还记得|帮我想起|找回以前)")
 NODE_LABELS = {
     "validate_request": "校验请求",
     "load_context": "加载会话与档案",
@@ -94,10 +92,7 @@ class StreamEnvelopeFactory:
             "timestamp": datetime.now(UTC).isoformat(),
             "data": data or {},
         }
-        return (
-            f"id: {self.sequence}\nevent: {event}\n"
-            f"data: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
-        )
+        return f"id: {self.sequence}\nevent: {event}\ndata: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
 
 
 class BufferedStreamRun:
@@ -212,9 +207,7 @@ class ConversationService:
         if callable(close):
             close()
         self.dependencies.llm = (
-            OpenAICompatibleLanguageModel()
-            if self.settings.llm_mode == "openai"
-            else DeterministicLanguageModel()
+            OpenAICompatibleLanguageModel() if self.settings.llm_mode == "openai" else DeterministicLanguageModel()
         )
         if self.dependencies.context is not None:
             self.dependencies.context.configure_hard_limit(
@@ -238,11 +231,7 @@ class ConversationService:
 
     async def aclose(self) -> None:
         await self.memory_writeback.drain()
-        tasks = [
-            run.task
-            for run in self._stream_runs.values()
-            if run.task is not None and not run.task.done()
-        ]
+        tasks = [run.task for run in self._stream_runs.values() if run.task is not None and not run.task.done()]
         tasks.extend(task for task in self._retrieval_warmups.values() if not task.done())
         for task in tasks:
             task.cancel()
@@ -265,9 +254,7 @@ class ConversationService:
         characters = self.dependencies.characters
         if characters is None:
             raise RuntimeError("character repository is unavailable")
-        character = (
-            characters.get(request.character_id) if request.character_id else characters.default()
-        )
+        character = characters.get(request.character_id) if request.character_id else characters.default()
         if character.get("status") != "active":
             raise ValueError("selected character is archived")
         character_id = str(character["character_id"])
@@ -315,17 +302,14 @@ class ConversationService:
                 request,
                 self.dependencies.sessions.load_all(request.session_id),
             ),
-            max_tokens=effective_roleplay_max_tokens(
-                request, self.dependencies.sessions.load_all(request.session_id)
-            ),
+            max_tokens=effective_roleplay_max_tokens(request, self.dependencies.sessions.load_all(request.session_id)),
         )
         retrieval_key = (request.session_id, character_id)
         explicit_recall = bool(_EXPLICIT_RECALL.search(request.message))
         default_retrieval_open = request.round > RETRIEVAL_INDEX_ONLY_ROUNDS
         index_ready = retrieval_key in self._retrieval_ready
         retrieval_ready = bool(
-            not request.retrieval.rag_enabled
-            or (index_ready and (default_retrieval_open or explicit_recall))
+            not request.retrieval.rag_enabled or (index_ready and (default_retrieval_open or explicit_recall))
         )
         if retrieval_ready:
             deferred_reason = ""
@@ -346,8 +330,12 @@ class ConversationService:
                 "voice_tts_provider": self.settings.tts_provider,
                 "character_id": character_id,
                 "session_mode": session_mode,
-                "user_name": str(session_role_state.get("user_name") or user_identity.get("preferred_name") or request.user_name),
-                "character_name": str(session_role_state.get("character_name") or ai_identity.get("name") or request.character_name),
+                "user_name": str(
+                    session_role_state.get("user_name") or user_identity.get("preferred_name") or request.user_name
+                ),
+                "character_name": str(
+                    session_role_state.get("character_name") or ai_identity.get("name") or request.character_name
+                ),
                 "system_prompt": str(character.get("system_prompt") or ""),
                 "activity_context": activity_context,
                 "scene_context": scene_context,
@@ -453,9 +441,14 @@ class ConversationService:
         async for event in self._subscribe_stream(run, after_sequence):
             yield event
 
-    async def resume_stream(
-        self, request_id: str, *, after_sequence: int = 0
-    ) -> AsyncIterator[str]:
+    async def prepare_stream(self, request: ChatRequest, request_id: str | None = None) -> str:
+        """Create or validate a stream run before HTTP commits an SSE response."""
+
+        resolved_request_id = request_id or uuid4().hex
+        await self._ensure_stream_run(request, resolved_request_id)
+        return resolved_request_id
+
+    async def resume_stream(self, request_id: str, *, after_sequence: int = 0) -> AsyncIterator[str]:
         async with self._stream_runs_lock:
             run = self._stream_runs.get(request_id)
         if run is None:
@@ -497,11 +490,10 @@ class ConversationService:
         """创建或复用运行，并拒绝 request_id 被绑定到另一轮。"""
 
         async with self._stream_runs_lock:
+            request_digest = self._request_digest(request)
             now = time.monotonic()
             expired = [
-                key
-                for key, value in self._stream_runs.items()
-                if value.completed and now - value.updated_at > 600
+                key for key, value in self._stream_runs.items() if value.completed and now - value.updated_at > 600
             ]
             for key in expired:
                 self._stream_runs.pop(key, None)
@@ -510,27 +502,31 @@ class ConversationService:
                 if (
                     existing.request.session_id != request.session_id
                     or existing.request.round != request.round
+                    or self._request_digest(existing.request) != request_digest
                 ):
-                    raise ValueError("request id is already bound to another turn")
+                    raise ValueError("request id is already bound to a different request")
                 return existing
             if self.dependencies.database is not None:
                 durable = self.dependencies.database.create_conversation_run(
                     run_id=request_id,
                     session_id=request.session_id,
                     round_num=request.round,
+                    request_digest=request_digest,
                 )
                 if str(durable.get("status")) != "running":
                     raise ValueError("request id belongs to a completed durable run")
             run = BufferedStreamRun(request_id, request)
             self._stream_runs[request_id] = run
-            run.task = asyncio.create_task(
-                self._produce_stream(run), name=f"mindspace-run-{request_id[:12]}"
-            )
+            run.task = asyncio.create_task(self._produce_stream(run), name=f"mindspace-run-{request_id[:12]}")
             return run
 
-    async def _publish_stream(
-        self, run: BufferedStreamRun, sequence: int, payload: str, *, terminal: str = ""
-    ) -> None:
+    @staticmethod
+    def _request_digest(request: ChatRequest) -> str:
+        """Bind one request id to the complete normalized client turn."""
+
+        return request.idempotency_digest()
+
+    async def _publish_stream(self, run: BufferedStreamRun, sequence: int, payload: str, *, terminal: str = "") -> None:
         event_name = ""
         event_data: dict[str, Any] = {}
         for line in payload.splitlines():
@@ -578,9 +574,7 @@ class ConversationService:
                 terminal=bool(terminal),
             )
 
-    async def _subscribe_stream(
-        self, run: BufferedStreamRun, after_sequence: int
-    ) -> AsyncIterator[str]:
+    async def _subscribe_stream(self, run: BufferedStreamRun, after_sequence: int) -> AsyncIterator[str]:
         """从 after_sequence 后重放，再跟随新事件直到终态。"""
 
         cursor = max(0, int(after_sequence))
@@ -658,9 +652,7 @@ class ConversationService:
                     await self._publish_stream(run, events.sequence, payload)
                 elif part_type == "updates" and isinstance(data, dict):
                     for _node, values in data.items():
-                        if isinstance(values, dict) and isinstance(
-                            values.get("response"), ChatResponse
-                        ):
+                        if isinstance(values, dict) and isinstance(values.get("response"), ChatResponse):
                             final = values["response"]
             if final is None:
                 payload = events.sse("run.error", {"error": "missing final response"})
@@ -690,9 +682,7 @@ class ConversationService:
             await self._publish_stream(run, events.sequence, payload, terminal="run.interrupted")
             raise
         except Exception as exc:  # noqa: BLE001 - converted to a stable API event
-            self.dependencies.audit.record(
-                "stream_failed", {"request_id": request_id, "error": str(exc)}
-            )
+            self.dependencies.audit.record("stream_failed", {"request_id": request_id, "error": str(exc)})
             payload = events.sse("run.error", {"error": str(exc)})
             await self._publish_stream(run, events.sequence, payload, terminal="run.error")
         finally:
@@ -731,9 +721,7 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
         avatar_config_path=settings.runtime_dir / "data" / "avatars" / "config.json",
     )
     profiles.bind_characters(characters)
-    context = ContextLedger(
-        settings.runtime_dir / "data" / "context" / "context.db", database=database
-    )
+    context = ContextLedger(settings.runtime_dir / "data" / "context" / "context.db", database=database)
     context.configure_hard_limit(
         context_window=settings.llm_context_window,
         hard_ratio=settings.context_compaction_hard_ratio,
@@ -745,9 +733,7 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
         entity_registry=entities,
     )
     memory.bind_legacy_character(str(characters.default()["character_id"]))
-    memory_service = StructuredMemoryService(
-        profiles, memory, database=database, entity_registry=entities
-    )
+    memory_service = StructuredMemoryService(profiles, memory, database=database, entity_registry=entities)
     memory.migrate_entity_identities()
     knowledge = LocalKnowledgeRetriever(
         settings.runtime_dir / "data" / "knowledge.json",
@@ -767,11 +753,7 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
         audit=audit,
     )
     emotion = DisabledEmotionCoordinator()
-    llm = (
-        OpenAICompatibleLanguageModel()
-        if settings.llm_mode == "openai"
-        else DeterministicLanguageModel()
-    )
+    llm = OpenAICompatibleLanguageModel() if settings.llm_mode == "openai" else DeterministicLanguageModel()
     chapters = SharedChapterService(
         database,
         characters=characters,

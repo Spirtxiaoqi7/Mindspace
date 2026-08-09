@@ -35,9 +35,7 @@ def _bundle_key() -> bytes:
     # This is capability obfuscation, not a password vault.  Keep the key
     # derivation away from the resource so the package has no plaintext source
     # document, while remaining self-contained for offline installation.
-    return hashlib.sha256(
-        b"Mindspace" + bytes((82, 49, 56, 45, 108, 105, 98)) + b"local-readonly-v1"
-    ).digest()
+    return hashlib.sha256(b"Mindspace" + bytes((82, 49, 56, 45, 108, 105, 98)) + b"local-readonly-v1").digest()
 
 
 def _keystream(length: int, nonce: bytes) -> bytes:

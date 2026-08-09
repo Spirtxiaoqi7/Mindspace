@@ -1,5 +1,17 @@
 import type { StreamEnvelope } from "./types";
 
+export class HttpError extends Error {
+  readonly status: number;
+  readonly payload: Record<string, unknown>;
+
+  constructor(status: number, payload: Record<string, unknown>) {
+    super(String(payload.detail || payload.error || `请求失败 ${status}`));
+    this.name = "HttpError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
 export async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -10,7 +22,7 @@ export async function request<T>(url: string, init: RequestInit = {}): Promise<T
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.detail || payload.error || `请求失败 ${response.status}`);
+    throw new HttpError(response.status, payload);
   }
   return payload as T;
 }

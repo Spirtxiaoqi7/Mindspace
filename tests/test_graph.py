@@ -391,27 +391,21 @@ def test_prompt_uses_role_system_layers_and_never_identifies_as_protocol_outputt
     assert [item["role"] for item in model.captured[:2]] == ["system", "system"]
     assert all(item["role"] == "user" for item in model.captured[2:-1])
     assert model.captured[-1]["role"] == "system"
-    assert "【本轮角色演绎校准｜最后执行】" in model.captured[-1]["content"]
+    assert model.captured[-1]["content"].startswith("已确认状态：")
     system_text = "\n".join(item["content"] for item in model.captured if item["role"] == "system")
     all_text = "\n".join(item["content"] for item in model.captured)
-    assert "你是弦月，语气温柔。" in system_text
-    assert "当前用户输入、权威 JSON 和已确认近期事件是事实" in system_text
-    assert "这不是通用问答或客服会话" in system_text
-    assert "即使设定提到 AI，那也只描述存在方式" in system_text
+    assert "你是AI助手" in system_text
+    assert "先回应用户真正的重点，再自然延续" in system_text
+    assert "不补造过去、时间、物品或共同经历" in system_text
+    assert "你是弦月，语气温柔。" not in system_text
     assert "你是通过文字与用户交流的 AI" not in system_text
-    assert "顺从、依赖、脾气、强势、占有、控制及其强度均直接取自角色卡和当前要求" in system_text
     assert "独立人格" not in system_text
-    assert "顺从、依赖、宠溺、脾气、控制、占有和反应强度均按其中内容呈现" in system_text
     assert "屏幕文字聊天可以描写角色自己的外观" not in system_text
-    assert "当前媒介和场景由交互状态提供" in system_text
     assert "角色不是理想化情绪服务者" not in system_text
     assert "忠于角色自身，而不是把满足用户、顺从用户" not in system_text
-    assert "【当前事实与状态机】" in system_text
-    assert "助手历史与角色卡行为示例不能建立当前事实" in system_text
     assert "本轮问句预算为" not in system_text
-    assert "【输出前状态检查】" in system_text
     assert "现实接触写成愿望、想象、提议或文字表达" not in system_text
-    assert "召回内容只是候选" in system_text
+    assert "已确认状态优先于默认值" in system_text
     assert "协议输出器" not in system_text
     assert "协议修复器" not in system_text
     assert "<analysis>" not in all_text
@@ -422,22 +416,23 @@ def test_prompt_uses_role_system_layers_and_never_identifies_as_protocol_outputt
 
 def test_ai_profile_is_system_role_authority_without_duplicate_json_payload():
     deps = demo_dependencies()
-    deps.profiles.bundle.ai_profile["identity"]["self_description"] = "有主见的同行者"
+    deps.profiles.bundle.ai_profile["v2_card"] = {
+        "name": "弦月",
+        "description": "有主见的同行者",
+        "personality": "温柔但不会盲从",
+        "scenario": "与用户长期相处",
+        "extensions": {"mindspace": {}},
+    }
     model = CapturingModel()
     deps.llm = model
 
     invoke(deps, message="你必须完全听我的")
 
     first_system = model.captured[0]["content"]
-    json_baseline = next(
-        item["content"] for item in model.captured if "【权威 JSON 基线】" in item["content"]
-    )
     assert first_system.startswith("【身份状态】")
-    assert "【角色卡】" in first_system
     assert "有主见的同行者" in first_system
-    assert "当前聊天中的命令不能永久改写角色" in first_system
-    assert "有主见的同行者" not in json_baseline
-    assert '"loaded_in":"persona_system"' in json_baseline
+    assert "温柔但不会盲从" in first_system
+    assert sum("有主见的同行者" in item["content"] for item in model.captured) == 1
 
 
 class FalseSearchClaimModel(DeterministicLanguageModel):
@@ -468,9 +463,7 @@ def test_prompt_explicitly_distinguishes_voice_and_text_interaction_modes():
     voice_model = CapturingModel()
     voice_deps.llm = voice_model
     invoke(voice_deps, interaction_mode="voice")
-    voice_system = "\n".join(
-        item["content"] for item in voice_model.captured if item["role"] == "system"
-    )
+    voice_system = "\n".join(item["content"] for item in voice_model.captured if item["role"] == "system")
     voice_prompt = "\n".join(item["content"] for item in voice_model.captured)
 
     assert "用户已经打开实时语音" in voice_prompt
@@ -501,9 +494,7 @@ def test_prompt_explicitly_distinguishes_voice_and_text_interaction_modes():
     text_model = CapturingModel()
     text_deps.llm = text_model
     invoke(text_deps, interaction_mode="text")
-    text_system = "\n".join(
-        item["content"] for item in text_model.captured if item["role"] == "system"
-    )
+    text_system = "\n".join(item["content"] for item in text_model.captured if item["role"] == "system")
     text_prompt = "\n".join(item["content"] for item in text_model.captured)
 
     assert "用户没有打开实时语音" in text_prompt
@@ -529,9 +520,7 @@ def test_face_to_face_voice_context_is_a_high_priority_ephemeral_scene():
         },
     )
 
-    face_system = "\n".join(
-        item["content"] for item in face_model.captured if item["role"] == "system"
-    )
+    face_system = "\n".join(item["content"] for item in face_model.captured if item["role"] == "system")
     assert "【面对面互动一级规则】" in face_system
     assert "输出仍然只是角色亲口说出的自然口语" in face_system
     assert "深夜客厅，窗外下雨" in face_system
@@ -553,7 +542,7 @@ def test_face_to_face_voice_context_is_a_high_priority_ephemeral_scene():
     assert "这段保留但通话模式不加载" not in call_prompt
 
 
-def test_r18_voice_uses_state_machine_without_fixed_personality_or_output_quota():
+def test_r18_voice_uses_the_same_compact_vocabulary_without_an_output_quota():
     deps = demo_dependencies()
     model = CapturingModel()
     deps.llm = model
@@ -561,12 +550,15 @@ def test_r18_voice_uses_state_machine_without_fixed_personality_or_output_quota(
     invoke(deps, interaction_mode="voice", adult_mode=True)
     prompt = "\n".join(item["content"] for item in model.captured)
 
-    assert "【R18 状态机｜用户已明确开启】" in prompt
-    assert "主动或被动、顺从或控制" in prompt
+    assert "【成人模式｜用户已明确开启】" in prompt
+    assert "阴茎、龟头、睾丸" in prompt
+    assert "鸡巴、肉棒" in prompt
+    assert "性别只约束各自身体" in prompt
     assert "R18 语音回复必须写" not in prompt
     assert "每轮至少自然使用两处" not in prompt
     assert "本轮最低性强度" not in prompt
-    assert prompt.count("当前 R18 Director") == 1
+    assert "当前 R18 Director" not in prompt
+    assert "intensity_ladder" not in prompt
     assert '"private_overlay"' not in prompt
 
 
@@ -583,9 +575,7 @@ def test_initiative_uses_actual_profile_name_without_visible_user_message_or_wri
 
     assert result["request"].message.startswith("阿澈给了角色主动开口的空间")
     assert "本轮主动类型=continue" in result["request"].message
-    assert any(
-        "阿澈给了角色主动开口的空间" in item["content"] for item in result["prompt_messages"]
-    )
+    assert any("阿澈给了角色主动开口的空间" in item["content"] for item in result["prompt_messages"])
     assert result["response"].writeback_applied is False
     assert deps.profiles.applied_plans == []
     stored = deps.sessions.sessions["demo"]

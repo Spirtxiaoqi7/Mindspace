@@ -139,10 +139,7 @@ def test_stream_retries_connect_handshake_before_first_token():
             )
         return httpx.Response(
             200,
-            text=(
-                'data: {"choices":[{"delta":{"content":"恢复"}}]}\n\n'
-                "data: [DONE]\n\n"
-            ),
+            text=('data: {"choices":[{"delta":{"content":"恢复"}}]}\n\ndata: [DONE]\n\n'),
             headers={"Content-Type": "text/event-stream"},
         )
 
@@ -188,10 +185,7 @@ def test_visible_stream_falls_back_when_compatibility_fields_are_rejected():
             return httpx.Response(400, json={"error": "unknown field"})
         return httpx.Response(
             200,
-            text=(
-                'data: {"choices":[{"delta":{"content":"兼容"},"finish_reason":"stop"}]}\n\n'
-                "data: [DONE]\n\n"
-            ),
+            text=('data: {"choices":[{"delta":{"content":"兼容"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'),
             headers={"Content-Type": "text/event-stream"},
         )
 
@@ -224,10 +218,7 @@ def test_visible_stream_retries_one_reasoning_only_result_before_ui_output():
             )
         return httpx.Response(
             200,
-            text=(
-                'data: {"choices":[{"delta":{"content":"重试正文"},"finish_reason":"stop"}]}\n\n'
-                "data: [DONE]\n\n"
-            ),
+            text=('data: {"choices":[{"delta":{"content":"重试正文"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'),
             headers={"Content-Type": "text/event-stream"},
         )
 

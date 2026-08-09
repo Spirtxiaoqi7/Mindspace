@@ -30,9 +30,7 @@ class JsonlAudit:
     def _redact(cls, value: Any) -> Any:
         if isinstance(value, dict):
             return {
-                key: "***"
-                if key.lower() in {"api_key", "authorization", "token"}
-                else cls._redact(item)
+                key: "***" if key.lower() in {"api_key", "authorization", "token"} else cls._redact(item)
                 for key, item in value.items()
             }
         if isinstance(value, list):

@@ -347,9 +347,7 @@ def test_destructive_edit_forces_a_clean_rebase_without_deleted_text(tmp_path):
             "content": "这段回复随后被删除",
         },
     ]
-    first = build_prompt(
-        request(2), bundle, history, [], [], context_ledger=ledger
-    ).context_snapshot
+    first = build_prompt(request(2), bundle, history, [], [], context_ledger=ledger).context_snapshot
     assert first is not None
     ledger.invalidate(
         "compact-session",
@@ -357,9 +355,7 @@ def test_destructive_edit_forces_a_clean_rebase_without_deleted_text(tmp_path):
         details={"message_id": "a1"},
     )
 
-    rebuilt = build_prompt(
-        request(2), bundle, history[:1], [], [], context_ledger=ledger
-    ).context_snapshot
+    rebuilt = build_prompt(request(2), bundle, history[:1], [], [], context_ledger=ledger).context_snapshot
     assert rebuilt is not None
     assert rebuilt.epoch_id != first.epoch_id
     assert "这段回复随后被删除" not in "\n".join(item["content"] for item in rebuilt.messages)

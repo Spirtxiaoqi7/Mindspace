@@ -58,12 +58,8 @@ class InMemoryRetriever:
     def search_knowledge(self, query: str, k: int, **_kwargs: Any) -> list[RetrievedChunk]:
         return self._search(query, self.knowledge, k)
 
-    def search_chat(
-        self, query: str, session_id: str, k: int, **_kwargs: Any
-    ) -> list[RetrievedChunk]:
-        scoped = [
-            item for item in self.chat if not item.session_id or item.session_id == session_id
-        ]
+    def search_chat(self, query: str, session_id: str, k: int, **_kwargs: Any) -> list[RetrievedChunk]:
+        scoped = [item for item in self.chat if not item.session_id or item.session_id == session_id]
         return self._search(query, scoped, k)
 
     def record_retrieval(
@@ -119,9 +115,7 @@ class InMemorySessionRepository:
     def resolve_deletions(self, event_ids: list[str]) -> None:
         ids = set(event_ids)
         for session_id, events in self.pending_deletions.items():
-            self.pending_deletions[session_id] = [
-                event for event in events if event.event_id not in ids
-            ]
+            self.pending_deletions[session_id] = [event for event in events if event.event_id not in ids]
 
     def persist_turn(
         self,
@@ -149,9 +143,7 @@ class InMemorySessionRepository:
                     "hidden": request.initiative,
                     "kind": "initiative_signal" if request.initiative else "message",
                     "initiative_trigger": request.initiative_trigger,
-                    "retrieval_class": (
-                        "initiative_signal" if request.initiative else "user_dialogue"
-                    ),
+                    "retrieval_class": ("initiative_signal" if request.initiative else "user_dialogue"),
                 },
                 {
                     "message_id": assistant_message_id,
@@ -161,9 +153,7 @@ class InMemorySessionRepository:
                     "timestamp": timestamp,
                     "kind": "initiative_response" if request.initiative else "message",
                     "initiative_trigger": request.initiative_trigger,
-                    "retrieval_class": (
-                        "raw_initiative" if request.initiative else "raw_assistant"
-                    ),
+                    "retrieval_class": ("raw_initiative" if request.initiative else "raw_assistant"),
                     "role_quality": role_quality["quality"],
                     "role_quality_reasons": role_quality["reasons"],
                     "role_quality_correction": role_quality["correction"],
@@ -219,9 +209,7 @@ class DeterministicLanguageModel:
                 "summary_version": 2,
                 "dialogue_summary": "已完成对话历史的确定性压缩。",
                 "current_scene": {"location": "", "time_anchor": "", "activity": ""},
-                "events": [
-                    {"text": "对话按原始消息形成了新的连续性片段", "evidence_ids": evidence}
-                ],
+                "events": [{"text": "对话按原始消息形成了新的连续性片段", "evidence_ids": evidence}],
                 "open_threads": [],
                 "commitments": [],
                 "relationship_deltas": [],

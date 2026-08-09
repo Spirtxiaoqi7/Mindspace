@@ -115,8 +115,7 @@ def rank_with_temporal_decay(
                 int(item.metadata.get("eligible_misses", 0)) > 0
                 or (
                     int(item.metadata.get("last_selected_round", 0)) > 0
-                    and request.round - int(item.metadata["last_selected_round"])
-                    >= settings.starvation_rounds
+                    and request.round - int(item.metadata["last_selected_round"]) >= settings.starvation_rounds
                 )
             )
         ),
@@ -174,9 +173,7 @@ def _lookup(document: dict[str, Any], pointer: str) -> Any:
 
 
 def _same_value(left: Any, right: Any) -> bool:
-    return json.dumps(left, ensure_ascii=False, sort_keys=True) == json.dumps(
-        right, ensure_ascii=False, sort_keys=True
-    )
+    return json.dumps(left, ensure_ascii=False, sort_keys=True) == json.dumps(right, ensure_ascii=False, sort_keys=True)
 
 
 def _same_memory_entity(
@@ -210,9 +207,7 @@ def normalize_json_update(
             continue
         if field.value_kind == "scalar":
             normalized.append(
-                patch.model_copy(update={"op": "replace"})
-                if patch.path == field.path and patch.op == "add"
-                else patch
+                patch.model_copy(update={"op": "replace"}) if patch.path == field.path and patch.op == "add" else patch
             )
             continue
         if patch.path != field.path:
@@ -228,18 +223,12 @@ def normalize_json_update(
         if patch.op == "remove":
             wanted = desired
             for index in range(len(current) - 1, -1, -1):
-                if any(
-                    _same_memory_entity(current[index], value, field, entities) for value in wanted
-                ):
-                    normalized.append(
-                        patch.model_copy(update={"path": f"{field.path}/{index}", "value": None})
-                    )
+                if any(_same_memory_entity(current[index], value, field, entities) for value in wanted):
+                    normalized.append(patch.model_copy(update={"path": f"{field.path}/{index}", "value": None}))
             continue
         if patch.op == "replace":
             for index in range(len(current) - 1, -1, -1):
-                if not any(
-                    _same_memory_entity(current[index], value, field, entities) for value in desired
-                ):
+                if not any(_same_memory_entity(current[index], value, field, entities) for value in desired):
                     normalized.append(
                         patch.model_copy(
                             update={
@@ -251,11 +240,7 @@ def normalize_json_update(
                     )
         for value in desired:
             if not any(_same_memory_entity(item, value, field, entities) for item in current):
-                normalized.append(
-                    patch.model_copy(
-                        update={"op": "add", "path": f"{field.path}/-", "value": value}
-                    )
-                )
+                normalized.append(patch.model_copy(update={"op": "add", "path": f"{field.path}/-", "value": value}))
     # Opposing sets share an entity identity. Adding an alias to one polarity
     # deterministically removes the same entity from every peer polarity.
     expanded: list[JsonPatch] = []
@@ -296,10 +281,7 @@ def _source_supports(value: Any, evidence: set[str], bootstrap: ProfileBootstrap
     if not isinstance(value, str) or not value.strip():
         return False
     needle = " ".join(value.split()).casefold()
-    return any(
-        needle in " ".join(bootstrap.evidence_sources.get(item, "").split()).casefold()
-        for item in evidence
-    )
+    return any(needle in " ".join(bootstrap.evidence_sources.get(item, "").split()).casefold() for item in evidence)
 
 
 def sanitize_profile_bootstrap(
@@ -341,10 +323,7 @@ def sanitize_profile_bootstrap(
 
 def _validate_path_and_operation(patch: JsonPatch, profiles: ProfileBundle) -> str | None:
     if patch.path == "/identity/gender":
-        return (
-            f"{patch.target}: gender is user-owned and may only be changed "
-            "through a direct profile edit"
-        )
+        return f"{patch.target}: gender is user-owned and may only be changed through a direct profile edit"
     field = DEFAULT_MEMORY_REGISTRY.resolve(patch.target, patch.path)
     if field is None:
         return f"{patch.target}: path not allowed or not a leaf: {patch.path}"
@@ -391,16 +370,16 @@ def validate_json_update(
     supplied_keys = set(plan.base_revisions)
     legacy_keys = REVISION_KEYS - {"character_memory"}
     if supplied_keys != REVISION_KEYS and supplied_keys != legacy_keys:
-        errors.append("base_revisions must contain user_profile, ai_profile, runtime_state and optional character_memory")
+        errors.append(
+            "base_revisions must contain user_profile, ai_profile, runtime_state and optional character_memory"
+        )
     for key in supplied_keys:
         expected = plan.base_revisions.get(key)
         current = profiles.revisions.get(key)
         if expected != current:
             errors.append(f"stale revision for {key}: expected {expected}, current {current}")
 
-    patch_limit = (
-        bootstrap.max_leaf_patches if plan.trigger == "profile_bootstrap" else MAX_PATCHES_PER_TURN
-    )
+    patch_limit = bootstrap.max_leaf_patches if plan.trigger == "profile_bootstrap" else MAX_PATCHES_PER_TURN
     if len(plan.patches) > patch_limit:
         errors.append(f"at most {patch_limit} JSON patches are allowed per turn")
     if plan.trigger == "none" and plan.patches:
@@ -425,19 +404,13 @@ def validate_json_update(
                 source = re.sub(r"\s+", "", current_user).casefold()
                 candidate = re.sub(r"\s+", "", patch.value).casefold()
                 if candidate not in source:
-                    errors.append(
-                        f"{patch.target}: extracted value is absent from current_user"
-                    )
+                    errors.append(f"{patch.target}: extracted value is absent from current_user")
         if plan.trigger == "current_agent":
             field = DEFAULT_MEMORY_REGISTRY.resolve(patch.target, patch.path)
             if evidence != {"current_response"}:
-                errors.append(
-                    f"{patch.target}: current_agent requires only current_response evidence"
-                )
+                errors.append(f"{patch.target}: current_agent requires only current_response evidence")
             if field is None or field.scope != "agent":
-                errors.append(
-                    f"{patch.target}: current_agent may only update registered agent fields"
-                )
+                errors.append(f"{patch.target}: current_agent may only update registered agent fields")
             if patch.op == "remove":
                 errors.append(f"{patch.target}: current_agent cannot remove fields")
             if not isinstance(patch.value, str) or not patch.value.strip():
@@ -446,9 +419,7 @@ def validate_json_update(
                 source = re.sub(r"\s+", "", current_response).casefold()
                 candidate = re.sub(r"\s+", "", patch.value).casefold()
                 if candidate not in source:
-                    errors.append(
-                        f"{patch.target}: current_agent value is absent from current_response"
-                    )
+                    errors.append(f"{patch.target}: current_agent value is absent from current_response")
         if plan.trigger == "deletion_reconciliation":
             deletion_evidence = evidence & pending_deletion_ids
             if not deletion_evidence and "current_user" not in evidence:
@@ -464,16 +435,11 @@ def validate_json_update(
             if field_code not in bootstrap.empty_field_codes:
                 errors.append(f"{patch.target}: bootstrap may only fill empty fields: {patch.path}")
             if not evidence or evidence - allowed:
-                errors.append(
-                    f"{patch.target}: invalid bootstrap evidence for "
-                    f"{patch.path}: {sorted(evidence)}"
-                )
+                errors.append(f"{patch.target}: invalid bootstrap evidence for {patch.path}: {sorted(evidence)}")
             if patch.op == "remove":
                 errors.append(f"{patch.target}: bootstrap cannot remove fields: {patch.path}")
             if not _source_supports(patch.value, evidence, bootstrap):
-                errors.append(
-                    f"{patch.target}: bootstrap value is not present in its source: {patch.path}"
-                )
+                errors.append(f"{patch.target}: bootstrap value is not present in its source: {patch.path}")
         path_error = _validate_path_and_operation(patch, profiles)
         if path_error:
             errors.append(path_error)
@@ -492,9 +458,7 @@ def validate_json_update(
             if (field := DEFAULT_MEMORY_REGISTRY.resolve(patch.target, patch.path))
         }
         if len(distinct_fields) > bootstrap.max_fields:
-            errors.append(
-                f"profile_bootstrap allows at most {bootstrap.max_fields} distinct fields"
-            )
+            errors.append(f"profile_bootstrap allows at most {bootstrap.max_fields} distinct fields")
         if not any(set(patch.evidence_ids) & setup_ids for patch in plan.patches):
             errors.append("profile_bootstrap must use at least one configured setup source")
         current_only_fields = {
@@ -504,9 +468,7 @@ def validate_json_update(
             if (field := DEFAULT_MEMORY_REGISTRY.resolve(patch.target, patch.path))
         }
         if len(current_only_fields) > MAX_PATCHES_PER_TURN:
-            errors.append(
-                f"profile_bootstrap allows at most {MAX_PATCHES_PER_TURN} current-user-only fields"
-            )
+            errors.append(f"profile_bootstrap allows at most {MAX_PATCHES_PER_TURN} current-user-only fields")
 
     return JsonUpdateValidation(
         is_valid=not errors,

@@ -2123,7 +2123,9 @@ async function openProductWindow() {
     shell.openExternal(url);
     return { action: "deny" };
   });
-  productWindow.loadURL("http://127.0.0.1:8765/");
+  const productUrl = new URL("http://127.0.0.1:8765/");
+  productUrl.searchParams.set("desktop-build", `${app.getVersion()}-${Date.now()}`);
+  productWindow.loadURL(productUrl.toString());
   productWindow.webContents.on("did-finish-load", () => {
     if (!softwareDesktopRendering) return;
     void currentProductWindow.webContents.insertCSS(`

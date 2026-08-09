@@ -21,9 +21,7 @@ def main() -> None:
         print(graph.get_graph().draw_mermaid())
         return
 
-    request = ChatRequest(
-        message=args.message, session_id="demo", retrieval={"similarity_threshold": 0}
-    )
+    request = ChatRequest(message=args.message, session_id="demo", retrieval={"similarity_threshold": 0})
     result = graph.invoke({"request": request}, config={"recursion_limit": 20})
     print(json.dumps(result["response"].model_dump(mode="json"), ensure_ascii=False, indent=2))
 

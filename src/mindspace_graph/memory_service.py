@@ -55,24 +55,15 @@ class StructuredMemoryService:
         self.entity_registry = entity_registry
         self._lock = RLock()
 
-    def list_items(
-        self, *, include_history: bool = False, character_id: str = ""
-    ) -> list[dict[str, Any]]:
-        return self.store.list_items(
-            include_history=include_history, character_id=character_id
-        )
+    def list_items(self, *, include_history: bool = False, character_id: str = "") -> list[dict[str, Any]]:
+        return self.store.list_items(include_history=include_history, character_id=character_id)
 
-    def rebuild(
-        self, *, dry_run: bool = False, character_id: str = ""
-    ) -> dict[str, int | bool]:
+    def rebuild(self, *, dry_run: bool = False, character_id: str = "") -> dict[str, int | bool]:
         """Recreate structured bindings from the current authoritative profiles."""
 
         groups: dict[str, list[dict[str, Any]]] = {"": []}
         character_ids = (
-            [
-                str(item["character_id"])
-                for item in self.profiles.characters.list()
-            ]
+            [str(item["character_id"]) for item in self.profiles.characters.list()]
             if self.profiles.characters is not None
             else []
         )
@@ -122,9 +113,7 @@ class StructuredMemoryService:
                 if not owner_patches:
                     continue
                 profile = (
-                    self.profiles.load_document("ai_profile", owner)
-                    if owner
-                    else {"identity": {"name": "Mindspace"}}
+                    self.profiles.load_document("ai_profile", owner) if owner else {"identity": {"name": "Mindspace"}}
                 )
                 self.store.record_turn(
                     ChatRequest(
@@ -132,9 +121,7 @@ class StructuredMemoryService:
                         session_id="memory-rebuild",
                         character_id=owner,
                         round=1,
-                        character_name=str(
-                            profile.get("identity", {}).get("name") or "Mindspace"
-                        ),
+                        character_name=str(profile.get("identity", {}).get("name") or "Mindspace"),
                     ),
                     "结构化记忆索引已完成确定性重建。",
                     persisted={
@@ -155,9 +142,7 @@ class StructuredMemoryService:
 
     def update(self, memory_key: str, value: Any) -> dict[str, Any]:
         if self.database is not None:
-            with self.database.transaction(
-                operation="update_memory", details={"memory_key": memory_key}
-            ):
+            with self.database.transaction(operation="update_memory", details={"memory_key": memory_key}):
                 return self._update(memory_key, value)
         return self._update(memory_key, value)
 
@@ -166,9 +151,7 @@ class StructuredMemoryService:
         field = self._field(active)
         normalized = self._validate_value(field, value)
         owner = str(active.get("character_id") or "")
-        patches = self._mutate_profile(
-            field, normalized, previous=active.get("value"), character_id=owner
-        )
+        patches = self._mutate_profile(field, normalized, previous=active.get("value"), character_id=owner)
         self._record_manual(
             field,
             patches,
@@ -179,9 +162,7 @@ class StructuredMemoryService:
 
     def delete(self, memory_key: str) -> bool:
         if self.database is not None:
-            with self.database.transaction(
-                operation="delete_memory", details={"memory_key": memory_key}
-            ):
+            with self.database.transaction(operation="delete_memory", details={"memory_key": memory_key}):
                 return self._delete(memory_key)
         return self._delete(memory_key)
 
@@ -195,20 +176,14 @@ class StructuredMemoryService:
                 _write(document, field.path, "")
             else:
                 values = list(_read(document, field.path))
-                values = [
-                    item
-                    for item in values
-                    if not self._equivalent(field, item, active.get("value"))
-                ]
+                values = [item for item in values if not self._equivalent(field, item, active.get("value"))]
                 _write(document, field.path, values)
             self.profiles.save_document(field.target, document, owner)
             return self.store.invalidate_key(memory_key, reason="user_deleted")
 
     def restore(self, memory_key: str) -> dict[str, Any]:
         if self.database is not None:
-            with self.database.transaction(
-                operation="restore_memory", details={"memory_key": memory_key}
-            ):
+            with self.database.transaction(operation="restore_memory", details={"memory_key": memory_key}):
                 return self._restore(memory_key)
         return self._restore(memory_key)
 
@@ -220,9 +195,7 @@ class StructuredMemoryService:
         field = self._field(record)
         owner = str(record.get("character_id") or "")
         value = self._validate_value(field, record.get("value"))
-        patches = self._mutate_profile(
-            field, value, previous=None, character_id=owner
-        )
+        patches = self._mutate_profile(field, value, previous=None, character_id=owner)
         self._record_manual(
             field,
             patches,
@@ -251,10 +224,7 @@ class StructuredMemoryService:
                     self._remove_value(document, field, previous, patches)
                 if field.conflict_group:
                     for peer in self.registry.fields:
-                        if (
-                            peer.target == field.target
-                            and peer.conflict_group == field.conflict_group
-                        ):
+                        if peer.target == field.target and peer.conflict_group == field.conflict_group:
                             self._remove_value(document, peer, value, patches)
                 values = list(_read(document, field.path))
                 if not any(self._equivalent(field, item, value) for item in values):
@@ -280,11 +250,7 @@ class StructuredMemoryService:
             if not self._equivalent(field, values[index], value):
                 continue
             before = values.pop(index)
-            patches.append(
-                StructuredMemoryService._patch(
-                    field, "remove", f"{field.path}/{index}", before, None
-                )
-            )
+            patches.append(StructuredMemoryService._patch(field, "remove", f"{field.path}/{index}", before, None))
         _write(document, field.path, values)
 
     def _equivalent(self, field: MemoryField, left: Any, right: Any) -> bool:
@@ -293,12 +259,8 @@ class StructuredMemoryService:
         if self.entity_registry is None:
             return False
         entity_type = field.conflict_group or field.field_code
-        left_id = self.entity_registry.resolve(
-            left, scope=field.scope, entity_type=entity_type, create=False
-        )
-        right_id = self.entity_registry.resolve(
-            right, scope=field.scope, entity_type=entity_type, create=False
-        )
+        left_id = self.entity_registry.resolve(left, scope=field.scope, entity_type=entity_type, create=False)
+        right_id = self.entity_registry.resolve(right, scope=field.scope, entity_type=entity_type, create=False)
         return bool(left_id and right_id and left_id == right_id)
 
     @staticmethod
@@ -329,9 +291,7 @@ class StructuredMemoryService:
         if not patches:
             return
         identifier = uuid4().hex
-        revision = int(
-            self.profiles.load_document(field.target, character_id).get("revision", 1)
-        )
+        revision = int(self.profiles.load_document(field.target, character_id).get("revision", 1))
         self.store.record_turn(
             ChatRequest(
                 message=message,
@@ -345,9 +305,7 @@ class StructuredMemoryService:
                 "user_message_id": f"memory-center-user-{identifier}",
                 "assistant_message_id": f"memory-center-{identifier}",
             },
-            write_receipt=JsonWriteReceipt(
-                turn_id=f"memory_center_{identifier}", applied=True, patches=patches
-            ),
+            write_receipt=JsonWriteReceipt(turn_id=f"memory_center_{identifier}", applied=True, patches=patches),
         )
 
     @staticmethod
@@ -376,14 +334,11 @@ class StructuredMemoryService:
             raise KeyError("memory field is not registered")
         return field
 
-    def _find_current(
-        self, field: MemoryField, value: Any, *, character_id: str = ""
-    ) -> dict[str, Any]:
+    def _find_current(self, field: MemoryField, value: Any, *, character_id: str = "") -> dict[str, Any]:
         candidates = [
             item
             for item in self.store.list_items(character_id=character_id)
-            if item.get("field_code") == field.field_code
-            and self._equivalent(field, item.get("value"), value)
+            if item.get("field_code") == field.field_code and self._equivalent(field, item.get("value"), value)
         ]
         if not candidates:
             raise RuntimeError("memory update was persisted but active binding is missing")

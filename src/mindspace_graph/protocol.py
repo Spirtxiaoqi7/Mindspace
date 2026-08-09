@@ -199,10 +199,7 @@ class ProtocolParser:
         # directive.  Do not mistake ``[[voice:warm]]`` for an untrusted JSON
         # array: treating every '[' prefix as JSON made an otherwise visible
         # reply fail protocol parsing and spend a useless repair call.
-        if value and (
-            not value.startswith(("<", "{", "["))
-            or LEADING_VOICE_DIRECTIVE.match(value) is not None
-        ):
+        if value and (not value.startswith(("<", "{", "[")) or LEADING_VOICE_DIRECTIVE.match(value) is not None):
             value = re.sub(r"</response>\s*$", "", value, flags=re.IGNORECASE).strip()
             return _clean_response_text(value)
         return None

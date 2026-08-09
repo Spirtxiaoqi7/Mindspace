@@ -111,12 +111,7 @@ def test_roleplay_temperature_is_dynamic_and_never_raises_user_setting():
     assert effective_roleplay_temperature(request("我把菜单推给你"), []) == 0.25
     assert effective_roleplay_temperature(request("继续", initiative=True), []) == 0.25
     assert effective_roleplay_temperature(request("继续", adult_mode=True), []) == 0.65
-    assert (
-        effective_roleplay_temperature(
-            request("普通聊天", api=ApiConfig(temperature=0.15)), []
-        )
-        == 0.15
-    )
+    assert effective_roleplay_temperature(request("普通聊天", api=ApiConfig(temperature=0.15)), []) == 0.15
 
 
 def test_presentation_override_and_scene_continuation_are_observable():
@@ -128,14 +123,8 @@ def test_presentation_override_and_scene_continuation_are_observable():
         }
     ]
     assert resolve_presentation_mode(request("继续"), history) == "scene"
-    assert (
-        resolve_presentation_mode(request("继续", presentation_mode="dialogue"), history)
-        == "dialogue"
-    )
-    assert (
-        resolve_presentation_mode(request("说说你的看法", presentation_mode="scene"), history)
-        == "scene"
-    )
+    assert resolve_presentation_mode(request("继续", presentation_mode="dialogue"), history) == "dialogue"
+    assert resolve_presentation_mode(request("说说你的看法", presentation_mode="scene"), history) == "scene"
 
 
 def test_dialogue_projection_drops_only_legacy_stage_openers_and_preserves_normal_parentheses():
@@ -176,9 +165,7 @@ def test_text_boundary_preserves_parentheses_and_model_authored_prose():
 
 def test_scene_boundary_preserves_action_opening():
     source = "（我推开门，侧身让出位置。）进来。"
-    normalized = normalize_presentation_response(
-        source, request("我走到门口", presentation_mode="scene"), []
-    )
+    normalized = normalize_presentation_response(source, request("我走到门口", presentation_mode="scene"), [])
     assert normalized == source
 
 
@@ -210,7 +197,7 @@ def test_large_roleplay_details_are_loaded_only_when_the_turn_needs_them():
     assert education["conditional_character_context"]["life_context"]["education"] == "大学医学结业"
 
 
-def test_private_r18_protocol_is_loaded_only_for_explicit_r18_mode():
+def test_legacy_private_r18_protocol_is_not_loaded_into_the_compact_adult_packet():
     bundle = profiles()
     bundle.ai_profile["roleplay"]["r18_protocol"] = [
         "原文规则一：直接推进。",
@@ -222,8 +209,9 @@ def test_private_r18_protocol_is_loaded_only_for_explicit_r18_mode():
 
     assert "r18_director" not in ordinary
     assert adult["turn_style"] == "intimate"
-    assert adult["r18_director"]["private_overlay"][-1] == "原文规则一：直接推进。"
-    assert adult["r18_director"]["library_sources"]["character_overlay"] is True
+    assert "private_overlay" not in adult["r18_director"]
+    assert "intensity_ladder" not in adult["r18_director"]
+    assert "鸡巴" in adult["r18_director"]["vocabulary"]["colloquial_body_terms"]
 
 
 def test_adult_role_correction_does_not_leak_into_daily_lane():
@@ -307,14 +295,8 @@ def test_voice_response_discards_stage_direction_without_affecting_text_chat():
 
 def test_hidden_voice_cue_is_removed_from_text_and_voice_delivery():
     source = "[[voice:firm]] 这件事我会处理。"
-    assert (
-        normalize_voice_response(source, request("继续", interaction_mode="text"))
-        == "这件事我会处理。"
-    )
-    assert (
-        normalize_voice_response(source, request("继续", interaction_mode="voice"))
-        == "这件事我会处理。"
-    )
+    assert normalize_voice_response(source, request("继续", interaction_mode="text")) == "这件事我会处理。"
+    assert normalize_voice_response(source, request("继续", interaction_mode="voice")) == "这件事我会处理。"
 
 
 def test_voice_stage_direction_is_reported_for_next_turn_correction():
@@ -329,7 +311,7 @@ def test_voice_stage_direction_is_reported_for_next_turn_correction():
     assert "第一人称动作播报" in result["correction"]
 
 
-def test_r18_quality_marks_foreplay_only_response_as_hard_drift():
+def test_r18_quality_marks_only_vague_active_continuation_as_hard_drift():
     result = evaluate_roleplay_quality(
         "我吻住你，指尖慢慢解开你的衣扣，低声问你准备好了吗？",
         request("继续", adult_mode=True),
@@ -342,24 +324,21 @@ def test_r18_quality_marks_foreplay_only_response_as_hard_drift():
     )
 
     assert result["quality"] == "drift"
-    assert "r18_missing_sexual_action" in result["reasons"]
-    assert "r18_foreplay_loop" in result["reasons"]
-    assert "不能再以亲吻、抚摸、挑逗、询问、威胁或预告代替推进" in result["correction"]
+    assert result["reasons"] == ["r18_vague_active_scene"]
+    assert "不必强行升级强度" in result["correction"]
 
 
-def test_r18_quality_treats_delayed_promises_as_foreplay_loop():
+def test_r18_quality_allows_adult_discussion_without_forcing_a_new_action():
     result = evaluate_roleplay_quality(
         "让我想想，反正不急，我有的是办法。你先说想怎么来，我再考虑。",
         request("那你想怎么弄啊？", adult_mode=True, interaction_mode="voice"),
         [{"role": "assistant", "content": "待会儿再让你好好感受。"}],
     )
 
-    assert result["quality"] == "drift"
-    assert "r18_missing_sexual_action" in result["reasons"]
-    assert "r18_foreplay_loop" in result["reasons"]
+    assert "r18_vague_active_scene" not in result["reasons"]
 
 
-def test_r18_intensity_ladder_skips_repeated_delay_and_requires_actual_sex():
+def test_r18_packet_has_direct_vocabulary_without_an_intensity_ladder():
     history = [
         {"role": "assistant", "content": "让我想想，待会儿再说。"},
         {"role": "user", "content": "好"},
@@ -371,11 +350,11 @@ def test_r18_intensity_ladder_skips_repeated_delay_and_requires_actual_sex():
         history,
     )
 
-    minimum = packet["intensity_ladder"]["current_minimum"]
-    assert minimum["level"] == 4
-    assert minimum["label"] == "淫语与实质行为"
-    assert minimum["must_advance_beyond_previous"] is True
-    assert "正文不得低于 current_minimum" in packet["intensity_ladder"]["rule"]
+    assert "intensity_ladder" not in packet
+    assert "modules" not in packet
+    assert packet["vocabulary"]["neutral_body_terms"][:2] == ["阴茎", "龟头"]
+    assert "鸡巴" in packet["vocabulary"]["colloquial_body_terms"]
+    assert "无需每轮升级强度" in packet["progress_rule"]
 
 
 def test_r18_quality_accepts_explicit_sexual_action_progress():
@@ -386,7 +365,7 @@ def test_r18_quality_accepts_explicit_sexual_action_progress():
     )
 
     assert result["quality"] == "pass"
-    assert "r18_missing_sexual_action" not in result["reasons"]
+    assert "r18_vague_active_scene" not in result["reasons"]
 
 
 def test_r18_voice_quality_does_not_reject_by_length():
@@ -397,8 +376,8 @@ def test_r18_voice_quality_does_not_reject_by_length():
     )
 
     assert result["quality"] == "drift"
-    assert "r18_missing_sexual_action" in result["reasons"]
-    assert "r18_missing_dirty_language" in result["reasons"]
+    assert "r18_vague_active_scene" in result["reasons"]
+    assert "r18_missing_dirty_language" not in result["reasons"]
     assert "r18_response_too_short" not in result["reasons"]
     assert "180至250个中文字符" not in result["correction"]
 
@@ -417,5 +396,5 @@ def test_prompt_omits_model_write_protocol_and_loads_only_selected_roleplay_exam
     assert "正文与状态隔离" not in text
     assert '"trigger":"none"' not in text
     assert "用户：今天怎样 → 角色：我刚把看到一半的书扣在桌上。" not in text
-    assert "不应加载的第三条例子" in text
+    assert "不应加载的第三条例子" not in text
     assert "每个 Patch 提供" not in text

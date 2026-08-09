@@ -127,6 +127,13 @@ def test_rank_context_enforces_two_three_three_source_quotas(tmp_path) -> None:
     ranked = result["ranked_context"]
 
     assert [item.source for item in ranked] == [
-        "knowledge", "knowledge", "chat", "chat", "chat", "memory", "memory", "memory"
+        "knowledge",
+        "knowledge",
+        "chat",
+        "chat",
+        "chat",
+        "memory",
+        "memory",
+        "memory",
     ]
     container.conversation.close()

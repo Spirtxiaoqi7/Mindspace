@@ -10,7 +10,13 @@ def test_v2_runtime_state_prefers_saved_name_alias_and_memory() -> None:
                 "description": "独立插画师",
                 "personality": "坦率而克制",
                 "scenario": "长期朋友",
-                "extensions": {"mindspace": {"user_name": "小柒", "user_alias": "老公", "relationship": "妻子与丈夫"}},
+                "extensions": {
+                    "mindspace": {
+                        "user_name": "小柒",
+                        "user_alias": "老公",
+                        "relationship": "妻子与丈夫",
+                    }
+                },
             }
         },
         character_memory={"preferences": ["不喜欢被随意改称呼"], "tasks": ["周四提交画稿"]},
@@ -35,5 +41,12 @@ def test_compact_prompt_excludes_v2_examples() -> None:
 
 
 def test_v2_card_keeps_per_character_user_name() -> None:
-    card = normalize_card({"data": {"name": "林岚", "extensions": {"mindspace": {"user_name": "小柒", "user_alias": "老公"}}}})
+    card = normalize_card(
+        {
+            "data": {
+                "name": "林岚",
+                "extensions": {"mindspace": {"user_name": "小柒", "user_alias": "老公"}},
+            }
+        }
+    )
     assert card["data"]["extensions"]["mindspace"]["user_name"] == "小柒"

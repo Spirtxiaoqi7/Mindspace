@@ -63,10 +63,7 @@ def test_alias_identity_removes_opposing_value_without_model_judgment(tmp_path):
     entities = EntityRegistry(database)
     strawberry = entities.resolve("草莓", scope="user", entity_type="user.preference")
     entities.add_alias(str(strawberry), "士多啤梨")
-    assert (
-        entities.resolve("士多啤梨", scope="user", entity_type="user.preference", create=False)
-        == strawberry
-    )
+    assert entities.resolve("士多啤梨", scope="user", entity_type="user.preference", create=False) == strawberry
 
     user = deepcopy(DEFAULT_PROFILES["user_profile"])
     user["stable_preferences"]["likes"] = ["草莓"]

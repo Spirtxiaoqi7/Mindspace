@@ -88,18 +88,14 @@ class AppSettings:
         # application/core/runtime.
         configured_home = os.environ.get("MINDSPACE_HOME", "").strip()
         default_runtime = (
-            Path(configured_home).expanduser().resolve() / "data"
-            if configured_home
-            else project_root / "runtime"
+            Path(configured_home).expanduser().resolve() / "data" if configured_home else project_root / "runtime"
         )
         return cls(
             app_name=os.environ.get("MINDSPACE_APP_NAME", "Mindspace Graph"),
             host=os.environ.get("MINDSPACE_HOST", "127.0.0.1"),
             port=int(os.environ.get("MINDSPACE_PORT", "8765")),
             debug=_bool("MINDSPACE_DEBUG", False),
-            runtime_dir=Path(
-                os.environ.get("MINDSPACE_RUNTIME_DIR", str(default_runtime))
-            ).resolve(),
+            runtime_dir=Path(os.environ.get("MINDSPACE_RUNTIME_DIR", str(default_runtime))).resolve(),
             model_root=Path(
                 os.environ.get(
                     "MINDSPACE_MODEL_ROOT",
@@ -112,27 +108,13 @@ class AppSettings:
             llm_model=os.environ.get("MINDSPACE_LLM_MODEL", "deepseek-chat"),
             llm_context_window=int(os.environ.get("MINDSPACE_LLM_CONTEXT_WINDOW", "64000")),
             context_compaction_enabled=_bool("MINDSPACE_CONTEXT_COMPACTION_ENABLED", True),
-            context_compaction_model=os.environ.get(
-                "MINDSPACE_CONTEXT_COMPACTION_MODEL", ""
-            ).strip(),
-            context_compaction_max_tokens=int(
-                os.environ.get("MINDSPACE_CONTEXT_COMPACTION_MAX_TOKENS", "1200")
-            ),
-            context_compaction_soft_ratio=float(
-                os.environ.get("MINDSPACE_CONTEXT_COMPACTION_SOFT_RATIO", "0.65")
-            ),
-            context_compaction_hard_ratio=float(
-                os.environ.get("MINDSPACE_CONTEXT_COMPACTION_HARD_RATIO", "0.82")
-            ),
-            context_compaction_patch_limit=int(
-                os.environ.get("MINDSPACE_CONTEXT_COMPACTION_PATCH_LIMIT", "32")
-            ),
-            context_compaction_retain_turns=int(
-                os.environ.get("MINDSPACE_CONTEXT_COMPACTION_RETAIN_TURNS", "3")
-            ),
-            context_compaction_delay_seconds=float(
-                os.environ.get("MINDSPACE_CONTEXT_COMPACTION_DELAY_SECONDS", "1.5")
-            ),
+            context_compaction_model=os.environ.get("MINDSPACE_CONTEXT_COMPACTION_MODEL", "").strip(),
+            context_compaction_max_tokens=int(os.environ.get("MINDSPACE_CONTEXT_COMPACTION_MAX_TOKENS", "1200")),
+            context_compaction_soft_ratio=float(os.environ.get("MINDSPACE_CONTEXT_COMPACTION_SOFT_RATIO", "0.65")),
+            context_compaction_hard_ratio=float(os.environ.get("MINDSPACE_CONTEXT_COMPACTION_HARD_RATIO", "0.82")),
+            context_compaction_patch_limit=int(os.environ.get("MINDSPACE_CONTEXT_COMPACTION_PATCH_LIMIT", "32")),
+            context_compaction_retain_turns=int(os.environ.get("MINDSPACE_CONTEXT_COMPACTION_RETAIN_TURNS", "3")),
+            context_compaction_delay_seconds=float(os.environ.get("MINDSPACE_CONTEXT_COMPACTION_DELAY_SECONDS", "1.5")),
             role_audit_enabled=_bool("MINDSPACE_ROLE_AUDIT_ENABLED", True),
             role_audit_model=os.environ.get("MINDSPACE_ROLE_AUDIT_MODEL", "").strip(),
             tts_provider=os.environ.get("MINDSPACE_TTS_PROVIDER", "qwen3-vllm").strip().lower(),
@@ -143,37 +125,19 @@ class AppSettings:
                 "MINDSPACE_TTS_SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1"
             ),
             tts_siliconflow_api_key=os.environ.get("MINDSPACE_TTS_SILICONFLOW_API_KEY", ""),
-            tts_siliconflow_model=os.environ.get(
-                "MINDSPACE_TTS_SILICONFLOW_MODEL", "fnlp/MOSS-TTSD-v0.5"
-            ),
-            tts_siliconflow_voice=os.environ.get(
-                "MINDSPACE_TTS_SILICONFLOW_VOICE", "fnlp/MOSS-TTSD-v0.5:alex"
-            ),
+            tts_siliconflow_model=os.environ.get("MINDSPACE_TTS_SILICONFLOW_MODEL", "fnlp/MOSS-TTSD-v0.5"),
+            tts_siliconflow_voice=os.environ.get("MINDSPACE_TTS_SILICONFLOW_VOICE", "fnlp/MOSS-TTSD-v0.5:alex"),
             tts_siliconflow_gain=float(os.environ.get("MINDSPACE_TTS_SILICONFLOW_GAIN", "0")),
-            tts_siliconflow_sample_rate=int(
-                os.environ.get("MINDSPACE_TTS_SILICONFLOW_SAMPLE_RATE", "24000")
-            ),
-            tts_gpt_sovits_worker_url=os.environ.get(
-                "MINDSPACE_TTS_GPT_SOVITS_WORKER_URL", "http://127.0.0.1:5055"
-            ),
-            tts_gpt_sovits_voice=os.environ.get(
-                "MINDSPACE_TTS_GPT_SOVITS_VOICE", "v4-changli"
-            ).strip(),
-            tts_qwen3_vllm_url=os.environ.get(
-                "MINDSPACE_TTS_QWEN3_VLLM_URL", "http://127.0.0.1:8091"
-            ).strip().rstrip("/"),
-            tts_qwen3_vllm_model=os.environ.get(
-                "MINDSPACE_TTS_QWEN3_VLLM_MODEL", "mindspace-qwen3-tts"
-            ).strip(),
-            tts_qwen3_vllm_voice=os.environ.get(
-                "MINDSPACE_TTS_QWEN3_VLLM_VOICE", "serena"
-            ).strip(),
-            tts_qwen3_vllm_task_type=os.environ.get(
-                "MINDSPACE_TTS_QWEN3_VLLM_TASK_TYPE", "CustomVoice"
-            ).strip(),
-            tts_qwen3_vllm_language=os.environ.get(
-                "MINDSPACE_TTS_QWEN3_VLLM_LANGUAGE", "Chinese"
-            ).strip() or "Chinese",
+            tts_siliconflow_sample_rate=int(os.environ.get("MINDSPACE_TTS_SILICONFLOW_SAMPLE_RATE", "24000")),
+            tts_gpt_sovits_worker_url=os.environ.get("MINDSPACE_TTS_GPT_SOVITS_WORKER_URL", "http://127.0.0.1:5055"),
+            tts_gpt_sovits_voice=os.environ.get("MINDSPACE_TTS_GPT_SOVITS_VOICE", "v4-changli").strip(),
+            tts_qwen3_vllm_url=os.environ.get("MINDSPACE_TTS_QWEN3_VLLM_URL", "http://127.0.0.1:8091")
+            .strip()
+            .rstrip("/"),
+            tts_qwen3_vllm_model=os.environ.get("MINDSPACE_TTS_QWEN3_VLLM_MODEL", "mindspace-qwen3-tts").strip(),
+            tts_qwen3_vllm_voice=os.environ.get("MINDSPACE_TTS_QWEN3_VLLM_VOICE", "serena").strip(),
+            tts_qwen3_vllm_task_type=os.environ.get("MINDSPACE_TTS_QWEN3_VLLM_TASK_TYPE", "CustomVoice").strip(),
+            tts_qwen3_vllm_language=os.environ.get("MINDSPACE_TTS_QWEN3_VLLM_LANGUAGE", "Chinese").strip() or "Chinese",
             asr_provider=os.environ.get("MINDSPACE_ASR_PROVIDER", "funasr").strip().lower(),
             asr_base_url=os.environ.get("MINDSPACE_ASR_BASE_URL", "ws://127.0.0.1:8766/ws"),
             asr_api_key=os.environ.get("MINDSPACE_ASR_API_KEY", ""),

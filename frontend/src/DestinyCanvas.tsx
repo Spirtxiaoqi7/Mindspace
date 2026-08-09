@@ -9,6 +9,7 @@ import {
   type PointerEvent,
   type WheelEvent,
 } from "react";
+import { HttpError } from "./api";
 import "./destiny-canvas.css";
 
 type Willingness = "low" | "neutral" | "normal" | "high";
@@ -78,6 +79,7 @@ type DestinyCanvasProps = {
 
 const RELATIONSHIPS = ["朋友", "恋人", "夫妻", "青梅竹马", "室友", "同事", "搭档", "陪伴者", "自定义"];
 const RESUME_KEY = "mindspace.destiny.v7.active";
+const PENDING_CHAT_KEY = "mindspace.destiny.v7.pending-chat";
 const DEFAULT_AVATAR = "/assets/characters/placeholder-1.webp";
 const ROTATION_STARTS = [0, 2, 4, 6];
 const WILLINGNESS: Array<{ value: Willingness; label: string; short: string }> = [
@@ -105,7 +107,7 @@ function defaultSeed(userName = "用户"): SeedForm {
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/v1${path}`, init);
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(String(body.detail || body.message || "请求失败"));
+  if (!response.ok) throw new HttpError(response.status, body);
   return body as T;
 }
 
@@ -136,6 +138,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
   const [modelState, setModelState] = useState<ModelState>("idle");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [fallbackStage, setFallbackStage] = useState<"" | "archetypes" | "cards">("");
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [localAvatarUrl, setLocalAvatarUrl] = useState("");
   const [avatarTools, setAvatarTools] = useState(false);
@@ -143,11 +146,13 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
   const [dragging, setDragging] = useState<{ pointerId: number; x: number; y: number; cx: number; cy: number } | null>(null);
   const [dissolveArmed, setDissolveArmed] = useState(false);
   const [flying, setFlying] = useState(false);
+  const [selectionEffectCardId, setSelectionEffectCardId] = useState("");
   const [savingSelection, setSavingSelection] = useState(false);
   const [arrivingSlotId, setArrivingSlotId] = useState("");
   const [committedCharacter, setCommittedCharacter] = useState<any>(null);
   const dissolveTimer = useRef<number | null>(null);
   const cameraMotionTimer = useRef<number | null>(null);
+  const selectionEffectTimer = useRef<number | null>(null);
   const sceneRef = useRef<HTMLDivElement | null>(null);
   const worldCameraRef = useRef<HTMLDivElement | null>(null);
 
@@ -177,6 +182,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
 
   useEffect(() => () => {
     if (cameraMotionTimer.current) window.clearTimeout(cameraMotionTimer.current);
+    if (selectionEffectTimer.current) window.clearTimeout(selectionEffectTimer.current);
   }, []);
 
   function focusNode(slot: Slot) {
@@ -210,11 +216,32 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
   useEffect(() => {
     let cancelled = false;
     async function restore() {
+      let loadedDefinition: Definition;
       try {
-        const loadedDefinition = await api<Definition>("/destiny/definition");
+        loadedDefinition = await api<Definition>("/destiny/definition");
         if (cancelled) return;
         setDefinition(loadedDefinition);
+      } catch (reason) {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : "命格定义载入失败");
+        return;
+      }
+      try {
         const journeyId = window.localStorage.getItem(RESUME_KEY);
+        const pendingRaw = window.localStorage.getItem(PENDING_CHAT_KEY);
+        if (pendingRaw) {
+          try {
+            const pending = JSON.parse(pendingRaw);
+            if (pending?.character_id) {
+              setCommittedCharacter(pending);
+              setSeed((current) => ({ ...current, ai_name: pending.display_name || current.ai_name }));
+              setCompletionOpen(true);
+              setModelState("chat_failed");
+              setNotice("角色已收入角色库；本地聊天尚未建立，可以继续进入聊天。 ");
+            }
+          } catch {
+            window.localStorage.removeItem(PENDING_CHAT_KEY);
+          }
+        }
         if (!journeyId) return;
         const saved = await api<Journey>(`/destiny/journeys/${journeyId}`);
         if (cancelled) return;
@@ -231,9 +258,10 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
           custom_relationship: knownRelationship ? "" : savedSeed.relationship,
           relationship: knownRelationship ? savedSeed.relationship : "自定义",
         });
-        if (saved.status === "archetypes_failed") setModelState("archetypes_failed");
+        if (saved.status === "archetypes_failed") { setModelState("archetypes_failed"); setFallbackStage("archetypes"); }
         if (saved.status === "cards_failed") {
           setModelState("cards_failed");
+          setFallbackStage("cards");
           const lastError = (saved as Journey & { errors?: Array<{ message?: string }> }).errors?.at(-1)?.message;
           if (lastError) setError(lastError);
         }
@@ -246,7 +274,10 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
         }
       } catch (reason) {
         if (!cancelled) {
-          window.localStorage.removeItem(RESUME_KEY);
+          // Only the journey resource can prove that this persisted journey no longer exists.
+          if (reason instanceof HttpError && reason.status === 404) {
+            window.localStorage.removeItem(RESUME_KEY);
+          }
           setError(reason instanceof Error ? reason.message : "命格旅程恢复失败");
         }
       }
@@ -297,11 +328,30 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     return adjusted;
   }
 
-  async function runCards(current: Journey) {
+  function isTemporaryDestinyAvatar(entry: AvatarEntry | null | undefined): boolean {
+    return Boolean(entry?.src?.startsWith("/api/v1/avatar/files/destiny-"));
+  }
+
+  async function discardUnattachedDestinyAvatar(entry: AvatarEntry | null | undefined) {
+    if (journey || !isTemporaryDestinyAvatar(entry)) return;
+    const filename = entry!.src.split("/").pop();
+    if (!filename) return;
+    try {
+      await api(`/destiny/avatars/${encodeURIComponent(filename)}`, { method: "DELETE" });
+    } catch {
+      // A network close must never erase the user's local seed edits. The server cleanup
+      // removes a now-unreferenced temporary file on the next application startup.
+    }
+  }
+
+  async function runCards(current: Journey, useDefault = false) {
     setModelState("cards");
     setError("");
+    setFallbackStage("");
     try {
-      const finished = await api<Journey>(`/destiny/journeys/${current.journey_id}/cards`, { method: "POST" });
+      const query = new URLSearchParams({ expected_revision: String(current.revision) });
+      if (useDefault) query.set("use_default", "true");
+      const finished = await api<Journey>(`/destiny/journeys/${current.journey_id}/cards?${query.toString()}`, { method: "POST" });
       setJourney(finished);
       window.localStorage.setItem(RESUME_KEY, finished.journey_id);
       const next = slots.find((slot) => !finished.selections?.[slot.id]) || slots[0];
@@ -309,27 +359,42 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
       setPreviewCardId("");
       setRotation(0);
       setModelState("idle");
-      setNotice("96 张命签已显化，请从第一项开始选择。");
+      setNotice(useDefault ? "模型生成失败，已载入按性别区分的默认 96 张命签。" : "96 张命签已显化，请从第一项开始选择。");
       window.setTimeout(() => {
         setSeedOpen(false);
         setStageOpen(true);
         if (next) focusNode(next);
       }, 420);
     } catch (reason) {
+      try {
+        setJourney(await api<Journey>(`/destiny/journeys/${current.journey_id}`));
+      } catch {
+        // Keep the last usable snapshot; the visible stage error remains actionable.
+      }
       setModelState("cards_failed");
+      setFallbackStage("cards");
       setError(reason instanceof Error ? reason.message : "命签生成失败");
     }
   }
 
-  async function runArchetypes(current: Journey) {
+  async function runArchetypes(current: Journey, useDefault = false) {
     setModelState("archetypes");
     setError("");
+    setFallbackStage("");
     try {
-      const directions = await api<Journey>(`/destiny/journeys/${current.journey_id}/archetypes`, { method: "POST" });
+      const query = new URLSearchParams({ expected_revision: String(current.revision) });
+      if (useDefault) query.set("use_default", "true");
+      const directions = await api<Journey>(`/destiny/journeys/${current.journey_id}/archetypes?${query.toString()}`, { method: "POST" });
       setJourney(directions);
-      await runCards(directions);
+      await runCards(directions, useDefault);
     } catch (reason) {
+      try {
+        setJourney(await api<Journey>(`/destiny/journeys/${current.journey_id}`));
+      } catch {
+        // Keep the last usable snapshot; the visible stage error remains actionable.
+      }
       setModelState("archetypes_failed");
+      setFallbackStage("archetypes");
       setError(reason instanceof Error ? reason.message : "角色方向生成失败");
     }
   }
@@ -340,6 +405,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     if (journey && (journey.archetypes.length || completedCount)
       && !window.confirm("修改种子会重新生成 8 个角色方向和 96 张命签，现有十二项选择将清空。")) return;
     setError("");
+    setFallbackStage("");
     try {
       const nextAvatar = await uploadAvatar();
       const created = await api<Journey>("/destiny/journeys", {
@@ -356,7 +422,44 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     }
   }
 
+  async function useDefaultTemplate() {
+    if (!journey || !fallbackStage) return;
+    setError("");
+    try {
+      const latest = await api<Journey>(`/destiny/journeys/${journey.journey_id}`);
+      setJourney(latest);
+      if (fallbackStage === "archetypes") await runArchetypes(latest, true);
+      else await runCards(latest, true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "读取最新旅程失败");
+    }
+  }
+
+  function returnToSeedEditing() {
+    window.localStorage.removeItem(RESUME_KEY);
+    setJourney(null); setModelState("idle"); setFallbackStage(""); setError("");
+    setSeedOpen(true); setStageOpen(false); setCompletionOpen(false);
+    setNotice("已返回角色种子；修改后会建立一段全新的旅程。");
+  }
+
+  async function rewindDirections() {
+    if (!journey || !journey.archetypes.length || savingSelection) return;
+    setSavingSelection(true); setError("");
+    try {
+      const updated = await api<Journey>(`/destiny/journeys/${journey.journey_id}/rewind/archetypes?expected_revision=${journey.revision}`, { method: "POST" });
+      setJourney(updated); setModelState("archetypes_failed"); setFallbackStage("archetypes");
+      setSeedOpen(true); setStageOpen(false); setCompletionOpen(false); setDrawerOpen(false);
+      setActiveSlotId(""); setPreviewCardId(""); setRotation(0);
+      setNotice("已撤回 8 个角色方向和 96 张命签；种子仍保留，可以重新生成或使用默认模板。");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "回退角色方向失败");
+    } finally {
+      setSavingSelection(false);
+    }
+  }
+
   function selectNode(slot: Slot) {
+    if (journeyMutationBusy) return;
     const slotIndex = slots.findIndex((item) => item.id === slot.id);
     const currentIndex = currentSlot ? slots.findIndex((item) => item.id === currentSlot.id) : 0;
     if (slotIndex > currentIndex && !journey?.selections?.[slot.id]) {
@@ -372,7 +475,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
 
   async function contractCard(cardId = previewCardId) {
     if (!journey || !activeSlot || !cardId) { setNotice("先预选一张命签，再进行落契。"); return; }
-    if (savingSelection) return;
+    if (journeyMutationBusy) return;
     const card = activeCards.find((item) => item.card_id === cardId);
     if (!card) { setNotice("这张命签不属于当前节点。"); return; }
     const replacing = Boolean(journey.selections?.[activeSlot.id]);
@@ -386,16 +489,21 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
       });
       const nextCount = Object.keys(updated.selections).length;
       setJourney(updated);
-      if (replacing) {
-        setPreviewCardId(updated.selections[activeSlot.id]?.card_id || "");
-        setNotice(`已更新 ${activeSlot.axis}，其余 ${Math.max(0, nextCount - 1)} 项选择保持不变。`);
-        return;
-      }
-      const next = slots[slots.findIndex((slot) => slot.id === activeSlot.id) + 1];
       setFlying(true);
-      setNotice(next ? `已定 ${nextCount}/12，命线已转入下一节点。` : "十二项已定，可以生成角色并开始聊天。" );
+      if (replacing) {
+        setNotice(`已更新 ${activeSlot.axis}，其余 ${Math.max(0, nextCount - 1)} 项选择保持不变。`);
+      } else {
+        const next = slots[slots.findIndex((slot) => slot.id === activeSlot.id) + 1];
+        setNotice(next ? `已定 ${nextCount}/12，命线已转入下一节点。` : "十二项已定，可以生成角色并开始聊天。" );
+      }
       window.setTimeout(() => {
         setFlying(false);
+        if (replacing) {
+          setPreviewCardId(updated.selections[activeSlot.id]?.card_id || "");
+          focusNode(activeSlot);
+          return;
+        }
+        const next = slots[slots.findIndex((slot) => slot.id === activeSlot.id) + 1];
         if (next) {
           setActiveSlotId(next.id);
           setPreviewCardId(updated.selections[next.id]?.card_id || "");
@@ -415,13 +523,14 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
   }
 
   async function dissolveSelections() {
-    if (!journey) return;
+    if (!journey || journeyMutationBusy) return;
     if (!dissolveArmed) {
       setDissolveArmed(true);
       setNotice("三秒内再次点击“再点确认”以解契十二项选择。");
       dissolveTimer.current = window.setTimeout(() => setDissolveArmed(false), 3000);
       return;
     }
+    setSavingSelection(true);
     try {
       const updated = await api<Journey>(`/destiny/journeys/${journey.journey_id}/selections?expected_revision=${journey.revision}`, { method: "DELETE" });
       setJourney(updated);
@@ -433,16 +542,39 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
       setNotice("十二项选择已清空，角色方向和 96 张命签仍被保留。");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "解契失败");
+    } finally {
+      setSavingSelection(false);
+    }
+  }
+
+  async function stepBack() {
+    if (!journey || journeyMutationBusy) return;
+    if (completedCount === 0) {
+      await rewindDirections();
+      return;
+    }
+    const previous = [...slots].reverse().find((slot) => journey.selections?.[slot.id]);
+    if (!previous) return;
+    setSavingSelection(true); setError("");
+    try {
+      const updated = await api<Journey>(`/destiny/journeys/${journey.journey_id}/selections/${previous.id}?expected_revision=${journey.revision}`, { method: "DELETE" });
+      setJourney(updated); setCompletionOpen(false); setDrawerOpen(false); setActiveSlotId(previous.id);
+      setPreviewCardId(""); setRotation(0); setStageOpen(true);
+      setNotice(`已回退到 ${previous.axis}，请重新选择。`); focusNode(previous);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "回退上一步失败");
+    } finally {
+      setSavingSelection(false);
     }
   }
 
   async function synthesize(current = journey): Promise<Journey | null> {
-    if (!current || Object.keys(current.selections || {}).length !== 12) return null;
+    if (!current || journeyMutationBusy || Object.keys(current.selections || {}).length !== 12) return null;
     if (current.final_card) return current;
     setModelState("synthesis");
     setError("");
     try {
-      const updated = await api<Journey>(`/destiny/journeys/${current.journey_id}/synthesize`, { method: "POST" });
+      const updated = await api<Journey>(`/destiny/journeys/${current.journey_id}/synthesize?expected_revision=${current.revision}`, { method: "POST" });
       setJourney(updated);
       setDrawerTab("card");
       setModelState("idle");
@@ -459,9 +591,10 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     setError("");
     let character: any;
     try {
-      const response = await api<{ success: boolean; character: any }>(`/destiny/journeys/${current.journey_id}/commit`, { method: "POST" });
+      const response = await api<{ success: boolean; character: any }>(`/destiny/journeys/${current.journey_id}/commit?expected_revision=${current.revision}`, { method: "POST" });
       character = response.character;
       setCommittedCharacter(character);
+      window.localStorage.setItem(PENDING_CHAT_KEY, JSON.stringify(character));
       setJourney((saved) => saved ? { ...saved, status: "committed", character_id: character?.character_id } : saved);
       window.localStorage.removeItem(RESUME_KEY);
     } catch (reason) {
@@ -472,6 +605,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     setModelState("chat");
     try {
       await onCommitted?.(character);
+      window.localStorage.removeItem(PENDING_CHAT_KEY);
       setModelState("idle");
       setNotice("角色已收入角色库并进入本地聊天。");
     } catch (reason) {
@@ -496,6 +630,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     setError("");
     try {
       await onCommitted?.(committedCharacter);
+      window.localStorage.removeItem(PENDING_CHAT_KEY);
       setModelState("idle");
     } catch (reason) {
       setModelState("chat_failed");
@@ -514,8 +649,24 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     const preview = URL.createObjectURL(file);
     setLocalAvatarUrl(preview);
     setAvatarFile(file);
-    setSeed((current) => ({ ...current, avatar: current.avatar || { src: preview, aspect: "2 / 3", scale: 1, x: 0, y: 0 } }));
+    setSeed((current) => ({
+      ...current,
+      avatar: {
+        ...(current.avatar || { aspect: "2 / 3", scale: 1, x: 0, y: 0 }),
+        src: preview,
+      },
+    }));
+    event.currentTarget.value = "";
     setError("");
+  }
+
+  async function restoreDefaultAvatar() {
+    const previous = seed.avatar;
+    if (localAvatarUrl) URL.revokeObjectURL(localAvatarUrl);
+    setLocalAvatarUrl("");
+    setAvatarFile(null);
+    updateSeed("avatar", null);
+    await discardUnattachedDestinyAvatar(previous);
   }
 
   function zoom(delta: number) {
@@ -525,7 +676,20 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
   function onWheel(event: WheelEvent<HTMLDivElement>) {
     event.preventDefault();
     const direction = event.deltaY > 0 ? -0.1 : 0.1;
-    setCamera((current) => ({ ...current, scale: Math.max(0.55, Math.min(1.65, current.scale + direction)) }));
+    const bounds = worldCameraRef.current?.getBoundingClientRect();
+    setCamera((current) => {
+      const nextScale = Math.max(0.55, Math.min(1.65, current.scale + direction));
+      if (!bounds || nextScale === current.scale) return { ...current, scale: nextScale };
+      const pointerX = event.clientX - (bounds.left + bounds.width / 2);
+      const pointerY = event.clientY - (bounds.top + bounds.height / 2);
+      const ratio = nextScale / current.scale;
+      return {
+        ...current,
+        scale: nextScale,
+        x: current.x + pointerX - ratio * pointerX,
+        y: current.y + pointerY - ratio * pointerY,
+      };
+    });
   }
 
   function pointerDown(event: PointerEvent<HTMLDivElement>) {
@@ -545,21 +709,31 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
 
   function dragStart(event: DragEvent<HTMLElement>, card: Card) {
     event.dataTransfer.setData("text/plain", card.card_id);
-    setPreviewCardId(card.card_id);
+    chooseCard(card.card_id);
+  }
+
+  function chooseCard(cardId: string) {
+    setPreviewCardId(cardId);
+    if (selectionEffectTimer.current) window.clearTimeout(selectionEffectTimer.current);
+    setSelectionEffectCardId(cardId);
+    selectionEffectTimer.current = window.setTimeout(() => setSelectionEffectCardId(""), 560);
   }
 
   function dropToSeal(event: DragEvent<HTMLButtonElement>) {
     event.preventDefault();
     const cardId = event.dataTransfer.getData("text/plain");
     if (cardId) {
-      setPreviewCardId(cardId);
+      chooseCard(cardId);
       void contractCard(cardId);
     }
   }
 
-  function closeSeed() {
+  async function closeSeed() {
     if (journey && generatedCardCount === 96) setSeedOpen(false);
-    else exit?.();
+    else {
+      await discardUnattachedDestinyAvatar(seed.avatar);
+      exit?.();
+    }
   }
 
   const seedButtonLabel = modelState === "archetypes"
@@ -587,6 +761,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
                 ? "收入角色库并开始聊天"
                 : "生成角色并开始聊天";
   const completionBusy = ["synthesis", "commit", "chat"].includes(modelState);
+  const journeyMutationBusy = savingSelection || ["archetypes", "cards", "synthesis", "commit", "chat"].includes(modelState);
 
   return <main className="destiny-v7" aria-label="命格画布">
     <div className="paper-atmosphere" aria-hidden="true"><i /><i /><i /><i /></div>
@@ -608,7 +783,8 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
 
       <div className="atlas-actions">
         <span>已定 <b>{completedCount}</b> / 12</span>
-        <button type="button" onClick={() => void dissolveSelections()}>{dissolveArmed ? "再点确认" : "解契"}</button>
+        <button type="button" disabled={(!completedCount && !archetypeCount) || journeyMutationBusy} onClick={() => void stepBack()}>上一步</button>
+        <button type="button" disabled={!journey || journeyMutationBusy} onClick={() => void dissolveSelections()}>{dissolveArmed ? "再点确认" : "解契"}</button>
       </div>
     </header>
 
@@ -651,6 +827,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
             onClick={() => selectNode(slot)}
             aria-label={`${slot.axis}${saved ? "，已落契" : ""}`}
             aria-disabled={future}
+            disabled={future || journeyMutationBusy}
           >
             <span className="node-index">{String(slot.index).padStart(2, "0")}</span>
             <span className="node-sigil"><b>{slot.icon}</b><i /><i /></span>
@@ -685,11 +862,12 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
             type="button"
             draggable
             onDragStart={(event) => dragStart(event, card)}
-            className={`destiny-slip willingness-${card.interaction_willingness} ${previewCardId === card.card_id ? "is-preview" : ""} ${flying && previewCardId === card.card_id ? "is-flying" : ""} fan-${index}`}
-            onClick={() => setPreviewCardId(card.card_id)}
+            className={`destiny-slip willingness-${card.interaction_willingness} ${previewCardId === card.card_id ? "is-preview" : ""} ${selectionEffectCardId === card.card_id ? "is-selecting" : ""} ${flying && previewCardId === card.card_id ? "is-flying" : ""} fan-${index}`}
+            onClick={() => chooseCard(card.card_id)}
             aria-pressed={previewCardId === card.card_id}
           >
             <span className="slip-grain" />
+            <span className="selection-burst" aria-hidden="true" />
             <header><span>源自 · {card.source_label}</span><b>{willingnessLabel(card.interaction_willingness)}</b></header>
             <div className="slip-mark">{card.interaction_willingness === "high" ? "金" : card.interaction_willingness === "low" ? "赤" : card.interaction_willingness === "neutral" ? "青" : "蓝"}</div>
             <h2>{card.label}</h2>
@@ -732,7 +910,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
       </nav>
     </div>
 
-    {(error || notice) && <div className={`destiny-toast ${error ? "is-error" : ""}`} role={error ? "alert" : "status"} data-no-pan>
+    {(notice || (error && !seedOpen && !completionOpen)) && <div className={`destiny-toast ${error ? "is-error" : ""}`} role={error ? "alert" : "status"} data-no-pan>
       <span>{error || notice}</span><button type="button" onClick={() => { setError(""); setNotice(""); }} aria-label="关闭提示">×</button>
     </div>}
 
@@ -747,7 +925,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
               <span>{seed.ai_name || "角色头像"}</span>
             </div>
             <label className="avatar-upload">上传头像<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={onAvatarChange} /></label>
-            <div className="avatar-actions"><button type="button" onClick={() => setAvatarTools((value) => !value)}>调整头像</button><button type="button" onClick={() => { setLocalAvatarUrl(""); setAvatarFile(null); updateSeed("avatar", null); }}>恢复默认</button></div>
+            <div className="avatar-actions"><button type="button" onClick={() => setAvatarTools((value) => !value)}>调整头像</button><button type="button" onClick={() => void restoreDefaultAvatar()}>恢复默认</button></div>
             {avatarTools && <div className="avatar-tools">
               <label>缩放<input aria-label="头像缩放" type="range" min="0.8" max="2" step="0.05" value={avatar?.scale || 1} onChange={(event) => updateSeed("avatar", { ...(avatar || { src: avatarSrc, aspect: "2 / 3", x: 0, y: 0, scale: 1 }), scale: Number(event.target.value) })} /></label>
               <label>横移<input aria-label="头像横移" type="range" min="-40" max="40" value={avatar?.x || 0} onChange={(event) => updateSeed("avatar", { ...(avatar || { src: avatarSrc, aspect: "2 / 3", x: 0, y: 0, scale: 1 }), x: Number(event.target.value) })} /></label>
@@ -773,7 +951,8 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
           <div className={generatedCardCount === 96 ? "is-done" : ""}><i>03</i><span><b>进入十二命格</b><small>{generatedCardCount === 96 ? "已就绪" : "等待"}</small></span></div>
         </section>
 
-        <footer className="seed-footer"><p>前两阶段格式失败不会隐藏追加模型调用；重试只执行失败阶段。</p><button className="seed-submit" type="button" disabled={modelState === "archetypes" || modelState === "cards"} onClick={() => { if (modelState === "cards_failed" && journey) void runCards(journey); else if (modelState === "archetypes_failed" && journey) void runArchetypes(journey); else void generateJourney(); }}>{seedButtonLabel}</button></footer>
+        {error && seedOpen && !completionOpen && <div className="completion-error" role="alert">{error}</div>}
+        <footer className="seed-footer"><p>调用失败时可重试，也可直接使用按角色性别区分的本地默认模板。</p>{modelState === "cards_failed" && journey?.archetypes.length ? <button className="seed-submit" type="button" disabled={journeyMutationBusy} onClick={() => void rewindDirections()}>重做角色方向</button> : modelState === "archetypes_failed" ? <button className="seed-submit" type="button" disabled={journeyMutationBusy} onClick={returnToSeedEditing}>修改角色种子</button> : null}{fallbackStage && <button className="seed-submit" type="button" disabled={journeyMutationBusy} onClick={() => void useDefaultTemplate()}>使用默认模板</button>}<button className="seed-submit" type="button" disabled={journeyMutationBusy || definition.slots.length !== 12} onClick={() => { if (modelState === "cards_failed" && journey) void runCards(journey); else if (modelState === "archetypes_failed" && journey) void runArchetypes(journey); else void generateJourney(); }}>{definition.slots.length !== 12 ? "正在载入命格定义…" : seedButtonLabel}</button></footer>
       </section>
     </div>}
 
@@ -804,9 +983,9 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
           <span className={`${journey?.status === "committed" ? "is-done" : modelState === "commit" ? "is-active" : modelState === "commit_failed" ? "is-failed" : ""}`}><i>{journey?.status === "committed" ? "✓" : "3"}</i><b>收入本地角色库</b><small>{modelState === "commit" ? "正在写入" : journey?.status === "committed" ? "已完成" : modelState === "commit_failed" ? "需要重试" : "等待"}</small></span>
           <span className={`${modelState === "chat" ? "is-active" : modelState === "chat_failed" ? "is-failed" : ""}`}><i>4</i><b>进入本地聊天</b><small>{modelState === "chat" ? "正在创建会话" : modelState === "chat_failed" ? "需要重试" : "等待"}</small></span>
         </div>
-        {error && <div className="completion-error" role="alert">{error}</div>}
+        {error && completionOpen && <div className="completion-error" role="alert">{error}</div>}
         <button className="completion-primary" type="button" disabled={completionBusy} onClick={() => { if (modelState === "chat_failed") void retryChat(); else void finishCharacter(); }}>{completionButtonLabel}</button>
-        {!completionBusy && <div className="completion-secondary"><button type="button" onClick={() => { setCompletionOpen(false); setDrawerTab("selections"); setDrawerOpen(true); }}>回看十二项</button><button type="button" onClick={() => setCompletionOpen(false)}>稍后生成</button></div>}
+        {!completionBusy && <div className="completion-secondary"><button type="button" onClick={() => void stepBack()}>回退上一步</button><button type="button" onClick={() => { setCompletionOpen(false); setDrawerTab("selections"); setDrawerOpen(true); }}>回看十二项</button><button type="button" onClick={() => setCompletionOpen(false)}>稍后生成</button></div>}
       </section>
     </div>}
   </main>;

@@ -35,9 +35,7 @@ class JournalCreate(BaseModel):
     title: str = Field(default="", max_length=120)
     content: str = Field(default="", max_length=12_000)
     status: Literal["draft", "saved", "archived"] = "draft"
-    source: Literal["user_written", "assistant_draft", "activity_summary", "template"] = (
-        "user_written"
-    )
+    source: Literal["user_written", "assistant_draft", "activity_summary", "template"] = "user_written"
     session_id: str = Field(default="", max_length=100)
     activity_session_id: str = Field(default="", max_length=100)
     cover_asset_id: str = Field(default="journal-cover-paper", max_length=120)
@@ -64,9 +62,7 @@ class MomentCreate(BaseModel):
     summary: str = Field(min_length=1, max_length=2_000)
     event_type: str = Field(default="shared_moment", max_length=64)
     status: Literal["candidate", "saved", "archived"] = "candidate"
-    source: Literal[
-        "user_confirmed", "activity_completion", "journal", "profile_migration"
-    ] = "user_confirmed"
+    source: Literal["user_confirmed", "activity_completion", "journal", "profile_migration"] = "user_confirmed"
     session_id: str = Field(default="", max_length=100)
     activity_session_id: str = Field(default="", max_length=100)
     journal_entry_id: str = Field(default="", max_length=100)
@@ -291,9 +287,7 @@ ACTIVITY_DEFINITIONS: tuple[dict[str, Any], ...] = (
 # Scene companion started as an activity in 0.7.0. Keep its definition readable
 # for old audit records, but expose its artwork through a lightweight
 # conversation-scene catalog instead of the activity state machine.
-LEGACY_SCENE_ACTIVITY = next(
-    item for item in ACTIVITY_DEFINITIONS if item["activity_id"] == "scene_companion"
-)
+LEGACY_SCENE_ACTIVITY = next(item for item in ACTIVITY_DEFINITIONS if item["activity_id"] == "scene_companion")
 SCENE_LOCATION_LABELS: dict[str, str] = {
     "riverside_evening": "暮色中的河岸边",
     "rainy_living_room": "下着雨的客厅窗边",
@@ -323,9 +317,8 @@ SCENE_DEFINITIONS: tuple[dict[str, Any], ...] = tuple(
     }
     for scene in LEGACY_SCENE_ACTIVITY["scenes"]
 )
-ACTIVITY_DEFINITIONS = tuple(
-    item for item in ACTIVITY_DEFINITIONS if item["activity_id"] != "scene_companion"
-)
+CUSTOM_SCENE_PREFIX = "custom-scene:"
+ACTIVITY_DEFINITIONS = tuple(item for item in ACTIVITY_DEFINITIONS if item["activity_id"] != "scene_companion")
 
 
 class SharedChapterService:
@@ -369,6 +362,24 @@ class SharedChapterService:
     def _character_scene_key(character_id: str) -> str:
         return f"character-scene-default:{character_id}"
 
+    @staticmethod
+    def _custom_scene_key(scene_id: str) -> str:
+        return f"{CUSTOM_SCENE_PREFIX}{scene_id}"
+
+    def _custom_scenes(self) -> list[dict[str, Any]]:
+        return [
+            deepcopy(value)
+            for _key, value in self.database.list_documents(CUSTOM_SCENE_PREFIX)
+            if isinstance(value, dict)
+        ]
+
+    def _find_scene(self, scene_id: str) -> dict[str, Any] | None:
+        built_in = next((item for item in SCENE_DEFINITIONS if item["scene_id"] == scene_id), None)
+        if built_in is not None:
+            return deepcopy(built_in)
+        custom = self.database.get_document(self._custom_scene_key(scene_id))
+        return deepcopy(custom) if isinstance(custom, dict) else None
+
     def _character(self, character_id: str) -> dict[str, Any]:
         record = self.characters.get(character_id)
         if record.get("status") != "active":
@@ -386,24 +397,18 @@ class SharedChapterService:
         ]
         saved_count = sum(item.get("status") == "saved" for item in moments)
         thresholds = (0, 3, 8, 16, 30)
-        heart_index = max(
-            index for index, threshold in enumerate(thresholds) if saved_count >= threshold
-        )
+        heart_index = max(index for index, threshold in enumerate(thresholds) if saved_count >= threshold)
         return {
             "character_id": character_id,
             "journal_count": sum(item.get("status") != "archived" for item in journals),
             "moment_count": saved_count,
-            "candidate_moment_count": sum(
-                item.get("status") == "candidate" for item in moments
-            ),
+            "candidate_moment_count": sum(item.get("status") == "candidate" for item in moments),
             "activity_count": sum(item.get("status") == "completed" for item in sessions),
             "heart_state": ("empty", "trace", "warm", "glow", "keepsake")[heart_index],
             "next_heart_at": thresholds[heart_index + 1] if heart_index < 4 else None,
         }
 
-    def list_journals(
-        self, character_id: str, *, include_archived: bool = False
-    ) -> list[dict[str, Any]]:
+    def list_journals(self, character_id: str, *, include_archived: bool = False) -> list[dict[str, Any]]:
         self._character(character_id)
         items = [
             deepcopy(value)
@@ -436,12 +441,8 @@ class SharedChapterService:
             "created_at": now,
             "updated_at": now,
         }
-        with self.database.transaction(
-            operation="create_journal", details={"character_id": character_id}
-        ):
-            self.database.put_document(
-                self._journal_key(character_id, entry["entry_id"]), entry
-            )
+        with self.database.transaction(operation="create_journal", details={"character_id": character_id}):
+            self.database.put_document(self._journal_key(character_id, entry["entry_id"]), entry)
         self.audit.record(
             "journal_created",
             {
@@ -452,9 +453,7 @@ class SharedChapterService:
         )
         return deepcopy(entry)
 
-    def update_journal(
-        self, character_id: str, entry_id: str, payload: JournalUpdate
-    ) -> dict[str, Any]:
+    def update_journal(self, character_id: str, entry_id: str, payload: JournalUpdate) -> dict[str, Any]:
         key = self._journal_key(character_id, entry_id)
         current = self.database.get_document(key)
         if not isinstance(current, dict):
@@ -542,23 +541,16 @@ class SharedChapterService:
                 {
                     "role": "user",
                     "content": (
-                        "以下内容是唯一可引用证据。请先在内部确认："
-                        f"“我”={name}，“用户本人”=与{name}交谈的人。\n"
+                        f"以下内容是唯一可引用证据。请先在内部确认：“我”={name}，“用户本人”=与{name}交谈的人。\n"
                     )
                     + "\n".join(
-                        (
-                            f"[第{item['round']}轮] "
-                            f"{self._journal_speaker_label(item['role'], name)}："
-                            f"{item['content']}"
-                        )
+                        (f"[第{item['round']}轮] {self._journal_speaker_label(item['role'], name)}：{item['content']}")
                         for item in visible
                     ),
                 },
             ]
             try:
-                content = str(
-                    self.llm_provider().generate(messages, self.api_provider())
-                ).strip()
+                content = str(self.llm_provider().generate(messages, self.api_provider())).strip()
                 content = re.sub(r"^```(?:markdown|text)?|```$", "", content).strip()
                 if len(content) < 20:
                     raise ValueError("journal draft is too short")
@@ -603,9 +595,7 @@ class SharedChapterService:
         return "用户本人（不是日记作者）" if role == "user" else f"{name}本人（日记作者）"
 
     @staticmethod
-    def _journal_dialogue_window(
-        history: list[dict[str, Any]], *, limit_rounds: int
-    ) -> list[dict[str, Any]]:
+    def _journal_dialogue_window(history: list[dict[str, Any]], *, limit_rounds: int) -> list[dict[str, Any]]:
         """Keep complete, user-anchored rounds so initiative output cannot become a diary."""
 
         grouped: dict[int, list[dict[str, Any]]] = {}
@@ -639,11 +629,7 @@ class SharedChapterService:
         if not history:
             return f"这是一本属于{name}的空白小记。等有了想留下的片刻，再从这里慢慢写起。"
         latest_user = next(
-            (
-                item["content"][:160]
-                for item in reversed(history)
-                if item["role"] == "user" and item.get("content")
-            ),
+            (item["content"][:160] for item in reversed(history) if item["role"] == "user" and item.get("content")),
             "",
         )
         latest_self = next(
@@ -660,9 +646,7 @@ class SharedChapterService:
         parts.append("这些是我们今天真实留下的话，其他感受我想等更清楚时再慢慢写。")
         return "".join(parts)
 
-    def list_moments(
-        self, character_id: str, *, include_archived: bool = False
-    ) -> list[dict[str, Any]]:
+    def list_moments(self, character_id: str, *, include_archived: bool = False) -> list[dict[str, Any]]:
         self._character(character_id)
         items = [
             deepcopy(value)
@@ -673,9 +657,7 @@ class SharedChapterService:
             items = [item for item in items if item.get("status") != "archived"]
         return sorted(items, key=lambda item: str(item.get("updated_at") or ""), reverse=True)
 
-    def search_narratives(
-        self, character_id: str, query: str, *, limit: int = 3
-    ) -> list[RetrievedChunk]:
+    def search_narratives(self, character_id: str, query: str, *, limit: int = 3) -> list[RetrievedChunk]:
         """Return only lexical hits and keep them explicitly below fact authority.
 
         Journals are subjective role narration, so this deliberately avoids the
@@ -689,22 +671,11 @@ class SharedChapterService:
             return []
         candidates: list[tuple[float, str, dict[str, Any]]] = []
         records = [
-            *(
-                ("journal", item)
-                for item in self.list_journals(character_id)
-                if item.get("status") == "saved"
-            ),
-            *(
-                ("moment", item)
-                for item in self.list_moments(character_id)
-                if item.get("status") == "saved"
-            ),
+            *(("journal", item) for item in self.list_journals(character_id) if item.get("status") == "saved"),
+            *(("moment", item) for item in self.list_moments(character_id) if item.get("status") == "saved"),
         ]
         for kind, item in records:
-            text = (
-                f"{item.get('title', '')}\n"
-                f"{item.get('content') or item.get('summary') or ''}"
-            ).strip()
+            text = (f"{item.get('title', '')}\n{item.get('content') or item.get('summary') or ''}").strip()
             tokens = self._narrative_tokens(text)
             overlap = len(query_tokens & tokens)
             if overlap <= 0:
@@ -715,10 +686,7 @@ class SharedChapterService:
         return [
             RetrievedChunk(
                 chunk_id=f"narrative:{kind}:{item.get('entry_id') or item.get('moment_id')}",
-                text=(
-                    f"{item.get('title', '')}\n"
-                    f"{item.get('content') or item.get('summary') or ''}"
-                ).strip()[:2_500],
+                text=(f"{item.get('title', '')}\n{item.get('content') or item.get('summary') or ''}").strip()[:2_500],
                 source="memory",
                 score=score,
                 weighted_score=score,
@@ -738,10 +706,7 @@ class SharedChapterService:
     def _narrative_tokens(value: str) -> set[str]:
         normalized = re.sub(r"\s+", "", str(value or "").lower())
         chinese = "".join(re.findall(r"[\u3400-\u9fff]", normalized))
-        tokens = {
-            chinese[index : index + 2]
-            for index in range(max(0, len(chinese) - 1))
-        }
+        tokens = {chinese[index : index + 2] for index in range(max(0, len(chinese) - 1))}
         tokens.update(re.findall(r"[a-z0-9_]{2,}", normalized))
         return tokens
 
@@ -764,14 +729,10 @@ class SharedChapterService:
             operation="create_relationship_moment",
             details={"character_id": character_id, "status": moment["status"]},
         ):
-            self.database.put_document(
-                self._moment_key(character_id, moment["moment_id"]), moment
-            )
+            self.database.put_document(self._moment_key(character_id, moment["moment_id"]), moment)
         return deepcopy(moment)
 
-    def update_moment(
-        self, character_id: str, moment_id: str, payload: MomentUpdate
-    ) -> dict[str, Any]:
+    def update_moment(self, character_id: str, moment_id: str, payload: MomentUpdate) -> dict[str, Any]:
         key = self._moment_key(character_id, moment_id)
         current = self.database.get_document(key)
         if not isinstance(current, dict):
@@ -795,7 +756,38 @@ class SharedChapterService:
     def scenes(self) -> list[dict[str, Any]]:
         """Return visual environments; selecting one never starts an activity."""
 
-        return deepcopy(list(SCENE_DEFINITIONS))
+        return deepcopy(list(SCENE_DEFINITIONS)) + self._custom_scenes()
+
+    def create_custom_scene(
+        self,
+        *,
+        scene_id: str,
+        title: str,
+        description: str,
+        asset_id: str,
+        asset_url: str,
+    ) -> dict[str, Any]:
+        """Register a user-owned background without mutating the bundled art archive."""
+
+        clean_title = _clean_text(title, 80) or "自定义场景"
+        clean_description = _clean_text(description, 300) or f"与角色共同置身于{clean_title}。"
+        record = {
+            "scene_id": scene_id,
+            "title": clean_title,
+            "description": clean_description,
+            "location": clean_title,
+            "asset_id": asset_id,
+            "asset_url": asset_url,
+            "custom": True,
+            "created_at": _now(),
+        }
+        with self.database.transaction(
+            operation="create_custom_scene",
+            details={"scene_id": scene_id},
+        ):
+            self.database.put_document(self._custom_scene_key(scene_id), record)
+        self.audit.record("custom_scene_created", {"scene_id": scene_id})
+        return deepcopy(record)
 
     def _bound_scene_session(self, session_id: str) -> tuple[dict[str, Any], str]:
         session = self.sessions.load_session(session_id)
@@ -810,18 +802,9 @@ class SharedChapterService:
         current = self.database.get_document(self._scene_key(session_id))
         if isinstance(current, dict):
             return deepcopy(current)
-        preference = self.database.get_document(
-            self._character_scene_key(character_id)
-        )
-        scene_id = (
-            str(preference.get("scene_id") or "")
-            if isinstance(preference, dict)
-            else ""
-        )
-        scene = next(
-            (item for item in SCENE_DEFINITIONS if item["scene_id"] == scene_id),
-            None,
-        )
+        preference = self.database.get_document(self._character_scene_key(character_id))
+        scene_id = str(preference.get("scene_id") or "") if isinstance(preference, dict) else ""
+        scene = self._find_scene(scene_id)
         return {
             "session_id": session_id,
             "character_id": character_id,
@@ -831,18 +814,9 @@ class SharedChapterService:
             "updated_at": "",
         }
 
-    def set_session_scene(
-        self, session_id: str, payload: SceneSelectionUpdate
-    ) -> dict[str, Any]:
+    def set_session_scene(self, session_id: str, payload: SceneSelectionUpdate) -> dict[str, Any]:
         _session, character_id = self._bound_scene_session(session_id)
-        scene = next(
-            (
-                item
-                for item in SCENE_DEFINITIONS
-                if item["scene_id"] == payload.scene_id
-            ),
-            None,
-        )
+        scene = self._find_scene(payload.scene_id)
         if scene is None:
             raise ValueError("unknown conversation scene")
         key = self._scene_key(session_id)
@@ -873,9 +847,7 @@ class SharedChapterService:
             },
         ):
             self.database.put_document(key, record)
-            self.database.put_document(
-                self._character_scene_key(character_id), preference
-            )
+            self.database.put_document(self._character_scene_key(character_id), preference)
         self.audit.record(
             "conversation_scene_changed",
             {
@@ -886,9 +858,7 @@ class SharedChapterService:
         )
         return deepcopy(record)
 
-    def scene_prompt_context(
-        self, session_id: str, *, character_id: str
-    ) -> dict[str, Any] | None:
+    def scene_prompt_context(self, session_id: str, *, character_id: str) -> dict[str, Any] | None:
         scene_record = self.get_session_scene(session_id)
         if str(scene_record.get("character_id") or "") != character_id:
             raise ValueError("conversation scene belongs to another character")
@@ -940,9 +910,7 @@ class SharedChapterService:
             raise KeyError("activity session not found")
         return deepcopy(value)
 
-    def list_activity_sessions(
-        self, character_id: str, *, include_finished: bool = True
-    ) -> list[dict[str, Any]]:
+    def list_activity_sessions(self, character_id: str, *, include_finished: bool = True) -> list[dict[str, Any]]:
         self._character(character_id)
         items = [
             deepcopy(value)
@@ -953,9 +921,7 @@ class SharedChapterService:
             items = [item for item in items if item.get("status") == "active"]
         return sorted(items, key=lambda item: str(item.get("updated_at") or ""), reverse=True)
 
-    def apply_activity_action(
-        self, activity_session_id: str, payload: ActivityAction
-    ) -> dict[str, Any]:
+    def apply_activity_action(self, activity_session_id: str, payload: ActivityAction) -> dict[str, Any]:
         key = self._activity_key(activity_session_id)
         current = self.get_activity_session(activity_session_id)
         replay = (current.get("processed_actions") or {}).get(payload.action_id)
@@ -983,9 +949,7 @@ class SharedChapterService:
             },
         ):
             self.database.put_document(key, candidate)
-            if candidate["status"] == "completed" and not candidate["state"].get(
-                "candidate_moment_id"
-            ):
+            if candidate["status"] == "completed" and not candidate["state"].get("candidate_moment_id"):
                 moment = self.create_moment(
                     str(candidate["character_id"]),
                     MomentCreate(
@@ -1004,9 +968,7 @@ class SharedChapterService:
                 result["candidate_moment"] = moment
         return {"session": deepcopy(candidate), "result": result, "idempotent_replay": False}
 
-    def prompt_context(
-        self, activity_session_id: str, *, character_id: str
-    ) -> dict[str, Any]:
+    def prompt_context(self, activity_session_id: str, *, character_id: str) -> dict[str, Any]:
         session = self.get_activity_session(activity_session_id)
         if session.get("character_id") != character_id:
             raise ValueError("activity session belongs to another character")
@@ -1077,9 +1039,7 @@ class SharedChapterService:
                 if not answer or not state.get("current_question"):
                     raise ValueError("question and answer are required")
                 answers = list(state.get("answers") or [])
-                answers.append(
-                    {"question": state["current_question"], "user_answer": answer}
-                )
+                answers.append({"question": state["current_question"], "user_answer": answer})
                 state["answers"] = answers[-20:]
                 state.pop("current_question", None)
                 session["phase"] = "ready"
@@ -1089,11 +1049,7 @@ class SharedChapterService:
             node = definition["nodes"].get(current_node)
             choice_id = _clean_text(payload.payload.get("choice_id"), 64)
             choice = next(
-                (
-                    item
-                    for item in (node or {}).get("choices", [])
-                    if item["choice_id"] == choice_id
-                ),
+                (item for item in (node or {}).get("choices", []) if item["choice_id"] == choice_id),
                 None,
             )
             if choice is None:
@@ -1107,9 +1063,7 @@ class SharedChapterService:
         raise ValueError("action is not allowed for this activity")
 
     @staticmethod
-    def _validate_completion(
-        session: dict[str, Any], definition: dict[str, Any]
-    ) -> None:
+    def _validate_completion(session: dict[str, Any], definition: dict[str, Any]) -> None:
         state = session.get("state") or {}
         activity_id = definition["activity_id"]
         if activity_id == "scene_companion" and not state.get("scene"):
@@ -1165,9 +1119,7 @@ class SharedChapterService:
                 for source, text in values:
                     if not text:
                         continue
-                    digest = hashlib.sha256(
-                        f"{character_id}:{source}:{text}".encode()
-                    ).hexdigest()[:32]
+                    digest = hashlib.sha256(f"{character_id}:{source}:{text}".encode()).hexdigest()[:32]
                     key = self._moment_key(character_id, digest)
                     if self.database.has_document(key):
                         continue

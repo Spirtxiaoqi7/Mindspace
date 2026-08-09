@@ -26,9 +26,7 @@ class ProductDatabase:
     def __init__(self, path: Path) -> None:
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._active: ContextVar[sqlite3.Connection | None] = ContextVar(
-            f"mindspace_db_{id(self)}", default=None
-        )
+        self._active: ContextVar[sqlite3.Connection | None] = ContextVar(f"mindspace_db_{id(self)}", default=None)
         self._projections: ContextVar[list[Projection] | None] = ContextVar(
             f"mindspace_projections_{id(self)}", default=None
         )
@@ -125,6 +123,9 @@ class ProductDatabase:
                 );
                 """
             )
+            columns = {str(row["name"]) for row in db.execute("PRAGMA table_info(conversation_runs)").fetchall()}
+            if "request_digest" not in columns:
+                db.execute("ALTER TABLE conversation_runs ADD COLUMN request_digest TEXT NOT NULL DEFAULT ''")
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
@@ -168,8 +169,7 @@ class ProductDatabase:
             transaction_id = int(cursor.lastrowid)
             yield db
             db.execute(
-                "UPDATE transaction_log SET status='committed', committed_at=CURRENT_TIMESTAMP "
-                "WHERE transaction_id=?",
+                "UPDATE transaction_log SET status='committed', committed_at=CURRENT_TIMESTAMP WHERE transaction_id=?",
                 (transaction_id,),
             )
             db.commit()
@@ -209,10 +209,7 @@ class ProductDatabase:
         """Close prior incidents before repositories regenerate all projections."""
 
         with self.connection() as db:
-            db.execute(
-                "UPDATE projection_failures SET resolved_at=CURRENT_TIMESTAMP "
-                "WHERE resolved_at IS NULL"
-            )
+            db.execute("UPDATE projection_failures SET resolved_at=CURRENT_TIMESTAMP WHERE resolved_at IS NULL")
 
     @staticmethod
     def _encode(value: Any) -> str:
@@ -220,24 +217,15 @@ class ProductDatabase:
 
     def has_document(self, key: str) -> bool:
         with self.connection() as db:
-            return (
-                db.execute(
-                    "SELECT 1 FROM product_documents WHERE document_key=?", (key,)
-                ).fetchone()
-                is not None
-            )
+            return db.execute("SELECT 1 FROM product_documents WHERE document_key=?", (key,)).fetchone() is not None
 
     def get_document(self, key: str, default: Any = None) -> Any:
         with self.connection() as db:
-            row = db.execute(
-                "SELECT data_json FROM product_documents WHERE document_key=?", (key,)
-            ).fetchone()
+            row = db.execute("SELECT data_json FROM product_documents WHERE document_key=?", (key,)).fetchone()
         return default if row is None else json.loads(row["data_json"])
 
     def put_document(self, key: str, value: Any) -> None:
-        schema_version = (
-            str(value.get("schema_version", "1.0.0")) if isinstance(value, dict) else "1.0.0"
-        )
+        schema_version = str(value.get("schema_version", "1.0.0")) if isinstance(value, dict) else "1.0.0"
         revision = int(value.get("revision", 0)) if isinstance(value, dict) else 0
         updated_at = str(value.get("updated_at", "")) if isinstance(value, dict) else ""
         with self.connection() as db:
@@ -254,6 +242,33 @@ class ProductDatabase:
                 """,
                 (key, schema_version, revision, self._encode(value), updated_at),
             )
+
+    def compare_and_swap_document(self, key: str, *, expected_revision: int, value: Any) -> bool:
+        """Persist a document only when its revision is still current."""
+
+        schema_version = str(value.get("schema_version", "1.0.0")) if isinstance(value, dict) else "1.0.0"
+        revision = int(value.get("revision", 0)) if isinstance(value, dict) else 0
+        if revision != expected_revision + 1:
+            raise ValueError("compare-and-swap document revision is invalid")
+        updated_at = str(value.get("updated_at", "")) if isinstance(value, dict) else ""
+        with self.connection() as db:
+            cursor = db.execute(
+                """
+                UPDATE product_documents
+                SET schema_version=?, revision=?, data_json=?,
+                    updated_at=COALESCE(NULLIF(?, ''), CURRENT_TIMESTAMP)
+                WHERE document_key=? AND revision=?
+                """,
+                (
+                    schema_version,
+                    revision,
+                    self._encode(value),
+                    updated_at,
+                    key,
+                    expected_revision,
+                ),
+            )
+        return cursor.rowcount == 1
 
     def delete_document(self, key: str) -> bool:
         with self.connection() as db:
@@ -287,9 +302,7 @@ class ProductDatabase:
             )
             documents = int(db.execute("SELECT COUNT(*) FROM product_documents").fetchone()[0])
             projection_failures = int(
-                db.execute(
-                    "SELECT COUNT(*) FROM projection_failures WHERE resolved_at IS NULL"
-                ).fetchone()[0]
+                db.execute("SELECT COUNT(*) FROM projection_failures WHERE resolved_at IS NULL").fetchone()[0]
             )
             has_role_jobs = db.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='role_audit_jobs'"
@@ -318,29 +331,29 @@ class ProductDatabase:
         return datetime.now(UTC).isoformat()
 
     def create_conversation_run(
-        self, *, run_id: str, session_id: str, round_num: int
+        self, *, run_id: str, session_id: str, round_num: int, request_digest: str = ""
     ) -> dict[str, Any]:
         """Create one durable run identity before model execution starts."""
 
         now = self._now()
         with self.connection() as db:
-            existing = db.execute(
-                "SELECT * FROM conversation_runs WHERE run_id=?", (run_id,)
-            ).fetchone()
+            existing = db.execute("SELECT * FROM conversation_runs WHERE run_id=?", (run_id,)).fetchone()
             if existing is not None:
-                if (
-                    str(existing["session_id"]) != session_id
-                    or int(existing["round_num"]) != round_num
-                ):
+                if str(existing["session_id"]) != session_id or int(existing["round_num"]) != round_num:
                     raise ValueError("request id is already bound to another turn")
+                existing_digest = str(existing["request_digest"] or "")
+                if request_digest and (not existing_digest or existing_digest != request_digest):
+                    raise ValueError("request id is already bound to a different request")
+                if not request_digest and existing_digest:
+                    raise ValueError("request id requires its original request digest")
                 return dict(existing)
             db.execute(
                 """
                 INSERT INTO conversation_runs(
-                    run_id, session_id, round_num, status, created_at, updated_at
-                ) VALUES(?, ?, ?, 'running', ?, ?)
+                    run_id, session_id, round_num, request_digest, status, created_at, updated_at
+                ) VALUES(?, ?, ?, ?, 'running', ?, ?)
                 """,
-                (run_id, session_id, round_num, now, now),
+                (run_id, session_id, round_num, request_digest, now, now),
             )
         return self.get_conversation_run(run_id) or {}
 
@@ -384,9 +397,7 @@ class ProductDatabase:
                 (sequence, int(terminal), status, int(terminal), event, now, run_id),
             )
             count = int(
-                db.execute(
-                    "SELECT COUNT(*) FROM conversation_run_events WHERE run_id=?", (run_id,)
-                ).fetchone()[0]
+                db.execute("SELECT COUNT(*) FROM conversation_run_events WHERE run_id=?", (run_id,)).fetchone()[0]
             )
             if count > max_events:
                 db.execute(
@@ -400,9 +411,7 @@ class ProductDatabase:
                     (run_id, run_id, count - max_events),
                 )
 
-    def checkpoint_conversation_run(
-        self, run_id: str, partial_text: str, latest_seq: int
-    ) -> None:
+    def checkpoint_conversation_run(self, run_id: str, partial_text: str, latest_seq: int) -> None:
         with self.connection() as db:
             db.execute(
                 """
@@ -414,9 +423,7 @@ class ProductDatabase:
 
     def get_conversation_run(self, run_id: str) -> dict[str, Any] | None:
         with self.connection() as db:
-            row = db.execute(
-                "SELECT * FROM conversation_runs WHERE run_id=?", (run_id,)
-            ).fetchone()
+            row = db.execute("SELECT * FROM conversation_runs WHERE run_id=?", (run_id,)).fetchone()
         return dict(row) if row is not None else None
 
     def conversation_run_events(self, run_id: str, after_sequence: int = 0) -> list[str]:
@@ -436,9 +443,7 @@ class ProductDatabase:
         now = self._now()
         recovered = 0
         with self.connection() as db:
-            rows = db.execute(
-                "SELECT * FROM conversation_runs WHERE status='running'"
-            ).fetchall()
+            rows = db.execute("SELECT * FROM conversation_runs WHERE status='running'").fetchall()
             for row in rows:
                 # A client may have consumed a few in-memory delta sequence IDs
                 # after the last 500 ms checkpoint. A large recovery epoch keeps
@@ -482,8 +487,7 @@ class ProductDatabase:
                     "data": {"partial_text": partial, "reason": "core_restarted"},
                 }
                 payload = (
-                    f"id: {sequence}\nevent: run.interrupted\n"
-                    f"data: {json.dumps(interrupted, ensure_ascii=False)}\n\n"
+                    f"id: {sequence}\nevent: run.interrupted\ndata: {json.dumps(interrupted, ensure_ascii=False)}\n\n"
                 )
                 db.execute(
                     """

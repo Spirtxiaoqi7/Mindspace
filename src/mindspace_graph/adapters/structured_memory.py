@@ -235,9 +235,7 @@ class StructuredMemoryStore:
             data = self._load()
             if patches:
                 data["episodes"][episode_id] = episode
-                data["untagged"] = [
-                    item for item in data["untagged"] if item.get("episode_id") != episode_id
-                ]
+                data["untagged"] = [item for item in data["untagged"] if item.get("episode_id") != episode_id]
                 bindings = [
                     self._binding(
                         raw_patch,
@@ -265,12 +263,8 @@ class StructuredMemoryStore:
                             binding["recall_count"] = int(previous.get("recall_count", 0))
                             binding["selection_count"] = int(previous.get("selection_count", 0))
                             binding["eligible_misses"] = int(previous.get("eligible_misses", 0))
-                            binding["last_selected_round"] = int(
-                                previous.get("last_selected_round", 0)
-                            )
-                            binding["confirmation_count"] = (
-                                int(previous.get("confirmation_count", 1)) + 1
-                            )
+                            binding["last_selected_round"] = int(previous.get("last_selected_round", 0))
+                            binding["confirmation_count"] = int(previous.get("confirmation_count", 1)) + 1
                             self._invalidate(data, memory_key, episode_id, timestamp, "superseded")
                         data["active"][memory_key] = binding
                 self._enforce_active_limits(data, timestamp)
@@ -344,9 +338,7 @@ class StructuredMemoryStore:
                 "first_seen_at": timestamp,
                 "last_seen_at": timestamp,
                 "repeat_count": 1,
-                "expires_at": (
-                    datetime.fromisoformat(timestamp) + timedelta(days=self.untagged_ttl_days)
-                ).isoformat(),
+                "expires_at": (datetime.fromisoformat(timestamp) + timedelta(days=self.untagged_ttl_days)).isoformat(),
             }
         )
 
@@ -358,9 +350,7 @@ class StructuredMemoryStore:
         ]
         for key in expired_keys:
             self._invalidate(data, key, "", now.isoformat(), "expired")
-        untagged = [
-            item for item in data["untagged"] if self._parse_time(item.get("expires_at")) > now
-        ]
+        untagged = [item for item in data["untagged"] if self._parse_time(item.get("expires_at")) > now]
         untagged.sort(key=lambda item: str(item.get("last_seen_at", "")), reverse=True)
         per_session: dict[str, int] = {}
         retained = []
@@ -377,9 +367,7 @@ class StructuredMemoryStore:
         referenced = {str(item.get("episode_id")) for item in data["active"].values()} | {
             str(item.get("episode_id")) for item in retained
         }
-        data["episodes"] = {
-            key: value for key, value in data["episodes"].items() if key in referenced
-        }
+        data["episodes"] = {key: value for key, value in data["episodes"].items() if key in referenced}
 
     @staticmethod
     def _parse_time(raw: Any) -> datetime:
@@ -402,9 +390,7 @@ class StructuredMemoryStore:
                 result.append({**deepcopy(record), "episode": deepcopy(episode)})
         return result
 
-    def list_items(
-        self, *, include_history: bool = False, character_id: str = ""
-    ) -> list[dict[str, Any]]:
+    def list_items(self, *, include_history: bool = False, character_id: str = "") -> list[dict[str, Any]]:
         with self._lock:
             data = self._load()
         items: list[dict[str, Any]] = []
@@ -437,9 +423,7 @@ class StructuredMemoryStore:
         return sorted(items, key=lambda item: str(item.get("updated_at") or ""), reverse=True)
 
     @staticmethod
-    def _public_item(
-        record: dict[str, Any], episode: dict[str, Any], status: str
-    ) -> dict[str, Any]:
+    def _public_item(record: dict[str, Any], episode: dict[str, Any], status: str) -> dict[str, Any]:
         text = str(episode.get("text") or "")
         return {
             "memory_key": record.get("memory_key", ""),
@@ -513,8 +497,7 @@ class StructuredMemoryStore:
             (
                 deepcopy(item)
                 for item in reversed(data["tombstones"])
-                if item.get("memory_key") == memory_key
-                and isinstance(item.get("removed_record"), dict)
+                if item.get("memory_key") == memory_key and isinstance(item.get("removed_record"), dict)
             ),
             None,
         )
@@ -587,19 +570,13 @@ class StructuredMemoryStore:
     def _forget(self, predicate: Any) -> int:
         with self._lock:
             data = self._load()
-            forgotten = {
-                episode_id for episode_id, episode in data["episodes"].items() if predicate(episode)
-            }
+            forgotten = {episode_id for episode_id, episode in data["episodes"].items() if predicate(episode)}
             if not forgotten:
                 return 0
             data["active"] = {
-                key: value
-                for key, value in data["active"].items()
-                if value.get("episode_id") not in forgotten
+                key: value for key, value in data["active"].items() if value.get("episode_id") not in forgotten
             }
-            data["untagged"] = [
-                item for item in data["untagged"] if item.get("episode_id") not in forgotten
-            ]
+            data["untagged"] = [item for item in data["untagged"] if item.get("episode_id") not in forgotten]
             for episode_id in forgotten:
                 data["episodes"].pop(episode_id, None)
             self._save(data)

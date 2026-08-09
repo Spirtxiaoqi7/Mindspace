@@ -59,6 +59,8 @@ _ADULT_FACT_TOKENS = (
     "吞",
     "舔",
 )
+
+
 def build_contextual_retrieval_query(
     message: str, history: list[dict[str, Any]], *, limit: int = 900
 ) -> tuple[str, str]:
@@ -84,9 +86,7 @@ def build_contextual_retrieval_query(
     return query[-limit:], "anaphora_expanded"
 
 
-def should_open_adult_continuity(
-    message: str, history: list[dict[str, Any]], *, adult_mode: bool
-) -> bool:
+def should_open_adult_continuity(message: str, history: list[dict[str, Any]], *, adult_mode: bool) -> bool:
     """Allow adult history only for an explicit topic or its immediate anaphoric follow-up."""
 
     if adult_mode or _EXPLICIT_ADULT_RECALL.search(message or ""):
@@ -130,9 +130,7 @@ class NodeFactory:
 
         counts = state.get("llm_call_counts", {})
         total = sum(int(value) for value in counts.values())
-        return total < cls.TOTAL_CALL_BUDGET and int(counts.get(kind, 0)) < int(
-            cls.CALL_BUDGETS[kind]
-        )
+        return total < cls.TOTAL_CALL_BUDGET and int(counts.get(kind, 0)) < int(cls.CALL_BUDGETS[kind])
 
     @classmethod
     def _record_call(
@@ -197,9 +195,7 @@ class NodeFactory:
         deletion_events = self.deps.sessions.load_pending_deletions(request.session_id)
         recent_history = self.deps.sessions.load_all(request.session_id)
         if request.mode == "regenerate":
-            recent_history = [
-                item for item in recent_history if int(item.get("round", 0)) != request.round
-            ]
+            recent_history = [item for item in recent_history if int(item.get("round", 0)) != request.round]
             if self.deps.context is not None:
                 self.deps.context.invalidate(
                     request.session_id,
@@ -207,11 +203,7 @@ class NodeFactory:
                     details={"round": request.round},
                 )
         previous_emotion_state = None
-        if (
-            request.interaction_mode == "voice"
-            and self.deps.emotion is not None
-            and self.deps.emotion.enabled()
-        ):
+        if request.interaction_mode == "voice" and self.deps.emotion is not None and self.deps.emotion.enabled():
             previous = getattr(self.deps.emotion, "previous_for_round", None)
             if callable(previous):
                 previous_emotion_state = previous(request.session_id, request.round)
@@ -244,9 +236,7 @@ class NodeFactory:
                 "knowledge_chunks": [],
                 "trace": ["retrieve_knowledge_deferred"],
             }
-        capability_allowed = self.deps.capabilities is None or self.deps.capabilities.enabled(
-            "local_knowledge_enabled"
-        )
+        capability_allowed = self.deps.capabilities is None or self.deps.capabilities.enabled("local_knowledge_enabled")
         if capability_allowed and settings.rag_enabled and settings.knowledge_enabled:
             query = request.message
             chunks = self.deps.retriever.search_knowledge(
@@ -273,13 +263,9 @@ class NodeFactory:
                 "chat_chunks": [],
                 "trace": ["retrieve_chat_deferred"],
             }
-        capability_allowed = self.deps.capabilities is None or self.deps.capabilities.enabled(
-            "local_knowledge_enabled"
-        )
+        capability_allowed = self.deps.capabilities is None or self.deps.capabilities.enabled("local_knowledge_enabled")
         if capability_allowed and settings.rag_enabled and settings.chat_enabled:
-            query, query_mode = build_contextual_retrieval_query(
-                request.message, state.get("recent_history", [])
-            )
+            query, query_mode = build_contextual_retrieval_query(request.message, state.get("recent_history", []))
             adult_recall = should_open_adult_continuity(
                 request.message,
                 state.get("recent_history", []),
@@ -304,9 +290,7 @@ class NodeFactory:
                     query,
                     limit=min(3, settings.memory_family_limit),
                 )
-                chunks.extend(
-                    item for item in narratives if item.score >= settings.similarity_threshold
-                )
+                chunks.extend(item for item in narratives if item.score >= settings.similarity_threshold)
         if not settings.structured_memory_enabled:
             chunks = [item for item in chunks if item.source != "memory"]
         return {
@@ -347,8 +331,7 @@ class NodeFactory:
                     (
                         item
                         for item in source_chunks
-                        if bool(item.metadata.get("adult_mode"))
-                        and _adult_fact_overlap(query, item.text) > 0
+                        if bool(item.metadata.get("adult_mode")) and _adult_fact_overlap(query, item.text) > 0
                     ),
                     key=lambda item: (
                         _adult_fact_overlap(query, item.text),
@@ -525,8 +508,7 @@ class NodeFactory:
                     objective="可靠解析用户要查询的具体主题",
                     requires_clarification=not retained,
                     clarification_question=(
-                        "我还没可靠确定你要查的具体内容；请再说一次主题，"
-                        "如果是天气，请同时告诉我城市。"
+                        "我还没可靠确定你要查的具体内容；请再说一次主题，如果是天气，请同时告诉我城市。"
                         if not retained
                         else ""
                     ),
@@ -609,11 +591,7 @@ class NodeFactory:
         for result in results:
             writer(
                 {
-                    "event": (
-                        "capability.completed"
-                        if result.status == "success"
-                        else "capability.failed"
-                    ),
+                    "event": ("capability.completed" if result.status == "success" else "capability.failed"),
                     "data": {
                         "call_id": result.call_id,
                         "capability": result.capability,
@@ -646,9 +624,7 @@ class NodeFactory:
         results = list(state.get("capability_results", []))
         has_web = any(result.capability.startswith("web.") for result in results)
         reviewer = getattr(self.deps.llm, "review_research", None)
-        review_required = bool(
-            service is not None and service.research_review_required(plan, results)
-        )
+        review_required = bool(service is not None and service.research_review_required(plan, results))
         if (
             service is None
             or not has_web
@@ -691,11 +667,7 @@ class NodeFactory:
                 for result in extra:
                     writer(
                         {
-                            "event": (
-                                "capability.completed"
-                                if result.status == "success"
-                                else "capability.failed"
-                            ),
+                            "event": ("capability.completed" if result.status == "success" else "capability.failed"),
                             "data": {
                                 "call_id": result.call_id,
                                 "capability": result.capability,
@@ -813,9 +785,7 @@ class NodeFactory:
         # Retain backward-compatible cue parsing for older model templates.
         # The Base character voice no longer requires a leading cue.
         voice_cue_stream = VoiceCueStream(allow_adult=request.adult_mode)
-        active_tts_provider = (
-            self.deps.tts_provider() if callable(self.deps.tts_provider) else self.deps.tts_provider
-        )
+        active_tts_provider = self.deps.tts_provider() if callable(self.deps.tts_provider) else self.deps.tts_provider
         emit_voice_cue = request.interaction_mode == "voice" and active_tts_provider == "qwen3-vllm"
         voice_cue_sent = False
         chunks: list[str] = []
@@ -884,9 +854,7 @@ class NodeFactory:
             if explicit_cue
             else normalize_voice_cue(state.get("voice_cue"), allow_adult=request.adult_mode)
         )
-        active_tts_provider = (
-            self.deps.tts_provider() if callable(self.deps.tts_provider) else self.deps.tts_provider
-        )
+        active_tts_provider = self.deps.tts_provider() if callable(self.deps.tts_provider) else self.deps.tts_provider
         emit_voice_cue = request.interaction_mode == "voice" and active_tts_provider == "qwen3-vllm"
         if emit_voice_cue and not state.get("voice_cue_event_sent"):
             writer({"event": "response.voice_cue", "data": {"cue": voice_cue}})
@@ -905,9 +873,7 @@ class NodeFactory:
                     "request_id": state.get("request_id", ""),
                     "errors": errors,
                     "reason": (
-                        "model_json_update_ignored"
-                        if parsed_protocol is not None
-                        else "visible_response_recovered"
+                        "model_json_update_ignored" if parsed_protocol is not None else "visible_response_recovered"
                     ),
                 },
             )
@@ -1081,9 +1047,7 @@ class NodeFactory:
         request = state["request"]
         protocol = state["protocol"]
         existing_commit = (
-            self.deps.context.find_turn_commit(state.get("request_id", ""))
-            if self.deps.context is not None
-            else None
+            self.deps.context.find_turn_commit(state.get("request_id", "")) if self.deps.context is not None else None
         )
         if existing_commit is not None:
             if (
@@ -1093,27 +1057,17 @@ class NodeFactory:
                 raise ValueError("request_id already belongs to another turn")
             assistant_id = str(existing_commit["assistant_message_id"])
             existing_message = next(
-                (
-                    item
-                    for item in state.get("recent_history", [])
-                    if item.get("message_id") == assistant_id
-                ),
+                (item for item in state.get("recent_history", []) if item.get("message_id") == assistant_id),
                 None,
             )
-            reply = (
-                str(existing_message.get("content") or protocol.response)
-                if existing_message
-                else protocol.response
-            )
+            reply = str(existing_message.get("content") or protocol.response) if existing_message else protocol.response
             response = ChatResponse(
                 session_id=request.session_id,
                 round=request.round,
                 status="success",
                 reply=reply,
                 assistant_message_id=assistant_id,
-                presentation_mode=resolve_presentation_mode(
-                    request, state.get("recent_history", [])
-                ),
+                presentation_mode=resolve_presentation_mode(request, state.get("recent_history", [])),
                 trace=[*state.get("trace", []), "persist_turn_idempotent"],
                 llm_call_count=state.get("llm_call_count", 0),
                 model_usage=state.get("model_usage", []),
@@ -1169,9 +1123,7 @@ class NodeFactory:
         if self.deps.context is not None and state.get("context_epoch_id"):
             try:
                 pending_events = [
-                    dict(item)
-                    for item in state.get("prompt_pending_events", [])
-                    if not item.get("ephemeral")
+                    dict(item) for item in state.get("prompt_pending_events", []) if not item.get("ephemeral")
                 ]
                 for item in pending_events:
                     if item.get("kind") == "current_user":
@@ -1229,12 +1181,7 @@ class NodeFactory:
             "none",
             "deletion_reconciliation",
         }
-        if (
-            primary_commit_allowed
-            and validation.is_valid
-            and deletion_events
-            and deletion_decision_complete
-        ):
+        if primary_commit_allowed and validation.is_valid and deletion_events and deletion_decision_complete:
             resolved_ids = [event.event_id for event in deletion_events]
             self.deps.sessions.resolve_deletions(resolved_ids)
 
@@ -1247,9 +1194,7 @@ class NodeFactory:
             presentation_mode=resolve_presentation_mode(request, state.get("recent_history", [])),
             writeback_applied=receipt.applied,
             retrieval_counts={
-                "knowledge": sum(
-                    item.source == "knowledge" for item in state.get("ranked_context", [])
-                ),
+                "knowledge": sum(item.source == "knowledge" for item in state.get("ranked_context", [])),
                 "chat": sum(item.source == "chat" for item in state.get("ranked_context", [])),
                 "history": sum(item.source == "memory" for item in state.get("ranked_context", [])),
             },
@@ -1281,9 +1226,7 @@ class NodeFactory:
 
     def finalize_error(self, state: TurnState) -> dict[str, Any]:
         request = state["request"]
-        role = state.get("role_validation") or RoleValidation(
-            is_valid=False, message="role validation not reached"
-        )
+        role = state.get("role_validation") or RoleValidation(is_valid=False, message="role validation not reached")
         errors = [*state.get("protocol_errors", [])]
         if not role.is_valid and role.message:
             errors.append(role.message)

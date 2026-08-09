@@ -51,9 +51,7 @@ def test_boundary_silence_trim_preserves_cadence_not_long_vocoder_gaps() -> None
     speech = np.full(48_000, 2_000, dtype=np.int16)
     trailing_noise = np.full(48_000 * 5, 20, dtype=np.int16)
 
-    trimmed = worker._trim_boundary_silence(
-        np.concatenate([leading_noise, speech, trailing_noise]).tobytes()
-    )
+    trimmed = worker._trim_boundary_silence(np.concatenate([leading_noise, speech, trailing_noise]).tobytes())
     samples = np.frombuffer(trimmed, dtype=np.int16)
 
     assert 48_000 * 1.20 <= samples.size <= 48_000 * 1.30

@@ -106,9 +106,7 @@ def test_local_tts_requests_are_serialized_before_reaching_worker(tmp_path):
             async def aclose(self):
                 return None
 
-        service = AudioService(
-            AppSettings(runtime_dir=tmp_path, tts_provider="gpt-sovits")
-        )
+        service = AudioService(AppSettings(runtime_dir=tmp_path, tts_provider="gpt-sovits"))
         await service._http.aclose()
         service._http = FakeHttp()
         first, _ = await service.stream_synthesize("第一段。", request_id="same-run")
@@ -166,14 +164,16 @@ def test_qwen3_custom_voice_payload_locks_speaker_seed_and_one_style_instruction
             async def aclose(self):
                 return None
 
-        service = AudioService(AppSettings(
-            runtime_dir=tmp_path,
-            tts_provider="qwen3-vllm",
-            tts_qwen3_vllm_url="http://127.0.0.1:8091",
-            tts_qwen3_vllm_model="mindspace-qwen3-tts",
-            tts_qwen3_vllm_voice="serena",
-            tts_qwen3_vllm_task_type="CustomVoice",
-        ))
+        service = AudioService(
+            AppSettings(
+                runtime_dir=tmp_path,
+                tts_provider="qwen3-vllm",
+                tts_qwen3_vllm_url="http://127.0.0.1:8091",
+                tts_qwen3_vllm_model="mindspace-qwen3-tts",
+                tts_qwen3_vllm_voice="serena",
+                tts_qwen3_vllm_task_type="CustomVoice",
+            )
+        )
         await service._http.aclose()
         fake_http = FakeHttp()
         service._http = fake_http
