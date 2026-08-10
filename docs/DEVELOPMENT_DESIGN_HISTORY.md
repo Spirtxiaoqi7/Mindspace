@@ -1,11 +1,11 @@
 # Mindspace 整体设计演进与开发记录
 
-> 当前 Core / Web / Launcher 基线：`0.8.0`
+> 当前 Core / Web / Launcher 基线：`0.8.2`
 >
-> 源码主线：`A:\RAG\langgarph-rag`  
+> 唯一开发源码：`A:\RAG\Mindspace-admin`  
 > 桌面程序：`A:\Mindspace\application`  
 > 用户工作区：`A:\Mindspace\data`、`A:\Mindspace\models`、`A:\Mindspace\environment`  
-> 文档状态：当前架构主记录，2026-07-30
+> 文档状态：当前架构主记录，2026-08-10
 
 本文不是更新日志的重复整理，而是回答五个问题：
 
@@ -16,7 +16,7 @@
 5. 产品、工程和后续研究应从哪里继续阅读。
 
 如果本文件与早期专题文档在“当前实现”上发生冲突，以当前源码、自动化测试和本文件标注的
-`0.8.0 当前状态`为准。`CHANGELOG.md`保留逐版本事实；专题文档仍可作为当时的设计快照阅读。
+`0.8.2 当前状态`为准。`CHANGELOG.md`保留逐版本事实；专题文档仍可作为当时的设计快照阅读。
 
 ---
 
@@ -223,77 +223,49 @@ flowchart LR
 
 ## 4. 当前一轮对话的真实调用链
 
+0.8.2 已删除旧的 `plan_capabilities`、`review_capabilities` 与文本式工具握手。现行链路如下：
+
 ```mermaid
 flowchart TD
     S["收到请求"]
     V["validate_request"]
     L["load_context"]
-    RK["retrieve_knowledge"]
-    RC["retrieve_chat"]
-    R["rank_context"]
-    CR["capability_route"]
-    P["plan_capabilities<br/>条件触发，最多 1 次"]
-    E["execute_capabilities<br/>串行只读调用"]
-    RV["review_capabilities<br/>证据不足时最多 1 次"]
+    C["近期与历史聊天上下文"]
+    H["tool_hint<br/>零调用"]
     CP["compose_prompt"]
-    G["generate_candidate<br/>正文最多 1 次"]
-    PP["parse_protocol<br/>确定性恢复"]
-    VR["validate_role<br/>只做诊断"]
-    VJ["validate_json_update<br/>安装空写入计划"]
-    PT["persist_turn<br/>唯一提交点"]
+    G["generate_candidate<br/>原生 tools 开放"]
+    A["authorize_tool_call"]
+    R["review_task<br/>仅 L2"]
+    E["execute_tool<br/>整轮最多一次"]
+    I["inject role=tool result"]
+    F["generate_final<br/>tools 关闭"]
+    PP["parse_protocol"]
+    VR["validate_role"]
+    VJ["validate_json_update"]
+    PT["persist_turn"]
     BG["后台摘要、角色审计、压缩"]
     X["终止并保留错误/部分输出"]
 
-    S --> V --> L
-    L --> RK
-    L --> RC
-    RK --> R
-    RC --> R
-    R --> CR
-    CR -->|无需规划| E
-    CR -->|复杂研究| P --> E
-    E --> RV --> CP --> G --> PP
-    PP -->|正文可恢复| VR --> VJ --> PT --> BG
-    PP -->|无可见正文| X
+    S --> V --> L --> C --> H --> CP --> G
+    G -->|普通正文| PP
+    G -->|单个合法 tool_call| A
+    A -->|L3 web / memory| E
+    A -->|L2 task| R --> E
+    A -->|拒绝或失败| I
+    E --> I --> F --> PP
+    PP --> VR --> VJ --> PT --> BG
+    PP -->|不可恢复| X
 ```
 
-### 4.1 并行与串行边界
+当前边界：
 
-- `retrieve_knowledge`和`retrieve_chat`是两个无写入分支，可并行执行；
-- `rank_context`等待两路召回完成；
-- 外部只读能力按计划顺序串行执行，每个结果进入共享状态后才开始下一个；
-- 主模型正文只有一次；
-- `persist_turn`是前台唯一提交点；
-- 摘要、角色一致性复核和压缩在回复后运行，不阻塞可见正文。
-
-### 4.2 当前模型调用预算
-
-`0.5.49`源码中的前台预算为：
-
-| 用途 | 单轮上限 | 触发条件 |
-|---|---:|---|
-| `planner` | 1 | 确实需要复杂研究目标拆解 |
-| `research_review` | 1 | 第一波网页证据覆盖不足 |
-| `generation` | 1 | 生成当前可见正文 |
-| 合计 | 3 | 任意路径不可突破 |
-
-普通闲聊不会调用 planner 或 research review，通常只有一次 `generation`。
-
-早期 `0.5.7` 文档记录过总上限 `5`，其中包含 `protocol_repair`和`memory_extract`。当前主图已经
-移除这两个前台模型调用：协议恢复是确定性处理，近期事件摘要在后台完成。因此不能再用旧的
-“最多五次”描述当前延迟。
-
-### 4.3 当前 JSON 写入权
-
-模型生成人物档案 Patch 的方案已经停用：
-
-- 模型即使输出旧 `<json_update>`，服务端也会忽略；
-- 前台安装 `trigger=none, patches=[]` 的空计划；
-- 用户和 AI 人物档案只能通过用户直接编辑 API 保存；
-- revision、Schema 校验、审计和索引重建由服务端负责；
-- 近期事件摘要、事件推进和角色审计可由后台更新各自受限投影，但不能覆盖用户权威档案。
-
-保留 `validate_json_update` 节点是为了协议兼容、审计和迁移稳定，不代表模型仍有写档案权限。
+- 普通聊天调用主模型 1 次；L3 工具轮 2 次；L2 任务轮最多 3 次。
+- 工具选择由主模型原生 `tool_calls` 表达，确定性规则只提供紧凑提示。
+- `web` 与 `memory` 只读直执；`task` 独立审查；本地命令不注册。
+- 工具结果使用标准 `role=tool` 回注，最终生成关闭工具，不能连续索要第二个工具。
+- 近期聊天和历史聊天召回继续参与普通对话；知识库、角色记忆和结构化记忆通过 `memory` 按需统一查询。
+- 工具执行状态随回合保存，但原始工具结果不伪装为用户消息，也不能覆盖角色权威数据。
+- 旧规划器、研究复查器和 `knowledge.search_local` 仅属于 0.8.0 及更早设计，不再是当前接口。
 
 ## 5. Prompt 的实际构成
 

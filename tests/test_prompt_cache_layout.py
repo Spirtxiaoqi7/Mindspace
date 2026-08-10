@@ -11,7 +11,7 @@ from mindspace_graph.models import (
     RetrievedChunk,
 )
 from mindspace_graph.prompting import build_prompt, split_history_for_cache
-from mindspace_graph.tool_chain import TOOL_PROTOCOL
+from mindspace_graph.native_tools import NATIVE_TOOL_GUIDANCE
 
 
 def profiles() -> ProfileBundle:
@@ -197,7 +197,7 @@ def test_json_baseline_precedes_history_and_post_history_calibration_is_last(tmp
     assert built.messages[-1]["role"] == "system"
 
 
-def test_compressed_tool_protocol_is_short_and_old_registry_is_absent() -> None:
+def test_native_tool_guidance_is_short_and_old_protocol_is_absent() -> None:
     built = build_prompt(
         request(1),
         profiles(),
@@ -205,10 +205,13 @@ def test_compressed_tool_protocol_is_short_and_old_registry_is_absent() -> None:
         [],
         [],
         tool_hint="web",
+        native_tools_enabled=True,
     )
     text = "\n".join(item["content"] for item in built.messages)
-    assert TOOL_PROTOCOL in text
+    assert NATIVE_TOOL_GUIDANCE in text
     assert "零调用提示=web" in text
+    assert "<T:" not in text
+    assert "<R:" not in text
     assert "knowledge.search_local" not in text
     assert "capability_plan" not in text
 

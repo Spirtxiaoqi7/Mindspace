@@ -29,19 +29,23 @@ from mindspace_graph.roleplay import (
     normalize_voice_response,
     resolve_presentation_mode,
 )
+from mindspace_graph.native_tools import (
+    native_call_to_instruction,
+    native_tool_choice,
+    native_tool_definitions,
+    supports_native_tools,
+)
 from mindspace_graph.r18_director import explicit_r18_requested
 from mindspace_graph.state import TurnState
 from mindspace_graph.tool_chain import (
-    FINAL_ONLY_PROTOCOL,
-    TOOL_PROTOCOL,
+    FINAL_AFTER_TOOL_PROTOCOL,
     ToolExecutionResult,
     enforce_tool_claims,
     execute_memory_tool,
     failed_result,
     parse_task_review,
-    parse_tool_instruction,
-    result_prompt_message,
     task_review_messages,
+    tool_result_json,
 )
 from mindspace_graph.voice_render import VoiceCueStream, extract_voice_cue, normalize_voice_cue
 
@@ -372,35 +376,6 @@ class NodeFactory:
         writer({"event": "tool.hinted", "data": {"hint": hint, "model_calls": 0}})
         return {"tool_hint": hint, "trace": ["tool_hint"]}
 
-    def parse_tool_request(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
-        instruction, error = parse_tool_instruction(state.get("raw_candidate", ""))
-        if instruction is not None:
-            writer(
-                {
-                    "event": "tool.requested",
-                    "data": {
-                        "call_id": instruction.call_id,
-                        "tool": instruction.tool,
-                        "level": instruction.level,
-                        "parameter_summary": instruction.parameter_summary,
-                    },
-                }
-            )
-            return {"tool_instruction": instruction, "tool_parse_error": "", "trace": ["parse_tool_instruction"]}
-        if error:
-            writer(
-                {
-                    "event": "tool.failed",
-                    "data": {"tool": "unknown", "level": 0, "status": "failed", "error": error},
-                }
-            )
-            return {
-                "raw_candidate": "我刚才没能正确发起工具请求，请直接告诉我想查询或处理的内容。",
-                "tool_parse_error": error,
-                "trace": ["parse_tool_instruction"],
-            }
-        return {"tool_parse_error": "", "trace": ["parse_tool_instruction"]}
-
     @staticmethod
     def route_tool_request(state: TurnState) -> str:
         return "tool" if state.get("tool_instruction") is not None else "answer"
@@ -538,17 +513,18 @@ class NodeFactory:
 
     def inject_tool_result(self, state: TurnState) -> dict[str, Any]:
         result = state["tool_result"]
-        closed_messages = [
-            {
-                **message,
-                "content": message.get("content", "").replace(TOOL_PROTOCOL, "本轮工具表已关闭。"),
-            }
-            for message in state["prompt_messages"]
-        ]
+        native_call = state.get("native_tool_call")
+        if not native_call:
+            raise RuntimeError("native tool result is missing its provider call")
         messages = [
-            *closed_messages,
-            result_prompt_message(result),
-            {"role": "system", "content": FINAL_ONLY_PROTOCOL},
+            *state["prompt_messages"],
+            {"role": "assistant", "content": "", "tool_calls": [native_call]},
+            {
+                "role": "tool",
+                "tool_call_id": native_call.get("id", ""),
+                "content": tool_result_json(result),
+            },
+            {"role": "system", "content": FINAL_AFTER_TOOL_PROTOCOL},
         ]
         if self.deps.prompt_inspector is not None:
             self.deps.prompt_inspector.record(
@@ -586,6 +562,9 @@ class NodeFactory:
         """把权威数据、账本历史和本轮临时上下文组装成主模型 messages。"""
 
         self._check_cancelled(state)
+        native_tools_enabled = supports_native_tools(state["request"].api.base_url) and callable(
+            getattr(self.deps.llm, "stream_with_tools", None)
+        )
         built = build_prompt(
             state["request"],
             state["profiles"],
@@ -596,6 +575,7 @@ class NodeFactory:
             state.get("tool_hint", ""),
             state.get("emotion_state"),
             context_ledger=self.deps.context,
+            native_tools_enabled=native_tools_enabled,
         )
         snapshot = built.context_snapshot
         if self.deps.prompt_inspector is not None:
@@ -623,6 +603,7 @@ class NodeFactory:
             "context_epoch_id": snapshot.epoch_id if snapshot else 0,
             "context_estimated_tokens": snapshot.estimated_tokens if snapshot else 0,
             "context_emergency_truncated": (snapshot.emergency_truncated if snapshot else False),
+            "native_tools_enabled": native_tools_enabled,
             "trace": ["compose_prompt"],
         }
 
@@ -646,7 +627,17 @@ class NodeFactory:
         emit_voice_cue = request.interaction_mode == "voice" and active_tts_provider == "qwen3-vllm"
         voice_cue_sent = False
         chunks: list[str] = []
-        for token in self.deps.llm.stream(state["prompt_messages"], request.api):
+        if state.get("native_tools_enabled"):
+            hint = state.get("tool_hint", "")
+            token_stream = self.deps.llm.stream_with_tools(
+                state["prompt_messages"],
+                request.api,
+                tools=native_tool_definitions(hint),
+                tool_choice=native_tool_choice(hint),
+            )
+        else:
+            token_stream = self.deps.llm.stream(state["prompt_messages"], request.api)
+        for token in token_stream:
             self._check_cancelled(state)
             chunks.append(token)
             if not defer_visible_response:
@@ -673,12 +664,31 @@ class NodeFactory:
                 if normalized:
                     writer({"event": "response.delta", "data": {"delta": normalized}})
         raw = "".join(chunks)
+        native_call = None
+        instruction = None
+        if state.get("native_tools_enabled"):
+            native_call = self.deps.llm.take_native_tool_call()
+            if native_call:
+                instruction = native_call_to_instruction(native_call, user_message=request.message)
+                writer(
+                    {
+                        "event": "tool.requested",
+                        "data": {
+                            "call_id": instruction.call_id,
+                            "tool": instruction.tool,
+                            "level": instruction.level,
+                            "parameter_summary": instruction.parameter_summary,
+                        },
+                    }
+                )
         usage = self._take_model_usage(writer)
         self._check_cancelled(state)
         return {
             "raw_candidate": raw,
             "voice_cue": voice_cue_stream.cue,
             "voice_cue_event_sent": voice_cue_sent,
+            **({"native_tool_call": native_call} if native_call else {}),
+            **({"tool_instruction": instruction} if instruction else {}),
             "model_usage": [*state.get("model_usage", []), *([usage] if usage else [])],
             **self._record_call(state, "generation", started),
             "trace": ["generate_candidate"],
@@ -697,9 +707,6 @@ class NodeFactory:
         self._check_cancelled(state)
         raw = state.get("raw_candidate", "")
         request = state["request"]
-        repeated_tool, repeated_error = parse_tool_instruction(raw)
-        if repeated_tool is not None or repeated_error:
-            raw = "工具阶段已经结束，这次没有得到可用的最终回复，请直接继续告诉我你的需求。"
         parsed_protocol, errors = self.parser.parse(raw)
         previous_visible = state.get("fallback_response")
         parsed_visible = self.parser.response_text(raw)

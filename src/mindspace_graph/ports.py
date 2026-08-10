@@ -93,6 +93,17 @@ class LanguageModelPort(Protocol):
 
     def stream(self, messages: list[dict[str, str]], config: ApiConfig) -> Iterator[str]: ...
 
+    def stream_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        config: ApiConfig,
+        *,
+        tools: list[dict[str, Any]],
+        tool_choice: str = "auto",
+    ) -> Iterator[str]: ...
+
+    def take_native_tool_call(self) -> dict[str, Any] | None: ...
+
     def stream_repair(
         self,
         messages: list[dict[str, str]],

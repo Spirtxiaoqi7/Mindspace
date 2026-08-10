@@ -59,7 +59,6 @@ NODE_LABELS = {
     "tool_hint": "生成零调用工具提示",
     "compose_prompt": "构建上下文",
     "generate_candidate": "生成回复",
-    "parse_tool_instruction": "解析工具指令",
     "authorize_tool": "授权工具",
     "review_task": "审查任务操作",
     "execute_tool": "执行工具",

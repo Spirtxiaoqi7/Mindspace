@@ -82,7 +82,14 @@ _RECENT_WEB_CONTEXT = re.compile(
     r"(联网|网上|网络|网页|官网|搜索|查询|检索|来源|链接|新闻|热点|最新|最近|实时|发布|更新)",
     re.IGNORECASE,
 )
-_KNOWLEDGE_HINTS = re.compile(r"(知识库|资料库|你(?:还)?记得|回忆一下|我们以前|档案里)")
+_KNOWLEDGE_HINTS = re.compile(r"(知识库|资料库|你(?:还)?记得|你还记不记得|回忆一下|我们以前|档案里)")
+_HISTORY_HINTS = re.compile(
+    r"(之前.{0,8}说过|前面.{0,8}说过|刚才.{0,8}说过|我们聊过|记录里|聊天记录|上次)"
+)
+_EXTERNAL_SUBJECT_HINTS = re.compile(
+    r"(DeepSeek|Gemma|Python|API|模型|软件|版本|官网|天气|新闻|价格|政策|法规|比赛|电影|游戏)",
+    re.IGNORECASE,
+)
 _URL_PATTERN = re.compile(r"https?://[^\s<>\[\]\"']+", re.IGNORECASE)
 _PARENTHETICAL_UNVERIFIED_WEB_ACTION = re.compile(
     r"[（(][^（）()]{0,12}(?:搜索|查询|检索|上网|联网)[^（）()]{0,24}[）)]"
@@ -177,41 +184,21 @@ class ReadOnlyCapabilityService:
         settings = self.settings()
         return bool(settings["master_enabled"] and settings.get(key, False))
 
-    def definitions(self) -> list[dict[str, Any]]:
-        settings = self.settings()
-        if not settings["master_enabled"]:
-            return []
-        return [
-            *([{"name": "web", "level": 3}] if settings["web_search_enabled"] else []),
-            *([{"name": "memory", "level": 3}] if settings["local_knowledge_enabled"] else []),
-            {"name": "task", "level": 2},
-        ]
-
-    def prompt_policy(self) -> dict[str, Any]:
-        settings = self.settings()
-        return {
-            "automatic_read_only": bool(settings["master_enabled"]),
-            "topic_expansion_enabled": bool(settings["master_enabled"] and settings["topic_expansion_enabled"]),
-            "show_sources_enabled": bool(settings["show_sources_enabled"]),
-            "web_search_enabled": bool(settings["master_enabled"] and settings["web_search_enabled"]),
-            "realtime_topics_enabled": bool(
-                settings["master_enabled"] and settings["web_search_enabled"] and settings["realtime_topics_enabled"]
-            ),
-        }
-
     def route_hint(self, request: ChatRequest, *, history: list[dict[str, Any]] | None = None) -> str:
         """Return a lexical hint only. It never executes or asks another model."""
 
         del history
         message = request.message.strip()
+        if re.search(r"(任务|待办|提醒|截止|完成.{0,8}(?:任务|待办))", message):
+            return "task"
         if _URL_PATTERN.search(message) or _EXPLICIT_WEB_HINTS.search(message) or (
             _FRESH_HINTS.search(message) and _FRESH_INFORMATION_HINTS.search(message)
         ):
             return "web"
-        if _KNOWLEDGE_HINTS.search(message):
+        if _AMBIGUOUS_HINTS.search(message) and _EXTERNAL_SUBJECT_HINTS.search(message):
+            return "web"
+        if _KNOWLEDGE_HINTS.search(message) or _HISTORY_HINTS.search(message):
             return "memory"
-        if re.search(r"(任务|待办|提醒|截止|完成.{0,8}(?:任务|待办))", message):
-            return "task"
         return ""
 
     def execute_web(self, instruction: ToolInstruction) -> ToolExecutionResult:

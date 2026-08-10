@@ -39,7 +39,6 @@ class TurnState(TypedDict, total=False):
     tool_hint: str
     tool_instruction: ToolInstruction
     tool_result: ToolExecutionResult
-    tool_parse_error: str
     task_review_allowed: bool
     task_review_reason: str
     text_emotion: TextEmotionState
@@ -54,6 +53,8 @@ class TurnState(TypedDict, total=False):
     llm_call_counts: dict[str, int]
     model_call_summary: list[dict[str, Any]]
     raw_candidate: str
+    native_tools_enabled: bool
+    native_tool_call: dict[str, Any]
     fallback_response: str
     protocol: ProtocolOutput
     protocol_errors: list[str]

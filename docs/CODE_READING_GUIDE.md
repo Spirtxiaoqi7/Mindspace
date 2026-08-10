@@ -130,71 +130,55 @@ flowchart TD
 
 ### 3.2 LangGraph 的固定拓扑
 
-权威入口是 `src/mindspace_graph/graph.py::build_graph`。关键规则：
+权威入口是 `src/mindspace_graph/graph.py::build_graph`。0.8.2 的关键规则：
 
-- `retrieve_knowledge` 与 `retrieve_chat` 从 `load_context` 同时分叉，在 `rank_context` 汇合。
-- `capability_route` 只有两个出口：直接执行，或先走 `plan_capabilities`。
-- `review_capabilities` 始终经过，但内部可能立即返回，不一定调用模型。
-- `parse_protocol` 可进入 `validate_role`、`repair_protocol` 或 `finalize_error`。
-- `validate_role` 后没有角色重写回路，只能阻止 JSON 写回；可见正文不会因角色检查而被第二次模型调用替换。
+- 近期对话与历史聊天上下文在主生成前整理；每轮自动知识库查询不再参与。
+- `tool_hint` 是零模型调用的紧凑提示，不直接执行工具，也不替模型决定最终调用。
+- `generate_candidate` 使用 OpenAI-compatible 原生 `tools/tool_calls`；普通正文直接进入协议解析。
+- 单个原生工具调用先授权：`web/memory` 走 L3 直接执行，`task` 走 L2 独立短审查。
+- 工具结果通过标准 `assistant.tool_calls + role=tool` 回注；最终生成关闭工具表，不能形成工具循环。
+- `parse_protocol` 可进入 `validate_role`、`repair_protocol` 或 `finalize_error`；可见正文不会被角色检查偷偷重写。
 - 所有正常路径最终只在 `persist_turn` 写存储。
 
-## 4. 外部能力与工具调用规则
+## 4. 原生工具调用规则
 
-### 4.1 先规则路由，再决定要不要模型规划
+### 4.1 工具提示与模型决策
 
-`ReadOnlyCapabilityService.route` 先用确定性规则检查：
+服务端只注册三个模型可见工具：
 
-- URL；
-- 明确联网、最新、趋势提示；
-- 本地知识提示；
-- 结合最近历史的网页追问。
+- `web`：公开网页读取或联网搜索；
+- `memory`：统一查询角色记忆、历史聊天、结构化记忆和本地知识库；
+- `task`：列出、新建、更新或完成当前角色任务。
 
-直接命中时生成最多 3 个 `CapabilityCall`。省略指代、上下文追问或网页调用会令 `preflight_required=true`。
+确定性规则只生成短 `tool_hint`，帮助模型识别明确请求、含糊外部信息需求和需要补充事实的问法。
+它不执行工具，也不产生额外模型调用。模型若能直接进行角色回复，可以不调用工具。
 
-注意：代码中只要计划含任何 `web.*` 调用，即使确定性路由已经给出查询，也仍会进入一次私有 preflight，让模型把原始口语整理成更独立的查询。
+### 4.2 模型实际看到什么
 
-### 4.2 preflight 模型看到什么
+第一次主生成包含角色卡、当前上下文、用户消息以及原生工具 schema。普通聊天不注入
+`call_count=0`、旧能力注册表、文本工具协议或私有规划结果。
 
-只有两条消息：
+如果模型返回一个合法 `tool_call`，服务端执行授权链并追加标准工具消息。第二次主生成使用相同角色
+上下文和工具结果，但关闭工具表，只允许给出最终角色回复与既有 JSON 写回协议。
 
-1. `system`：只允许生成只读检索计划、消解省略指代、缺城市时澄清、禁止回答用户。
-2. `user` JSON：
-   - 当前可用能力名称；
-   - 服务端预选计划；
-   - 最近最多 8 条非隐藏对话，每条截断到 1500 字；
-   - 当前用户输入；
-   - `capability_plan` 输出 schema。
+### 4.3 授权与执行
 
-请求使用 `temperature=0`、最多 320 token、非流式；适配器依次尝试：
+- `web`、`memory` 为 L3，只读，命中后直接执行；
+- `task` 为 L2，执行前进行一次独立短模型审查；
+- 本地命令为 L1 预留能力，不注册 schema，也没有执行器；
+- 一轮只接受一个工具调用，多个、未知或混合正文的调用均拒绝；
+- 工具失败不自动重试，失败数据回注后由模型诚实回复；
+- 最终生成再次请求工具时不执行，防止循环和重复写入。
 
-1. 关闭 thinking + JSON mode；
-2. 只关闭 thinking；
-3. 纯 OpenAI-compatible 请求。
+模型调用预算为：普通聊天 1 次、L3 工具轮 2 次、L2 任务轮最多 3 次。
 
-### 4.3 工具如何执行
+### 4.4 结果、持久化与真实性
 
-`ReadOnlyCapabilityService.execute` 只接受授权后的白名单调用。当前能力包括：
+工具数据是不可信输入，不能覆盖系统规则或作为人物档案写回证据。会话只保存工具名、等级、
+参数摘要、状态、耗时、来源和结果摘要；原始 `role=tool` 数据不作为普通用户消息长期保存。
 
-- `knowledge.search_local`
-- `web.search`
-- `web.open`
-- `web.trending`
-
-本轮只读能力严格按计划顺序串行执行；前一个结果完成并写入本轮状态后，才启动下一个调用。单个网页搜索工具内部仍可并行打开有限数量的原始页面，但它对图只提交一次有序结果。
-
-这不是“大模型自主反复 function calling”。调用次数、参数、串行顺序和第二波上限都由服务端控制。
-
-### 4.4 何时多一次 research review
-
-第一波网页结果符合任一情况时，才调用私有 review 模型：
-
-- 有网页调用失败；
-- 成功打开原始页面少于 2；
-- 来源域名少于 2；
-- 计划不禁止 follow-up，且不处于等待澄清状态。
-
-review 只可要求最多 2 个不重复的 `web.search/web.open`，执行完就进入主 Prompt，不形成无界 agent loop。
+联网失败不得声称已经核实，记忆无结果不得声称已经找到，任务审查拒绝或写入失败不得声称成功。
+没有明确时刻的任务只能保存为无截止时间任务，不得承诺未来自动提醒。
 
 ## 5. 主模型的实际 `messages` 顺序
 

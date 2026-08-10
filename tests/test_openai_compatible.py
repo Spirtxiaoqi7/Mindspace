@@ -199,6 +199,54 @@ def test_visible_stream_falls_back_when_compatibility_fields_are_rejected():
     client.close()
 
 
+def test_native_tool_stream_accumulates_fragmented_call_without_visible_text():
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1",'
+                '"type":"function","function":{"name":"web","arguments":"{\\"query\\":\\"Deep"}}]}}]}\n\n'
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,'
+                '"function":{"arguments":"Seek 最新模型\\"}"}}]}}]}\n\n'
+                'data: {"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":7,"total_tokens":27}}\n\n'
+                "data: [DONE]\n\n"
+            ),
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    model = OpenAICompatibleLanguageModel(client=client)
+    config = ApiConfig(api_key="test", base_url="https://api.deepseek.com")
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "web",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+            },
+        }
+    ]
+
+    assert list(model.stream_with_tools([], config, tools=tools, tool_choice="required")) == []
+    assert model.take_native_tool_call() == {
+        "id": "call_1",
+        "type": "function",
+        "function": {"name": "web", "arguments": '{"query":"DeepSeek 最新模型"}'},
+    }
+    assert bodies[0]["tools"] == tools
+    assert bodies[0]["tool_choice"] == "required"
+    assert bodies[0]["thinking"] == {"type": "disabled"}
+    assert model.take_usage().total_tokens == 27
+    client.close()
+
+
 def test_visible_stream_retries_one_reasoning_only_result_before_ui_output():
     bodies = []
 

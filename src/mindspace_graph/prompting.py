@@ -25,7 +25,7 @@ from mindspace_graph.roleplay import (
     project_history_for_presentation,
     resolve_presentation_mode,
 )
-from mindspace_graph.tool_chain import TOOL_PROTOCOL
+from mindspace_graph.native_tools import NATIVE_TOOL_GUIDANCE
 
 
 @dataclass(slots=True)
@@ -150,11 +150,6 @@ def _post_history_role_directive(
         )
         interaction = _quick_interaction_directive(request, profiles)
         result = "\n".join(item for item in (directive, interaction) if item)
-        if tool_hint == "task":
-            result += (
-                "\n【任务工具优先】本轮是任务写操作；不要先写角色正文，"
-                "只输出一条 <T:task> 紧凑 JSON，等待结果后再回复。"
-            )
         return result
 
     character_name = str(
@@ -436,6 +431,7 @@ def build_prompt(
     tool_hint: str = "",
     emotion_state: EmotionState | None = None,
     context_ledger: ContextLedger | None = None,
+    native_tools_enabled: bool = False,
 ) -> PromptBuild:
     """构造主模型的完整消息列表。
 
@@ -565,16 +561,11 @@ def build_prompt(
         if request.interaction_mode == "voice" and request.voice_delivery is not None
         else None
     )
-    dynamic_lines = ["直接回答时只输出一次角色正文；调用工具时只能输出一条独立 <T>。"]
-    dynamic_lines.append(TOOL_PROTOCOL)
-    if tool_hint:
-        if tool_hint == "task":
-            dynamic_lines.append(
-                "服务端零调用提示=task；本轮涉及任务写操作。只有先输出一条 <T:task> 并收到成功结果，"
-                "才能声称已创建、更新、完成、保存或记下任务。"
-            )
-        else:
-            dynamic_lines.append(f"服务端零调用提示={tool_hint}；它只提示可能相关的工具，不要求调用。")
+    dynamic_lines = ["直接回答时只输出一次角色正文。"]
+    if native_tools_enabled:
+        dynamic_lines.append(NATIVE_TOOL_GUIDANCE)
+        if tool_hint:
+            dynamic_lines.append(f"服务端零调用提示={tool_hint}；本轮工具候选优先为 {tool_hint}。")
     if request.interaction_mode == "voice":
         dynamic_lines.append("用户已经打开实时语音；输出可直接交给语音合成的角色正文。")
         if request.voice_tts_provider == "qwen3-vllm":

@@ -2,13 +2,14 @@
   {
     "version": "0.8.2",
     "published_at": "2026-08-10",
-    "status": "local_regression_validated",
-    "title": "压缩式指令执行链路",
+    "status": "local_release",
+    "title": "原生函数调用与角色工具链",
     "summary": [
-      "LangGraph 使用单条 T/R 握手替代能力规划与研究复查模型",
-      "web 与 memory 采用 L3 直接执行，task 采用 L2 独立短审查，不注册本地命令执行器",
-      "结构化任务绑定角色 revision 并以 request_id 和命令哈希保证幂等",
-      "工具 SSE、折叠卡片和会话回执支持断线续传与刷新恢复",
+      "对话模型改用 OpenAI-compatible 原生 tools/tool_calls，删除文本握手、私有能力规划与研究复查链路",
+      "web 与 memory 采用 L3 直接授权，task 采用 L2 独立短审查，整轮最多执行一次工具",
+      "普通对话保留近期与历史聊天上下文，角色记忆、结构化记忆和本地知识由 memory 按需统一查询",
+      "工具结果使用标准 role=tool 回注，失败、无结果和无时间任务不得形成虚假完成承诺",
+      "旧工具协议、旧能力名称与实验入口退出产品链路",
       "Core、Web 与 Launcher 统一升至 0.8.2"
     ]
   },

@@ -120,6 +120,87 @@ class OpenAICompatibleLanguageModel:
         self._local.usage = None
         yield from self._stream(messages, config, request_kind="generation")
 
+    def stream_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        config: ApiConfig,
+        *,
+        tools: list[dict[str, Any]],
+        tool_choice: str = "auto",
+    ) -> Iterator[str]:
+        """Stream visible text or retain one provider-native tool call."""
+
+        self._local.usage = None
+        self._local.native_tool_call = None
+        body: dict[str, Any] = {
+            "model": config.model,
+            "messages": messages,
+            "temperature": config.temperature,
+            "max_tokens": config.max_tokens,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+            "thinking": {"type": "disabled"},
+            "tools": tools,
+            "tool_choice": tool_choice,
+        }
+        endpoint = f"{config.base_url.rstrip('/')}/chat/completions"
+        headers = {"Authorization": f"Bearer {config.api_key}", "Content-Type": "application/json"}
+        calls: dict[int, dict[str, Any]] = {}
+        visible = False
+        last_usage_event: dict[str, Any] | None = None
+        with self._client.stream(
+            "POST",
+            endpoint,
+            headers=headers,
+            json=body,
+            timeout=self.visible_timeout,
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line or not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if payload == "[DONE]":
+                    break
+                event = json.loads(payload)
+                if isinstance(event.get("usage"), dict):
+                    last_usage_event = event
+                choices = event.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                for part in delta.get("tool_calls") or []:
+                    index = int(part.get("index", 0))
+                    current = calls.setdefault(
+                        index,
+                        {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+                    )
+                    if part.get("id"):
+                        current["id"] += str(part["id"])
+                    function = part.get("function") or {}
+                    if function.get("name"):
+                        current["function"]["name"] += str(function["name"])
+                    if function.get("arguments"):
+                        current["function"]["arguments"] += str(function["arguments"])
+                content = delta.get("content")
+                if isinstance(content, str) and content:
+                    visible = True
+                    yield content
+        if last_usage_event is not None:
+            self._capture_usage(last_usage_event, config, "generation")
+        if len(calls) > 1:
+            raise ValueError("provider returned more than one tool call in a single turn")
+        if calls:
+            self._local.native_tool_call = calls[min(calls)]
+            return
+        if not visible:
+            raise EmptyVisibleContentError("model returned no visible content or tool call")
+
+    def take_native_tool_call(self) -> dict[str, Any] | None:
+        call = getattr(self._local, "native_tool_call", None)
+        self._local.native_tool_call = None
+        return call if isinstance(call, dict) else None
+
     def stream_repair(
         self,
         messages: list[dict[str, str]],

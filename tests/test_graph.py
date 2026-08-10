@@ -389,7 +389,7 @@ def test_prompt_uses_role_system_layers_and_never_identifies_as_protocol_outputt
     invoke(deps, system_prompt="你是弦月，语气温柔。")
 
     assert [item["role"] for item in model.captured[:2]] == ["system", "system"]
-    assert any(item["role"] == "system" and "<T:task>" in item["content"] for item in model.captured[2:-1])
+    assert not any("<T:" in item["content"] or "<R:" in item["content"] for item in model.captured)
     assert any(item["role"] == "user" and "【当前用户明确输入】" in item["content"] for item in model.captured)
     assert model.captured[-1]["role"] == "system"
     assert model.captured[-1]["content"].startswith("已确认状态：")

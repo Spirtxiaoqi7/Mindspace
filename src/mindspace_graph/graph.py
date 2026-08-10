@@ -21,7 +21,7 @@ def build_graph(dependencies: Dependencies, *, checkpointer: Any | None = None):
     nodes = NodeFactory(dependencies)
     builder = StateGraph(TurnState)
 
-    # 单轮只允许一次 T/R 握手；工具结果不会进入普通聊天历史。
+    # 单轮只允许一次 provider-native function call；工具结果不会进入普通聊天历史。
     builder.add_node("validate_request", nodes.validate_request)
     builder.add_node("load_context", nodes.load_context)
     builder.add_node("retrieve_chat", nodes.retrieve_chat)
@@ -29,7 +29,6 @@ def build_graph(dependencies: Dependencies, *, checkpointer: Any | None = None):
     builder.add_node("tool_hint", nodes.tool_hint)
     builder.add_node("compose_prompt", nodes.compose_prompt)
     builder.add_node("generate_candidate", nodes.generate_candidate)
-    builder.add_node("parse_tool_instruction", nodes.parse_tool_request)
     builder.add_node("authorize_tool", nodes.authorize_tool)
     builder.add_node("review_task", nodes.review_task)
     builder.add_node("execute_tool", nodes.execute_tool)
@@ -48,9 +47,8 @@ def build_graph(dependencies: Dependencies, *, checkpointer: Any | None = None):
     builder.add_edge("rank_context", "tool_hint")
     builder.add_edge("tool_hint", "compose_prompt")
     builder.add_edge("compose_prompt", "generate_candidate")
-    builder.add_edge("generate_candidate", "parse_tool_instruction")
     builder.add_conditional_edges(
-        "parse_tool_instruction",
+        "generate_candidate",
         nodes.route_tool_request,
         {"tool": "authorize_tool", "answer": "parse_protocol"},
     )
