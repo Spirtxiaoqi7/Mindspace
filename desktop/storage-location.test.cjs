@@ -51,6 +51,28 @@ test("existing LocalAppData payload is preserved and offered a safe migration", 
   assert.equal(inspectStorageAlignment(app, { LOCALAPPDATA: local }, custom).migrationRecommended, false);
 });
 
+test("an existing packaged deployment wins over stale LocalAppData payload", (context) => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-installed-home-"));
+  context.after(() => fs.rmSync(fixture, { recursive: true, force: true }));
+  const local = path.join(fixture, "local");
+  const legacy = path.join(local, "Mindspace");
+  const install = path.join(fixture, "Apps", "Mindspace");
+  const userData = path.join(fixture, "user-data");
+  fs.mkdirSync(path.join(legacy, "data"), { recursive: true });
+  fs.mkdirSync(path.join(install, "application", "core"), { recursive: true });
+  fs.writeFileSync(path.join(legacy, "data", "old.json"), "{}");
+  fs.writeFileSync(path.join(install, "application", "core", "pyproject.toml"), "[project]\nname='mindspace'\n");
+  const app = {
+    isPackaged: true,
+    getPath: (name) => name === "exe" ? path.join(install, "Mindspace.exe") : userData,
+  };
+
+  assert.equal(readHomeLocation(app, { LOCALAPPDATA: local }), install);
+  const report = inspectStorageAlignment(app, { LOCALAPPDATA: local }, install);
+  assert.equal(report.current, install);
+  assert.equal(report.migrationRecommended, true);
+});
+
 test("custom storage location persists outside LocalAppData", async (context) => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-storage-"));
   context.after(() => fs.rmSync(fixture, { recursive: true, force: true }));

@@ -41,6 +41,15 @@ function installAlignedHome(app) {
   }
 }
 
+function packagedInstallHome(app) {
+  if (!app?.isPackaged) return "";
+  let executable = "";
+  try { executable = app.getPath("exe"); } catch {}
+  if (!executable || !path.isAbsolute(executable)) return "";
+  const installDirectory = path.dirname(path.resolve(executable));
+  return homeHasUserPayload(installDirectory) ? installDirectory : "";
+}
+
 function homeHasUserPayload(home) {
   const roots = [
     path.join(home, "application", "core"),
@@ -65,6 +74,11 @@ function homeHasUserPayload(home) {
 }
 
 function defaultHome(app, environment = process.env) {
+  // Portable and previously deployed desktop builds keep the executable and
+  // the complete Mindspace payload in one directory. Prefer that authoritative
+  // deployment over stale LocalAppData remnants from older launchers.
+  const packaged = packagedInstallHome(app);
+  if (packaged) return packaged;
   const legacy = legacyLocalHome(app, environment);
   const aligned = installAlignedHome(app);
   // Existing installations without an explicit location file used LocalAppData.
@@ -252,6 +266,6 @@ async function cleanupMigratedSource(paths) {
 module.exports = {
   MOVABLE_PATHS, assertStorageTarget, cleanupMigratedSource, defaultHome,
   homeHasUserPayload, inspectStorageAlignment, installAlignedHome, legacyLocalHome,
-  locationFile, migrateStorage, readHomeLocation, replacePrefix, rewriteMovedPaths,
+  locationFile, migrateStorage, packagedInstallHome, readHomeLocation, replacePrefix, rewriteMovedPaths,
   writeHomeLocation,
 };
