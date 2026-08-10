@@ -371,10 +371,6 @@ class LocalKnowledgeRetriever:
                 item
                 for item in source_messages
                 if chat_message_retrieval_eligible(item)
-                and (
-                    adult_mode
-                    or (not bool(item.get("adult_mode")) and str(item.get("companion_lane") or "") != "ADULT")
-                )
             ]
             if include_raw_chat
             else []

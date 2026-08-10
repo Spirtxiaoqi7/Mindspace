@@ -13,6 +13,20 @@ export interface Message {
   voice_cue?: string;
   hidden?: boolean;
   presentation_mode?: PresentationModeResolved;
+  tool_execution?: ToolExecution;
+}
+
+export interface ToolExecution {
+  call_id: string;
+  tool: "web" | "memory" | "task";
+  level: 2 | 3;
+  status: "requested" | "reviewing" | "running" | "success" | "failed" | "denied";
+  parameter_summary: string;
+  elapsed_ms: number;
+  source_count: number;
+  data?: Record<string, unknown>;
+  error?: string;
+  receipt?: Record<string, unknown>;
 }
 export type PresentationModePreference = "auto" | "dialogue" | "scene";
 export type PresentationModeResolved = "dialogue" | "scene";
@@ -59,7 +73,7 @@ export interface CharacterCardV2Data {
   tags: string[];
   creator: string;
   character_version: string;
-  extensions: { mindspace?: { gender?: "男" | "女" | "不指定"; journey_id?: string; selected_card_ids?: string[] } };
+  extensions: { mindspace?: { gender?: "男" | "女" | "不指定"; journey_id?: string; selected_card_ids?: string[]; tasks_v2?: Array<Record<string, unknown>> } };
 }
 
 export interface CharacterCardV2 {

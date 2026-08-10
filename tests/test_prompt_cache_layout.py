@@ -3,7 +3,6 @@ from __future__ import annotations
 from copy import deepcopy
 
 from mindspace_graph.adapters.file_storage import DEFAULT_PROFILES
-from mindspace_graph.capabilities import CapabilityCall, CapabilityPlan, CapabilityResult
 from mindspace_graph.context_ledger import ContextLedger
 from mindspace_graph.models import (
     ChatRequest,
@@ -12,6 +11,7 @@ from mindspace_graph.models import (
     RetrievedChunk,
 )
 from mindspace_graph.prompting import build_prompt, split_history_for_cache
+from mindspace_graph.tool_chain import TOOL_PROTOCOL
 
 
 def profiles() -> ProfileBundle:
@@ -49,6 +49,7 @@ def request(round_num: int) -> ChatRequest:
     return ChatRequest(
         message=f"当前第{round_num}轮",
         session_id="cache-layout",
+        character_id="cache-layout-character",
         round=round_num,
         user_name="林澈",
         character_name="弦月",
@@ -72,6 +73,7 @@ def test_next_turn_keeps_confirmed_messages_but_excludes_audit_context(tmp_path)
     ledger.append_turn(
         request_id="request-12",
         session_id="cache-layout",
+        character_id="cache-layout-character",
         round_num=12,
         epoch_id=round_twelve.context_snapshot.epoch_id,
         pending_events=round_twelve.pending_events,
@@ -120,6 +122,7 @@ def test_hidden_initiative_trigger_is_not_persisted_as_dialogue_history(tmp_path
     proactive = ChatRequest(
         message="服务端主动续话触发占位",
         session_id="initiative-history",
+        character_id="initiative-character",
         round=1,
         initiative=True,
         initiative_trigger="idle_continuation",
@@ -136,6 +139,7 @@ def test_hidden_initiative_trigger_is_not_persisted_as_dialogue_history(tmp_path
     ledger.append_turn(
         request_id="initiative-run",
         session_id="initiative-history",
+        character_id="initiative-character",
         round_num=1,
         epoch_id=built.context_snapshot.epoch_id,
         pending_events=built.pending_events,
@@ -147,7 +151,7 @@ def test_hidden_initiative_trigger_is_not_persisted_as_dialogue_history(tmp_path
     )
 
     next_turn = build_prompt(
-        ChatRequest(message="继续", session_id="initiative-history", round=2),
+        ChatRequest(message="继续", session_id="initiative-history", character_id="initiative-character", round=2),
         bundle,
         [],
         [],
@@ -169,14 +173,13 @@ def test_json_baseline_precedes_history_and_post_history_calibration_is_last(tmp
             weighted_score=0.8,
         )
     ]
-    tools = [{"name": "memory_lookup", "description": "查询记忆"}]
     built = build_prompt(
         request(12),
         profiles(),
         history_through(11),
         retrieval,
         [],
-        available_capabilities=tools,
+        tool_hint="memory",
         context_ledger=ContextLedger(tmp_path / "context.db"),
     )
     contents = [item["content"] for item in built.messages]
@@ -194,42 +197,20 @@ def test_json_baseline_precedes_history_and_post_history_calibration_is_last(tmp
     assert built.messages[-1]["role"] == "system"
 
 
-def test_executed_capability_prompt_omits_registry_and_settings() -> None:
-    plan = CapabilityPlan(
-        decision="use_capabilities",
-        calls=[
-            CapabilityCall(
-                call_id="web-1",
-                capability="web.search",
-                arguments={"query": "测试"},
-            )
-        ],
-    )
-    results = [
-        CapabilityResult(
-            call_id="web-1",
-            capability="web.search",
-            data={"query": "测试", "items": []},
-            trust="external_untrusted",
-        )
-    ]
+def test_compressed_tool_protocol_is_short_and_old_registry_is_absent() -> None:
     built = build_prompt(
         request(1),
         profiles(),
         [],
         [],
         [],
-        available_capabilities=[{"name": "local.system_snapshot", "description": "不应进入主 Prompt"}],
-        capability_results=results,
-        capability_policy={"web_search_enabled": True, "internal_setting": "hidden"},
-        capability_plan=plan,
+        tool_hint="web",
     )
-    tool = next(item for item in built.pending_events if item["kind"] == "tool_context")
-
-    assert "【本轮查询状态】" in tool["content"]
-    assert "local.system_snapshot" not in tool["content"]
-    assert "internal_setting" not in tool["content"]
-    assert "可用工具" not in tool["content"]
+    text = "\n".join(item["content"] for item in built.messages)
+    assert TOOL_PROTOCOL in text
+    assert "零调用提示=web" in text
+    assert "knowledge.search_local" not in text
+    assert "capability_plan" not in text
 
 
 def test_recent_raw_chat_is_not_duplicated_inside_retrieval_context():
@@ -312,11 +293,11 @@ def test_adult_roleplay_context_activates_profile_rules_in_final_calibration():
 
     calibration = built.messages[-1]
     assert calibration["role"] == "system"
-    assert "仅在 R18 情境中启用的角色规则" in calibration["content"]
-    assert "NSFW续写" in calibration["content"]
+    assert "仅在 R18 情境中启用的角色规则" not in calibration["content"]
+    assert "NSFW续写" not in calibration["content"]
     assert "【成人模式｜用户已明确开启】" in calibration["content"]
-    assert "明确继续信号" in calibration["content"]
-    assert "不要再次询问同一个选择" in calibration["content"]
+    assert "直接承接用户已经明确提出的互动" in calibration["content"]
+    assert "不停在询问、确认、承诺、邀请或预告上" in calibration["content"]
     event = built.pending_events[-1]
     assert event["kind"] == "roleplay_post_history"
     assert event["ephemeral"] is True
@@ -341,9 +322,9 @@ def test_r18_sexual_action_mode_is_explicit_and_does_not_replace_normal_adult_de
 
     calibration = built.messages[-1]
     assert "【成人模式｜用户已明确开启】" in calibration["content"]
-    assert "阴茎、龟头、睾丸" in calibration["content"]
-    assert "鸡巴、肉棒" in calibration["content"]
-    assert "不机械升级强度" in calibration["content"]
+    assert "阴茎、龟头、睾丸" not in calibration["content"]
+    assert "鸡巴、肉棒" not in calibration["content"]
+    assert "自然使用直白淫语、准确性器官词和性行为词" in calibration["content"]
     assert "本轮质量目标" not in calibration["content"]
     turn_control = next(item for item in built.pending_events if item["kind"] == "turn_control")
     assert turn_control["metadata"]["adult_mode"] is True
@@ -372,8 +353,8 @@ def test_r18_final_directive_is_compact_and_does_not_force_escalation():
     assert "最近 R18 推进状态" not in calibration
     assert "当前 R18 Director" not in calibration
     assert "六级" not in calibration
-    assert "用户已明确继续当前场景" in calibration
-    assert "不为满足规则强行升级强度" in calibration
+    assert "直接承接用户已经明确提出的互动" in calibration
+    assert "不复述要求" in calibration
 
 
 def test_private_r18_output_protocol_is_not_injected_into_generation():

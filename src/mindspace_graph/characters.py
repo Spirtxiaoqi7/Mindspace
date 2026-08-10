@@ -30,6 +30,7 @@ from mindspace_graph.character_card import (
     legacy_profile_to_card,
     normalize_card,
     normalize_memory,
+    normalize_tasks_v2,
     prompt_profile_from_card,
 )
 from mindspace_graph.models import JsonUpdatePlan, JsonWriteReceipt, ProfileBundle
@@ -39,6 +40,7 @@ from mindspace_graph.profile_schema import DEFAULT_PROFILE_SCHEMA
 CHARACTER_SCHEMA_VERSION = "2.0.0"
 MIGRATION_KEY = "migration:characters:0.6.0"
 V2_MIGRATION_KEY = "migration:characters:v2-card"
+TASKS_V2_MIGRATION_KEY = "migration:characters:tasks-v2"
 LEGACY_CHARACTER_ID = str(uuid5(NAMESPACE_URL, "mindspace:legacy-character"))
 SAFE_ID = re.compile(r"^[0-9a-fA-F-]{36}$")
 SOURCES = {"draw", "custom", "imported", "migrated"}
@@ -70,6 +72,7 @@ class CharacterRepository:
         self.root.mkdir(parents=True, exist_ok=True)
         self._migrate_legacy()
         self._migrate_v2_records()
+        self._migrate_tasks_v2_records()
 
     @staticmethod
     def _key(character_id: str) -> str:
@@ -265,6 +268,14 @@ class CharacterRepository:
             raise ValueError("invalid character status")
         if isinstance(record.get("card"), dict):
             card = normalize_card(record["card"])
+            memory = normalize_memory(record.get("memory") or card["data"].get("memory"))
+            tasks_v2 = normalize_tasks_v2(
+                card["data"]["extensions"]["mindspace"].get("tasks_v2"),
+                memory.get("tasks"),
+            )
+            memory["tasks"] = [item["title"] for item in tasks_v2]
+            card["data"]["memory"] = deepcopy(memory)
+            card["data"]["extensions"]["mindspace"]["tasks_v2"] = deepcopy(tasks_v2)
             summary = card_summary(card)
             record.update(
                 {
@@ -274,7 +285,7 @@ class CharacterRepository:
                     "user_alias": str(record.get("user_alias") or "")[:80],
                     "relationship_label": str(record.get("relationship_label") or summary["relationship_label"])[:100],
                     "card": card,
-                    "memory": normalize_memory(record.get("memory")),
+                    "memory": memory,
                     "avatar": deepcopy(record.get("avatar") or {}),
                 }
             )
@@ -312,6 +323,30 @@ class CharacterRepository:
             }
         )
         return record
+
+    def _migrate_tasks_v2_records(self) -> None:
+        if self.database.has_document(TASKS_V2_MIGRATION_KEY):
+            return
+        with self.database.transaction(operation="migrate_character_tasks_v2"):
+            if self.database.has_document(TASKS_V2_MIGRATION_KEY):
+                return
+            migrated = 0
+            for _key, raw in self.database.list_documents("character:"):
+                if not isinstance(raw, dict) or not isinstance(raw.get("card"), dict):
+                    continue
+                mindspace = raw["card"].get("data", {}).get("extensions", {}).get("mindspace", {})
+                if isinstance(mindspace, dict) and isinstance(mindspace.get("tasks_v2"), list):
+                    continue
+                self._backup(raw)
+                candidate = deepcopy(raw)
+                candidate["revision"] = int(raw.get("revision", 0)) + 1
+                candidate["updated_at"] = _now()
+                self._store(self._validate_record(candidate))
+                migrated += 1
+            self.database.put_document(
+                TASKS_V2_MIGRATION_KEY,
+                {"schema_version": "1.0.0", "completed_at": _now(), "migrated": migrated},
+            )
 
     def list(self, *, include_archived: bool = False) -> list[dict[str, Any]]:
         records = [
@@ -673,6 +708,100 @@ class CharacterRepository:
             character_id,
             {"revision": record["revision"], "memory": memory},
         )["memory"]
+
+    def execute_task_command(
+        self,
+        character_id: str,
+        command: dict[str, Any],
+        *,
+        request_id: str,
+        command_hash: str,
+        expected_revision: int,
+    ) -> dict[str, Any]:
+        idempotency_key = f"task-command:{character_id}:{request_id}:{command_hash}"
+        with self._lock, self.database.transaction(
+            operation="execute_task_command",
+            details={"character_id": character_id, "request_id": request_id},
+        ):
+            replay = self.database.get_document(idempotency_key)
+            if isinstance(replay, dict):
+                return deepcopy(replay)
+            current = self.get(character_id)
+            if int(current.get("revision", 0)) != int(expected_revision):
+                raise ValueError("stale character revision")
+            if not isinstance(current.get("card"), dict):
+                raise ValueError("task commands require a V2 character")
+            op = str(command.get("op") or "")
+            tasks = normalize_tasks_v2(
+                current["card"]["data"]["extensions"]["mindspace"].get("tasks_v2"),
+                current.get("memory", {}).get("tasks", []),
+            )
+            changed = False
+            now = _now()
+            if op == "list":
+                query = str(command.get("query") or "").strip().lower()
+                selected = [item for item in tasks if not query or query in item["title"].lower()]
+            elif op == "create":
+                item = {
+                    "id": str(uuid4()),
+                    "title": str(command["title"]).strip()[:300],
+                    "status": "pending",
+                    "due_at": command.get("due_at") or None,
+                    "created_at": now,
+                    "updated_at": now,
+                    "completed_at": None,
+                }
+                tasks.append(item)
+                selected = [item]
+                changed = True
+            else:
+                task_id = str(command.get("id") or "")
+                item = next((value for value in tasks if value["id"] == task_id), None)
+                if item is None:
+                    raise KeyError("task not found")
+                if op == "update":
+                    if "title" in command:
+                        title = str(command.get("title") or "").strip()[:300]
+                        if not title:
+                            raise ValueError("task title must not be blank")
+                        item["title"] = title
+                    if "due_at" in command:
+                        item["due_at"] = command.get("due_at") or None
+                    item["updated_at"] = now
+                    changed = True
+                elif op == "complete":
+                    item["status"] = "completed"
+                    item["updated_at"] = now
+                    item["completed_at"] = now
+                    changed = True
+                else:
+                    raise ValueError("unsupported task operation")
+                selected = [item]
+            revision = int(current.get("revision", 0))
+            if changed:
+                candidate = deepcopy(current)
+                candidate["card"]["data"]["extensions"]["mindspace"]["tasks_v2"] = deepcopy(tasks)
+                candidate["memory"]["tasks"] = [item["title"] for item in tasks]
+                candidate["card"]["data"]["memory"] = deepcopy(candidate["memory"])
+                candidate["revision"] = revision + 1
+                candidate["updated_at"] = now
+                candidate = self._validate_record(candidate)
+                self._backup(current)
+                self._store(candidate)
+                revision = int(candidate["revision"])
+            receipt = {
+                "request_id": request_id,
+                "command_hash": command_hash,
+                "character_id": character_id,
+                "op": op,
+                "changed": changed,
+                "revision": revision,
+                "tasks": deepcopy(selected),
+                "count": len(selected),
+                "completed_at": now,
+            }
+            self.database.put_document(idempotency_key, receipt)
+            return deepcopy(receipt)
 
     def touch(self, character_id: str) -> None:
         record = self.get(character_id)

@@ -43,7 +43,6 @@ def test_first_fifteen_rounds_index_only_then_round_sixteen_enables_rag(tmp_path
             )
             assert response.status == "success"
             assert response.retrieval_counts == {"knowledge": 0, "chat": 0, "history": 0}
-            assert "retrieve_knowledge_deferred" in response.trace
             assert "retrieve_chat_deferred" in response.trace
             if round_num == 1:
                 warmups = list(container.conversation._retrieval_warmups.values())
@@ -63,8 +62,8 @@ def test_first_fifteen_rounds_index_only_then_round_sixteen_enables_rag(tmp_path
             )
         )
         assert sixteenth.status == "success"
-        assert sixteenth.retrieval_counts["knowledge"] == 1
-        assert "retrieve_knowledge" in sixteenth.trace
+        assert sixteenth.retrieval_counts["knowledge"] == 0
+        assert "retrieve_knowledge" not in sixteenth.trace
         assert len(container.sessions.load_all(session_id)) == 32
         await container.conversation.aclose()
 
@@ -96,7 +95,7 @@ def test_client_cannot_force_cold_retrieval_ready(tmp_path) -> None:
     container.conversation.close()
 
 
-def test_rank_context_enforces_two_three_three_source_quotas(tmp_path) -> None:
+def test_rank_context_excludes_automatic_knowledge_and_enforces_chat_memory_quotas(tmp_path) -> None:
     settings = AppSettings(
         runtime_dir=tmp_path / "runtime",
         llm_mode="demo",
@@ -113,22 +112,19 @@ def test_rank_context_enforces_two_three_three_source_quotas(tmp_path) -> None:
             source=source,
             score=1,
         )
-        for source, count in (("knowledge", 5), ("chat", 6), ("memory", 6))
+        for source, count in (("chat", 6), ("memory", 6))
         for index in range(count)
     ]
     result = NodeFactory(container.conversation.dependencies).rank_context(
         {
             "request": ChatRequest(message="测试", round=16),
-            "knowledge_chunks": [item for item in chunks if item.source == "knowledge"],
-            "chat_chunks": [item for item in chunks if item.source != "knowledge"],
+            "chat_chunks": chunks,
         },
         lambda _event: None,
     )
     ranked = result["ranked_context"]
 
     assert [item.source for item in ranked] == [
-        "knowledge",
-        "knowledge",
         "chat",
         "chat",
         "chat",

@@ -188,63 +188,6 @@ class OpenAICompatibleLanguageModel:
             ),
         )
 
-    def plan_capabilities(self, messages: list[dict[str, str]], config: ApiConfig) -> str:
-        """Run a small private decision request before the user-visible response."""
-
-        return self._private_completion(
-            messages,
-            config,
-            request_kind="capability_plan",
-            max_tokens=320,
-            timeout=self.timeout,
-        )
-
-    def preflight(
-        self,
-        messages: list[dict[str, str]],
-        config: ApiConfig,
-        *,
-        timeout_seconds: float,
-    ) -> str:
-        """Run private structured planning with a caller-owned deadline."""
-
-        seconds = max(0.3, min(15.0, float(timeout_seconds)))
-        return self._private_completion(
-            messages,
-            config,
-            request_kind="preflight",
-            max_tokens=320,
-            timeout=httpx.Timeout(
-                connect=min(3.0, seconds),
-                read=seconds,
-                write=min(3.0, seconds),
-                pool=min(3.0, seconds),
-            ),
-        )
-
-    def review_research(
-        self,
-        messages: list[dict[str, str]],
-        config: ApiConfig,
-        *,
-        timeout_seconds: float,
-    ) -> str:
-        """Review first-pass evidence and optionally request one follow-up wave."""
-
-        seconds = max(0.5, min(12.0, float(timeout_seconds)))
-        return self._private_completion(
-            messages,
-            config,
-            request_kind="research_review",
-            max_tokens=520,
-            timeout=httpx.Timeout(
-                connect=min(3.0, seconds),
-                read=seconds,
-                write=min(3.0, seconds),
-                pool=min(3.0, seconds),
-            ),
-        )
-
     def extract_memory(
         self,
         messages: list[dict[str, str]],
@@ -404,12 +347,18 @@ class OpenAICompatibleLanguageModel:
                     emitted = True
                     yield chunk
                 return
-            except (httpx.ConnectError, httpx.ReadTimeout):
+            except (
+                httpx.ConnectError,
+                httpx.ReadError,
+                httpx.ReadTimeout,
+                httpx.RemoteProtocolError,
+            ):
                 if emitted or attempt > 0:
                     raise
-                # A failed handshake or a connection that never produced its
-                # first event gets one fresh connection. Once text is visible,
-                # never retry and risk duplicating a partial answer.
+                # A failed handshake, incomplete chunked body, or connection
+                # that never produced its first event gets one fresh request.
+                # Once text is visible, never retry and risk duplicating a
+                # partial answer.
                 continue
 
     def _stream_once(
@@ -478,3 +427,4 @@ class OpenAICompatibleLanguageModel:
             if finish_reason:
                 detail += f", finish_reason={finish_reason}"
             raise EmptyVisibleContentError(f"{request_kind} response content is blank ({detail})")
+

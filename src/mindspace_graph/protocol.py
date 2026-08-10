@@ -32,6 +32,7 @@ class IncrementalResponseParser:
     FALLBACK_BLOCK = re.compile(r"<json_update\b[^>]*>", flags=re.IGNORECASE)
     TAIL_GUARD = len(CLOSE) + len("<|endoftext|>")
     PLAIN_STOP_MARKERS = (
+        "<t:",
         "<json_update",
         "</response>",
         "<|im_end|>",
@@ -80,6 +81,11 @@ class IncrementalResponseParser:
         if not chunk or self._closed:
             return []
         self._buffer += chunk
+        probe = self._buffer.lstrip().lower()
+        if not self._opened and ("<t:".startswith(probe) or probe.startswith("<t:")):
+            if probe.startswith("<t:") and re.search(r"</t>\s*$", probe, flags=re.DOTALL):
+                self._closed = True
+            return []
         if self._plain:
             return self._feed_plain()
         if not self._opened:
@@ -109,6 +115,10 @@ class IncrementalResponseParser:
                 return []
             self._opened = True
             self._buffer = self._buffer[match.end() :]
+
+        wrapped_probe = self._buffer.lstrip().lower()
+        if "<t:".startswith(wrapped_probe) or wrapped_probe.startswith("<t:"):
+            return []
 
         close_at = self._buffer.lower().find(self.CLOSE)
         if close_at >= 0:

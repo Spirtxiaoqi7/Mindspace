@@ -143,6 +143,58 @@ def test_v2_card_export_import_generates_new_id_and_excludes_private_data(tmp_pa
     assert imported.json()["character"]["character_id"] != character["character_id"]
 
 
+def test_v2_legacy_task_titles_migrate_to_stable_structured_tasks(tmp_path):
+    client = TestClient(create_app(make_settings(tmp_path)))
+    card = v2_card("任务迁移角色")
+    card["data"]["memory"] = {"preferences": [], "tasks": ["交报告"]}
+    created = client.post("/api/v1/characters", json={"source": "custom", "card": card}).json()["character"]
+
+    tasks = created["card"]["data"]["extensions"]["mindspace"]["tasks_v2"]
+    assert len(tasks) == 1
+    assert tasks[0]["title"] == "交报告"
+    assert tasks[0]["status"] == "pending"
+    assert tasks[0]["id"]
+    exported = client.get(f"/api/v1/characters/{created['character_id']}/export").json()
+    assert exported["data"]["memory"]["tasks"] == ["交报告"]
+    assert exported["data"]["extensions"]["mindspace"]["tasks_v2"][0]["id"] == tasks[0]["id"]
+
+
+def test_task_commands_are_revisioned_and_idempotent(tmp_path):
+    app = create_app(make_settings(tmp_path))
+    client = TestClient(app)
+    character = create_v2_character(client, "任务角色")
+    repository = app.state.container.characters
+    revision = int(character["revision"])
+    command = {"op": "create", "title": "交报告", "due_at": "2026-08-11T18:00:00+08:00"}
+
+    created = repository.execute_task_command(
+        character["character_id"],
+        command,
+        request_id="task-idempotency",
+        command_hash="stable-command-hash",
+        expected_revision=revision,
+    )
+    replay = repository.execute_task_command(
+        character["character_id"],
+        command,
+        request_id="task-idempotency",
+        command_hash="stable-command-hash",
+        expected_revision=revision,
+    )
+
+    assert replay == created
+    assert created["changed"] is True
+    assert len(repository.get(character["character_id"])["card"]["data"]["extensions"]["mindspace"]["tasks_v2"]) == 1
+    with pytest.raises(ValueError, match="stale character revision"):
+        repository.execute_task_command(
+            character["character_id"],
+            {"op": "create", "title": "重复任务"},
+            request_id="task-stale",
+            command_hash="different-command-hash",
+            expected_revision=revision,
+        )
+
+
 def test_v2_card_import_rejects_zip_path_traversal(tmp_path):
     client = TestClient(create_app(make_settings(tmp_path)))
     buffer = io.BytesIO()

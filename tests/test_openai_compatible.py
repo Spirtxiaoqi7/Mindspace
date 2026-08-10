@@ -120,7 +120,7 @@ def test_private_structured_calls_fall_back_for_generic_compatible_servers():
     client = httpx.Client(transport=httpx.MockTransport(handler))
     model = OpenAICompatibleLanguageModel(client=client)
 
-    assert model.plan_capabilities([], ApiConfig()) == "{}"
+    assert model.generate_structured([], ApiConfig(), request_kind="task_review", max_tokens=160) == "{}"
     assert len(bodies) == 3
     assert "thinking" not in bodies[-1]
     client.close()

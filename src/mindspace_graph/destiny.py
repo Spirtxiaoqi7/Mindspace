@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from mindspace_graph.character_card import normalize_card
+from mindspace_graph.character_card import normalize_appearance, normalize_card
 from mindspace_graph.models import ApiConfig
 from mindspace_graph.product_database import ProductDatabase
 
@@ -586,6 +586,7 @@ class DestinySeed(BaseModel):
     relationship: str = Field(min_length=1, max_length=100)
     relationship_context: str = Field(default="", max_length=2400)
     character_expectation: str = Field(min_length=1, max_length=2400)
+    appearance_expectation: str = Field(default="", max_length=1200)
     adult_character: bool = True
     avatar: dict[str, Any] = Field(default_factory=dict)
 
@@ -598,6 +599,7 @@ class DestinySeed(BaseModel):
         data.setdefault("ai_name", data.get("name"))
         data.setdefault("ai_gender", data.get("gender", "不指定"))
         data.setdefault("character_expectation", data.get("expectation"))
+        data.setdefault("appearance_expectation", data.get("appearance", ""))
         data.setdefault("user_name", "用户")
         data.setdefault("relationship", "陪伴者")
         return data
@@ -609,6 +611,7 @@ class DestinySeed(BaseModel):
         "relationship",
         "relationship_context",
         "character_expectation",
+        "appearance_expectation",
         mode="before",
     )
     @classmethod
@@ -951,7 +954,10 @@ class DestinyService:
                 "content": (
                     "你是聊天角色卡编写器。只返回 JSON："
                     '{"description":"","personality":"","scenario":"","first_mes":"",'
-                    '"alternate_greetings":[],"mes_example":""}'
+                    '"alternate_greetings":[],"mes_example":"","appearance":{'
+                    '"height_cm":null,"body_shape":"","body_features":"","face":"",'
+                    '"hair":"","eyes":"","skin":"","distinguishing_features":[],'
+                    '"signature_outfit":"","intimate_features":""}}'
                 ),
             },
             {
@@ -960,11 +966,14 @@ class DestinyService:
                     (
                         "把用户选择的 12 项特征写成同一个连续、自然的聊天角色。",
                         "description 只写基础信息和必要背景，简短具体。",
+                        "appearance 写稳定、可用于日常与亲密场景的具体外表；优先服从外表期待，未指定部分自然补全。",
+                        "description 不重复 appearance，后端会自动加入可移植的外表摘要。",
+                        "intimate_features 只在成年角色且外表期待明确涉及成人身体特征时填写，否则留空。",
                         "personality 写可观察的性格与相处反应，不堆形容词。",
-                        "scenario 写角色与用户的关系和一个日常聊天情境。",
+                        "scenario 只写角色与用户的长期关系和常见互动背景，不写具体日期、早晚、刚醒、当前地点或正在发生的动作。",
                         "first_mes 与 alternate_greetings 先回应对方，再自然延续；每条简短。",
                         "mes_example 写 1 到 2 轮短对话，体现称呼、关系和回应方式。",
-                        "动作只在当前需要时写一句；不要用长段括号旁白或舞台说明。",
+                        "动作、旁白和镜头描写按角色与情境自然出现，不限制表达形式。",
                         "不得编造过去、时间、物品、职业、创伤、前任或共同经历。",
                         "不要写系统规则、禁令、边界条款或关系契约。",
                         "保持日常、具体，不把特征夸大成病态依赖、绝对服从、人格切换或神秘契约。",
@@ -1622,6 +1631,9 @@ class DestinyService:
         ):
             raise ValueError("V2 角色卡需要 2 到 4 条 alternate_greetings")
         _assert_gender_consistency(json.dumps(generated, ensure_ascii=False), seed.ai_gender, strict_role_terms=False)
+        appearance = normalize_appearance(generated.get("appearance"))
+        if not seed.adult_character:
+            appearance["intimate_features"] = ""
         card = normalize_card(
             {
                 "data": {
@@ -1646,6 +1658,7 @@ class DestinyService:
                             "user_name": seed.user_name,
                             "relationship_context": seed.relationship_context,
                             "user_alias": seed.user_alias or seed.user_name,
+                            "appearance": appearance,
                             "journey_id": journey_id,
                             "selected_card_ids": [card["card_id"] for card in selections],
                         }

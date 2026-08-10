@@ -76,6 +76,7 @@ class SessionRepositoryPort(Protocol):
         *,
         replace_round: bool,
         write_receipt: JsonWriteReceipt,
+        tool_execution: dict[str, Any] | None = None,
     ) -> dict[str, str]: ...
 
 
@@ -104,25 +105,7 @@ class LanguageModelPort(Protocol):
 
     def audit_role(self, messages: list[dict[str, str]], config: ApiConfig) -> str: ...
 
-    def plan_capabilities(self, messages: list[dict[str, str]], config: ApiConfig) -> str: ...
-
-    def preflight(
-        self,
-        messages: list[dict[str, str]],
-        config: ApiConfig,
-        *,
-        timeout_seconds: float,
-    ) -> str: ...
-
     def extract_memory(
-        self,
-        messages: list[dict[str, str]],
-        config: ApiConfig,
-        *,
-        timeout_seconds: float,
-    ) -> str: ...
-
-    def review_research(
         self,
         messages: list[dict[str, str]],
         config: ApiConfig,

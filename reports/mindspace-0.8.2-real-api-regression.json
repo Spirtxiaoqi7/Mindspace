@@ -1,0 +1,46 @@
+{
+  "tested_at": "2026-08-10T01:41:54.892444+00:00",
+  "runtime": "A:\\RAG\\Mindspace-admin\\.runtime-082-real-api-4450b0f5f3",
+  "provider": "DeepSeek official",
+  "base_url": "https://api.deepseek.com",
+  "model": "deepseek-v4-flash",
+  "cases": [
+    {
+      "case": "ordinary",
+      "status": "success",
+      "model_calls": 1,
+      "tool": null,
+      "tool_status": null,
+      "result_count": 0,
+      "reply_chars": 17
+    },
+    {
+      "case": "memory",
+      "status": "success",
+      "model_calls": 2,
+      "tool": "memory",
+      "tool_status": "success",
+      "result_count": 2,
+      "reply_chars": 11
+    },
+    {
+      "case": "web",
+      "status": "success",
+      "model_calls": 2,
+      "tool": "web",
+      "tool_status": "success",
+      "result_count": 5,
+      "reply_chars": 118
+    },
+    {
+      "case": "task",
+      "status": "success",
+      "model_calls": 3,
+      "tool": "task",
+      "tool_status": "success",
+      "result_count": 1,
+      "reply_chars": 96
+    }
+  ],
+  "secrets_recorded": false
+}

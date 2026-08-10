@@ -73,8 +73,8 @@ def test_happy_path_runs_parallel_retrieval_and_persists_turn():
 
     response = result["response"]
     assert response.status == "success"
-    assert response.retrieval_counts == {"knowledge": 1, "chat": 1, "history": 0}
-    assert "retrieve_knowledge" in response.trace
+    assert response.retrieval_counts == {"knowledge": 0, "chat": 1, "history": 0}
+    assert "retrieve_knowledge" not in response.trace
     assert "retrieve_chat" in response.trace
     assert len(deps.sessions.sessions["demo"]) == 2
     assert response.assistant_message_id
@@ -167,7 +167,7 @@ class R18RepairModel(DeterministicLanguageModel):
         raw = super().generate(messages, config)
         return raw.replace(
             "这是由 LangGraph 调度完成的一次确定性演示回复。",
-            "我只是重复邀请，没有实际推进。",
+            "我贴近你，顺着这次互动直接回应。",
         )
 
     def repair(
@@ -184,17 +184,17 @@ class R18RepairModel(DeterministicLanguageModel):
         )
 
 
-def test_r18_quality_diagnostic_does_not_add_a_second_model_call():
+def test_r18_response_is_not_blocked_by_a_first_sentence_word_gate():
     deps = demo_dependencies()
     deps.llm = R18RepairModel()
 
     result = invoke(deps, message="继续", adult_mode=True)
 
     assert result["response"].status == "success"
+    assert "我贴近你，顺着这次互动直接回应" in result["response"].reply
     assert "repair_r18_role" not in result["response"].trace
     assert result["response"].model.total_calls == 1
     assert [item.kind for item in result["response"].model.call_summary] == ["generation"]
-    assert "我只是重复邀请，没有实际推进。" in result["response"].reply
 
 
 class RepairToValidPatchModel(DeterministicLanguageModel):
@@ -389,7 +389,8 @@ def test_prompt_uses_role_system_layers_and_never_identifies_as_protocol_outputt
     invoke(deps, system_prompt="你是弦月，语气温柔。")
 
     assert [item["role"] for item in model.captured[:2]] == ["system", "system"]
-    assert all(item["role"] == "user" for item in model.captured[2:-1])
+    assert any(item["role"] == "system" and "<T:task>" in item["content"] for item in model.captured[2:-1])
+    assert any(item["role"] == "user" and "【当前用户明确输入】" in item["content"] for item in model.captured)
     assert model.captured[-1]["role"] == "system"
     assert model.captured[-1]["content"].startswith("已确认状态：")
     system_text = "\n".join(item["content"] for item in model.captured if item["role"] == "system")
@@ -473,7 +474,7 @@ def test_prompt_explicitly_distinguishes_voice_and_text_interaction_modes():
     assert "通常说三至五句" not in voice_prompt
     assert "约七十至一百五十个中文字符" not in voice_prompt
     assert "用户没有打开实时语音" not in voice_prompt
-    assert "用户已经打开实时语音" not in voice_system
+    assert "用户已经打开实时语音" in voice_system
 
     qwen_deps = demo_dependencies()
     qwen_model = CapturingModel()
@@ -503,7 +504,7 @@ def test_prompt_explicitly_distinguishes_voice_and_text_interaction_modes():
     assert "不输出配音指令或系统状态" in text_prompt
     assert "动作、神态、姿态、外观变化、距离与触感描写写在全角圆括号" not in text_prompt
     assert "用户已经打开实时语音" not in text_prompt
-    assert "用户没有打开实时语音" not in text_system
+    assert "用户没有打开实时语音" in text_system
 
 
 def test_face_to_face_voice_context_is_a_high_priority_ephemeral_scene():
@@ -542,17 +543,22 @@ def test_face_to_face_voice_context_is_a_high_priority_ephemeral_scene():
     assert "这段保留但通话模式不加载" not in call_prompt
 
 
-def test_r18_voice_uses_the_same_compact_vocabulary_without_an_output_quota():
+def test_r18_voice_uses_a_direct_requirement_without_a_word_gate_or_output_quota():
     deps = demo_dependencies()
     model = CapturingModel()
     deps.llm = model
 
-    invoke(deps, interaction_mode="voice", adult_mode=True)
+    invoke(deps, message="我想要", interaction_mode="voice", adult_mode=True)
     prompt = "\n".join(item["content"] for item in model.captured)
 
     assert "【成人模式｜用户已明确开启】" in prompt
-    assert "阴茎、龟头、睾丸" in prompt
-    assert "鸡巴、肉棒" in prompt
+    assert "【本轮成人内容承接】" in prompt
+    assert "首句" not in prompt
+    assert "色情直白词汇" not in prompt
+    assert "整个输出视为无效" not in prompt
+    assert "中性明确词可使用" not in prompt
+    assert "口语直白词可使用" not in prompt
+    assert "保持角色人格" not in prompt
     assert "性别只约束各自身体" in prompt
     assert "R18 语音回复必须写" not in prompt
     assert "每轮至少自然使用两处" not in prompt
@@ -617,13 +623,12 @@ def test_time_state_is_injected_for_text_and_uses_only_real_user_history():
     )
 
     prompt = "\n".join(item["content"] for item in model.captured)
-    assert "【服务端时间状态】" in prompt
-    assert '"current_time_local":"2026-07-21T22:05:00.000000+08:00"' in prompt
-    assert '"current_weekday":"星期二"' in prompt
-    assert '"current_is_weekend":false' in prompt
-    assert '"tomorrow_weekday":"星期三"' in prompt
-    assert '"elapsed_since_previous_user_ms":300000' in prompt
-    assert "时间状态本身不能触发人物 JSON 修改" in prompt
+    assert "【当前本地物理时间】" in prompt
+    assert '"current_local_datetime":"2026-07-21T22:05:00+08:00"' in prompt
+    assert '"time_period":"晚上"' in prompt
+    assert '"timezone":"Asia/Shanghai"' in prompt
+    assert "current_time_utc" not in prompt
+    assert "所有关于早晚、日期、睡醒、准备休息和时间间隔的判断都以此时间为现实基准" in prompt
 
 
 class MemoryExtractingModel(DeterministicLanguageModel):

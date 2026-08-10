@@ -9,7 +9,6 @@ from typing import Any
 from langgraph.types import StreamWriter
 
 from mindspace_graph.cancellation import GenerationCancelled
-from mindspace_graph.capabilities import CapabilityPlan, enforce_capability_claims
 from mindspace_graph.models import (
     ChatResponse,
     JsonUpdatePlan,
@@ -30,7 +29,20 @@ from mindspace_graph.roleplay import (
     normalize_voice_response,
     resolve_presentation_mode,
 )
+from mindspace_graph.r18_director import explicit_r18_requested
 from mindspace_graph.state import TurnState
+from mindspace_graph.tool_chain import (
+    FINAL_ONLY_PROTOCOL,
+    TOOL_PROTOCOL,
+    ToolExecutionResult,
+    enforce_tool_claims,
+    execute_memory_tool,
+    failed_result,
+    parse_task_review,
+    parse_tool_instruction,
+    result_prompt_message,
+    task_review_messages,
+)
 from mindspace_graph.voice_render import VoiceCueStream, extract_voice_cue, normalize_voice_cue
 
 _CONTEXTUAL_RECALL = re.compile(
@@ -118,9 +130,9 @@ class NodeFactory:
         self.parser = ProtocolParser()
 
     CALL_BUDGETS = {
-        "planner": 1,
-        "research_review": 1,
         "generation": 1,
+        "task_review": 1,
+        "final_generation": 1,
     }
     TOTAL_CALL_BUDGET = 3
 
@@ -224,31 +236,6 @@ class NodeFactory:
             result["emotion_state"] = previous_emotion_state
         return result
 
-    def retrieve_knowledge(self, state: TurnState) -> dict[str, Any]:
-        """知识库召回分支；与 retrieve_chat 并行，分支内保持只读。"""
-
-        self._check_cancelled(state)
-        request = state["request"]
-        settings = request.retrieval
-        chunks = []
-        if not settings.ready:
-            return {
-                "knowledge_chunks": [],
-                "trace": ["retrieve_knowledge_deferred"],
-            }
-        capability_allowed = self.deps.capabilities is None or self.deps.capabilities.enabled("local_knowledge_enabled")
-        if capability_allowed and settings.rag_enabled and settings.knowledge_enabled:
-            query = request.message
-            chunks = self.deps.retriever.search_knowledge(
-                query,
-                settings.knowledge_k * settings.candidate_multiplier,
-                settings=settings,
-                user_name=request.user_name,
-                character_name=request.character_name,
-            )
-            chunks = [item for item in chunks if item.score >= settings.similarity_threshold]
-        return {"knowledge_chunks": chunks, "trace": ["retrieve_knowledge"]}
-
     def retrieve_chat(self, state: TurnState) -> dict[str, Any]:
         """当前会话与结构化记忆召回分支；不重复执行知识库召回。"""
 
@@ -283,16 +270,10 @@ class NodeFactory:
                 include_raw_chat=allow_raw_chat_retrieval(request),
                 adult_mode=adult_recall,
             )
-            chunks = [item for item in chunks if item.score >= settings.similarity_threshold]
-            if self.deps.activities is not None:
-                narratives = self.deps.activities.search_narratives(
-                    request.character_id,
-                    query,
-                    limit=min(3, settings.memory_family_limit),
-                )
-                chunks.extend(item for item in narratives if item.score >= settings.similarity_threshold)
-        if not settings.structured_memory_enabled:
-            chunks = [item for item in chunks if item.source != "memory"]
+            chunks = [
+                item for item in chunks
+                if item.source == "chat" and item.score >= settings.similarity_threshold
+            ]
         return {
             "chat_chunks": chunks,
             "retrieval_query": query if settings.ready else request.message,
@@ -311,7 +292,7 @@ class NodeFactory:
 
     def rank_context(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
         self._check_cancelled(state)
-        combined = state.get("knowledge_chunks", []) + state.get("chat_chunks", [])
+        combined = state.get("chat_chunks", [])
         request = state["request"]
         quotas = {
             "knowledge": request.retrieval.knowledge_k,
@@ -363,7 +344,7 @@ class NodeFactory:
             {
                 "event": "retrieval.completed",
                 "data": {
-                    "knowledge": len(state.get("knowledge_chunks", [])),
+                    "knowledge": 0,
                     "chat": len(state.get("chat_chunks", [])),
                     "selected_counts": {
                         "knowledge": sum(item.source == "knowledge" for item in ranked),
@@ -382,346 +363,225 @@ class NodeFactory:
         trace = "rank_context" if request.retrieval.ready else "rank_context_deferred"
         return {"ranked_context": ranked, "trace": [trace]}
 
-    def capability_route(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
-        """先用确定性规则路由能力，再判断是否值得支付一次私有规划调用。
-
-        任何 web.* 计划都会进入 preflight，用于消解口语、省略指代和搜索词；
-        明确的网页或知识请求通常可直接进入执行器。
-        """
+    def tool_hint(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
+        """Produce a zero-call hint only; the model remains the tool selector."""
 
         self._check_cancelled(state)
         service = self.deps.capabilities
-        if service is None:
-            plan = CapabilityPlan()
-            available: list[dict[str, Any]] = []
-            policy: dict[str, Any] = {}
-        else:
-            plan = service.route(
-                state["request"],
-                history=state.get("recent_history", []),
+        hint = service.route_hint(state["request"], history=state.get("recent_history", [])) if service else ""
+        writer({"event": "tool.hinted", "data": {"hint": hint, "model_calls": 0}})
+        return {"tool_hint": hint, "trace": ["tool_hint"]}
+
+    def parse_tool_request(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
+        instruction, error = parse_tool_instruction(state.get("raw_candidate", ""))
+        if instruction is not None:
+            writer(
+                {
+                    "event": "tool.requested",
+                    "data": {
+                        "call_id": instruction.call_id,
+                        "tool": instruction.tool,
+                        "level": instruction.level,
+                        "parameter_summary": instruction.parameter_summary,
+                    },
+                }
             )
-            available = service.definitions()
-            policy = service.prompt_policy()
-        preflight_required = plan.decision == "needs_planner" or any(
-            call.capability.startswith("web.") for call in plan.calls
-        )
-        writer(
-            {
-                "event": "capability.routing",
-                "data": {
-                    "decision": plan.decision,
-                    "reason": plan.reason,
-                    "call_count": len(plan.calls),
-                    "emotion_deferred": bool(
-                        state["request"].interaction_mode == "voice"
-                        and self.deps.emotion is not None
-                        and self.deps.emotion.enabled()
-                    ),
-                },
+            return {"tool_instruction": instruction, "tool_parse_error": "", "trace": ["parse_tool_instruction"]}
+        if error:
+            writer(
+                {
+                    "event": "tool.failed",
+                    "data": {"tool": "unknown", "level": 0, "status": "failed", "error": error},
+                }
+            )
+            return {
+                "raw_candidate": "我刚才没能正确发起工具请求，请直接告诉我想查询或处理的内容。",
+                "tool_parse_error": error,
+                "trace": ["parse_tool_instruction"],
             }
-        )
-        return {
-            "available_capabilities": available,
-            "capability_policy": policy,
-            "capability_plan": plan,
-            # Keep the state shape stable even when ordinary chat bypasses the
-            # two empty execution/review nodes.
-            "capability_results": [],
-            "capability_notice": "",
-            "preflight_required": preflight_required,
-            "trace": ["capability_route"],
-        }
+        return {"tool_parse_error": "", "trace": ["parse_tool_instruction"]}
 
     @staticmethod
-    def route_capability_plan(state: TurnState) -> str:
-        if state.get("preflight_required", False):
-            return "planner"
-        plan = state.get("capability_plan") or CapabilityPlan()
-        if plan.decision == "use_capabilities" and plan.calls:
-            return "execute"
-        # Ordinary companion chat should not traverse two empty tool nodes.
-        return "compose"
+    def route_tool_request(state: TurnState) -> str:
+        return "tool" if state.get("tool_instruction") is not None else "answer"
 
-    def plan_capabilities(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
-        """执行一次非流式私有规划；失败时只保留服务端能够确定授权的调用。"""
-
-        self._check_cancelled(state)
+    def authorize_tool(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
+        instruction = state["tool_instruction"]
         service = self.deps.capabilities
-        if service is None:
-            return {"capability_plan": CapabilityPlan(), "trace": ["plan_capabilities"]}
-        request = state["request"]
-        base_plan = state.get("capability_plan") or CapabilityPlan()
-        # 能力规划使用独立超时，不能继承情绪支链的短 deadline；否则天气等查询会在
-        # 500 ms 左右错误降级，并把未消解的口语原文直接当作搜索词。
-        deadline_seconds = 12.0
-        planner = getattr(self.deps.llm, "preflight", None)
-        legacy_planner = getattr(self.deps.llm, "plan_capabilities", None)
-        planner = planner if callable(planner) else legacy_planner
-        if not callable(planner) or not self._call_allowed(state, "planner"):
-            return {
-                "capability_plan": service.authorize(base_plan),
-                "trace": ["plan_capabilities"],
-            }
+        error = ""
+        if instruction.tool == "web" and (service is None or not service.enabled("web_search_enabled")):
+            error = "web tool is disabled"
+        elif instruction.tool == "memory" and (service is None or not service.enabled("local_knowledge_enabled")):
+            error = "memory tool is disabled"
+        elif instruction.tool == "task" and self.deps.characters is None:
+            error = "task repository is unavailable"
+        if not error:
+            return {"trace": ["authorize_tool"]}
+        result = failed_result(instruction, "denied", error)
+        writer({"event": "tool.failed", "data": result.model_dump(mode="json")})
+        return {"tool_result": result, "trace": ["authorize_tool"]}
 
+    @staticmethod
+    def route_tool_authorization(state: TurnState) -> str:
+        if state.get("tool_result") is not None:
+            return "inject"
+        return "task" if state["tool_instruction"].tool == "task" else "execute"
+
+    def review_task(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
+        self._check_cancelled(state)
+        instruction = state["tool_instruction"]
+        if not self._call_allowed(state, "task_review"):
+            result = failed_result(instruction, "denied", "task review call budget exhausted")
+            return {"tool_result": result, "task_review_allowed": False, "trace": ["review_task"]}
         started = time.perf_counter()
-        plan = service.authorize(base_plan)
+        allowed = False
+        reason = ""
         usages = list(state.get("model_usage", []))
-        planner_error = ""
         try:
-            messages = service.planner_messages(
-                request,
-                base_plan=base_plan,
-                history=state.get("recent_history", []),
+            config = state["request"].api.model_copy(update={"temperature": 0, "max_tokens": 160})
+            raw = self.deps.llm.generate(
+                task_review_messages(instruction, state["request"].message),
+                config,
             )
-            if callable(getattr(self.deps.llm, "preflight", None)):
-                raw = self.deps.llm.preflight(
-                    messages,
-                    request.api,
-                    timeout_seconds=deadline_seconds,
-                )
-            else:
-                raw = legacy_planner(messages, request.api)
-            plan = service.parse_preflight_output(raw, base_plan=base_plan)
-            take_usage = getattr(self.deps.llm, "take_usage", None)
-            usage = take_usage() if callable(take_usage) else None
+            allowed, reason = parse_task_review(raw)
+            usage = self._take_model_usage(writer)
             if usage is not None:
                 usages.append(usage)
-                writer({"event": "model.usage", "data": usage.model_dump(mode="json")})
-        except Exception as exc:  # noqa: BLE001 - planning failure uses safe deterministic fallback
-            planner_error = str(exc)
-            # An explicit deterministic request is already resolved and safe to
-            # execute. Only ambiguous planner-dependent web calls are discarded.
-            retained = (
-                list(base_plan.calls)
-                if base_plan.reason == "deterministic_route"
-                else [
-                    call
-                    for call in base_plan.calls
-                    if not call.capability.startswith("web.") or call.capability == "web.open"
-                ]
-            )
-            plan = service.authorize(
-                CapabilityPlan(
-                    decision="use_capabilities" if retained else "direct_answer",
-                    reason="planner_unavailable",
-                    calls=retained,
-                    objective="可靠解析用户要查询的具体主题",
-                    requires_clarification=not retained,
-                    clarification_question=(
-                        "我还没可靠确定你要查的具体内容；请再说一次主题，如果是天气，请同时告诉我城市。"
-                        if not retained
-                        else ""
-                    ),
-                    follow_up_allowed=False,
-                )
-            )
-        elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
-        if planner_error:
-            self.deps.audit.record(
-                "preflight_degraded",
-                {"request_id": state.get("request_id", ""), "error": planner_error},
-            )
+        except Exception as exc:
+            reason = str(exc)[:500]
         writer(
             {
-                "event": "capability.planned",
+                "event": "tool.reviewed",
                 "data": {
-                    "decision": plan.decision,
-                    "reason": plan.reason,
-                    "call_count": len(plan.calls),
-                    "resolved_query": plan.resolved_query,
-                    "requires_clarification": plan.requires_clarification,
-                    "calls": [call.model_dump(mode="json") for call in plan.calls],
-                    "elapsed_ms": elapsed_ms,
+                    "call_id": instruction.call_id,
+                    "tool": "task",
+                    "level": 2,
+                    "allowed": allowed,
+                    "reason": reason,
+                    "elapsed_ms": round((time.perf_counter() - started) * 1000, 1),
                 },
             }
         )
         update: dict[str, Any] = {
-            "capability_plan": plan,
+            "task_review_allowed": allowed,
+            "task_review_reason": reason,
             "model_usage": usages,
-            "trace": ["plan_capabilities"],
+            "trace": ["review_task"],
         }
-        update.update(
-            self._record_call(
-                state,
-                "planner",
-                started,
-                status="degraded" if planner_error else "success",
-                error=planner_error,
-            )
-        )
+        if not allowed:
+            update["tool_result"] = failed_result(instruction, "denied", reason or "task review denied")
+        update.update(self._record_call(state, "task_review", started, status="success" if allowed else "denied"))
         return update
 
-    def execute_capabilities(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
-        """按授权计划顺序串行执行只读调用。"""
+    @staticmethod
+    def route_task_review(state: TurnState) -> str:
+        return "execute" if state.get("task_review_allowed") else "inject"
 
+    def execute_tool(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
         self._check_cancelled(state)
-        service = self.deps.capabilities
-        plan = state.get("capability_plan") or CapabilityPlan()
-        if service is None or plan.decision != "use_capabilities" or not plan.calls:
-            return {
-                "capability_results": [],
-                "capability_notice": "",
-                "trace": ["execute_capabilities"],
-            }
-        plan = service.authorize(plan)
-        notice = service.notice(plan)
-        if notice:
-            writer(
-                {
-                    "event": "capability.notice",
-                    "data": {"label": notice, "single_turn": True, "transient": True},
-                }
-            )
-        for call in plan.calls:
-            writer(
-                {
-                    "event": "capability.started",
-                    "data": {
-                        "call_id": call.call_id,
-                        "capability": call.capability,
-                        "arguments": call.arguments,
-                        "single_turn": True,
-                    },
-                }
-            )
-        results = service.execute(
-            plan,
-            ranked_context=state.get("ranked_context", []),
-        )
-        for result in results:
-            writer(
-                {
-                    "event": ("capability.completed" if result.status == "success" else "capability.failed"),
-                    "data": {
-                        "call_id": result.call_id,
-                        "capability": result.capability,
-                        "status": result.status,
-                        "error": result.error,
-                        "observed_at": result.observed_at,
-                        "output": result.data,
-                        "trust": result.trust,
-                        "included_in_main_prompt": True,
-                        "single_turn": True,
-                    },
-                }
-            )
-        return {
-            "capability_plan": plan,
-            "capability_results": results,
-            "capability_notice": notice,
-            "trace": ["execute_capabilities"],
-        }
-
-    def review_capabilities(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
-        """仅在第一波网页证据覆盖不足时，允许一次有上限的补查规划。
-
-        补查仍发生在唯一一次用户可见回答之前，不形成无界研究循环。
-        """
-
-        self._check_cancelled(state)
-        service = self.deps.capabilities
-        plan = state.get("capability_plan") or CapabilityPlan()
-        results = list(state.get("capability_results", []))
-        has_web = any(result.capability.startswith("web.") for result in results)
-        reviewer = getattr(self.deps.llm, "review_research", None)
-        review_required = bool(service is not None and service.research_review_required(plan, results))
-        if (
-            service is None
-            or not has_web
-            or not review_required
-            or not callable(reviewer)
-            or not self._call_allowed(state, "research_review")
-        ):
-            return {"trace": ["review_capabilities"]}
+        instruction = state["tool_instruction"]
         started = time.perf_counter()
+        writer(
+            {
+                "event": "tool.started",
+                "data": {
+                    "call_id": instruction.call_id,
+                    "tool": instruction.tool,
+                    "level": instruction.level,
+                    "parameter_summary": instruction.parameter_summary,
+                },
+            }
+        )
         try:
-            messages = service.research_review_messages(
-                state["request"],
-                history=state.get("recent_history", []),
-                plan=plan,
-                results=results,
-            )
-            raw = reviewer(messages, state["request"].api, timeout_seconds=10.0)
-            follow_up = service.parse_research_review(raw, completed_plan=plan)
-            usage = self._take_model_usage(writer)
-            usages = [*state.get("model_usage", []), *([usage] if usage else [])]
-            if follow_up.decision == "use_capabilities" and follow_up.calls:
-                for call in follow_up.calls:
-                    writer(
-                        {
-                            "event": "capability.started",
-                            "data": {
-                                "call_id": call.call_id,
-                                "capability": call.capability,
-                                "arguments": call.arguments,
-                                "phase": "follow_up",
-                                "single_turn": True,
-                            },
-                        }
-                    )
-                extra = service.execute(
-                    follow_up,
-                    ranked_context=state.get("ranked_context", []),
+            if instruction.tool == "web":
+                result = self.deps.capabilities.execute_web(instruction)
+            elif instruction.tool == "memory":
+                result = execute_memory_tool(
+                    instruction,
+                    request=state["request"],
+                    state=state,
+                    deps=self.deps,
                 )
-                results.extend(extra)
-                for result in extra:
-                    writer(
-                        {
-                            "event": ("capability.completed" if result.status == "success" else "capability.failed"),
-                            "data": {
-                                "call_id": result.call_id,
-                                "capability": result.capability,
-                                "status": result.status,
-                                "error": result.error,
-                                "observed_at": result.observed_at,
-                                "output": result.data,
-                                "trust": result.trust,
-                                "included_in_main_prompt": True,
-                                "phase": "follow_up",
-                                "single_turn": True,
-                            },
-                        }
-                    )
-            writer(
-                {
-                    "event": "capability.reviewed",
-                    "data": {
-                        "follow_up_count": len(follow_up.calls),
-                        "reason": follow_up.reason,
-                        "calls": [call.model_dump(mode="json") for call in follow_up.calls],
-                        "elapsed_ms": round((time.perf_counter() - started) * 1000, 1),
-                    },
-                }
-            )
-            update = {
-                "capability_results": results,
-                "model_usage": usages,
-                "trace": ["review_capabilities"],
-            }
-            update.update(self._record_call(state, "research_review", started))
-            return update
-        except Exception as exc:  # noqa: BLE001 - first-pass evidence remains usable
-            self.deps.audit.record(
-                "research_review_degraded",
-                {"request_id": state.get("request_id", ""), "error": str(exc)},
-            )
-            writer(
-                {
-                    "event": "capability.reviewed",
-                    "data": {"follow_up_count": 0, "degraded": True, "error": str(exc)[:300]},
-                }
-            )
-            return {
-                **self._record_call(
-                    state,
-                    "research_review",
-                    started,
-                    status="degraded",
-                    error=str(exc),
-                ),
-                "trace": ["review_capabilities"],
-            }
+            else:
+                receipt = self.deps.characters.execute_task_command(
+                    state["request"].character_id,
+                    instruction.command or {},
+                    request_id=state.get("request_id", ""),
+                    command_hash=instruction.command_hash,
+                    expected_revision=int(state["profiles"].revisions.get("character_memory", 0)),
+                )
+                result = ToolExecutionResult(
+                    call_id=instruction.call_id,
+                    tool="task",
+                    level=2,
+                    status="success",
+                    parameter_summary=instruction.parameter_summary,
+                    source_count=int(receipt.get("count", 0)),
+                    data={"tasks": receipt.get("tasks", []), "count": receipt.get("count", 0)},
+                    receipt=receipt,
+                )
+        except Exception as exc:
+            result = failed_result(instruction, "failed", str(exc))
+        if not result.elapsed_ms:
+            result = result.model_copy(update={"elapsed_ms": round((time.perf_counter() - started) * 1000, 1)})
+        event = "tool.completed" if result.status == "success" else "tool.failed"
+        writer({"event": event, "data": result.model_dump(mode="json")})
+        self.deps.audit.record(
+            event.replace(".", "_"),
+            {
+                "request_id": state.get("request_id", ""),
+                "session_id": state["request"].session_id,
+                **result.model_dump(mode="json", exclude={"data"}),
+            },
+        )
+        return {"tool_result": result, "trace": ["execute_tool"]}
 
+    def inject_tool_result(self, state: TurnState) -> dict[str, Any]:
+        result = state["tool_result"]
+        closed_messages = [
+            {
+                **message,
+                "content": message.get("content", "").replace(TOOL_PROTOCOL, "本轮工具表已关闭。"),
+            }
+            for message in state["prompt_messages"]
+        ]
+        messages = [
+            *closed_messages,
+            result_prompt_message(result),
+            {"role": "system", "content": FINAL_ONLY_PROTOCOL},
+        ]
+        if self.deps.prompt_inspector is not None:
+            self.deps.prompt_inspector.record(
+                run_id=state.get("request_id", ""),
+                session_id=state["request"].session_id,
+                character_id=state["request"].character_id,
+                messages=messages,
+                pending_events=state.get("prompt_pending_events", []),
+            )
+        return {"prompt_messages": messages, "trace": ["inject_result"]}
+
+    def generate_final(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
+        self._check_cancelled(state)
+        if not self._call_allowed(state, "final_generation"):
+            raise RuntimeError("final generation model call budget exhausted")
+        request = state["request"]
+        started = time.perf_counter()
+        extractor = IncrementalResponseParser()
+        chunks: list[str] = []
+        for token in self.deps.llm.stream(state["prompt_messages"], request.api):
+            self._check_cancelled(state)
+            chunks.append(token)
+            for delta in extractor.feed(token):
+                normalized = normalize_voice_response(delta, request)
+                if normalized:
+                    writer({"event": "response.delta", "data": {"delta": normalized}})
+        usage = self._take_model_usage(writer)
+        return {
+            "raw_candidate": "".join(chunks),
+            "model_usage": [*state.get("model_usage", []), *([usage] if usage else [])],
+            **self._record_call(state, "final_generation", started),
+            "trace": ["generate_final"],
+        }
     def compose_prompt(self, state: TurnState) -> dict[str, Any]:
         """把权威数据、账本历史和本轮临时上下文组装成主模型 messages。"""
 
@@ -733,10 +593,7 @@ class NodeFactory:
             state.get("ranked_context", []),
             state.get("deletion_events", []),
             state.get("profile_bootstrap"),
-            state.get("available_capabilities", []),
-            state.get("capability_results", []),
-            state.get("capability_policy", {}),
-            state.get("capability_plan"),
+            state.get("tool_hint", ""),
             state.get("emotion_state"),
             context_ledger=self.deps.context,
         )
@@ -779,7 +636,7 @@ class NodeFactory:
         # The primary generation remains the only foreground content call.
         # R18 intensity and stage advancement are decided in the final prompt,
         # never by a second rewrite request.
-        defer_visible_response = False
+        defer_visible_response = explicit_r18_requested(request)
         started = time.perf_counter()
         extractor = IncrementalResponseParser()
         # Retain backward-compatible cue parsing for older model templates.
@@ -840,6 +697,9 @@ class NodeFactory:
         self._check_cancelled(state)
         raw = state.get("raw_candidate", "")
         request = state["request"]
+        repeated_tool, repeated_error = parse_tool_instruction(raw)
+        if repeated_tool is not None or repeated_error:
+            raw = "工具阶段已经结束，这次没有得到可用的最终回复，请直接继续告诉我你的需求。"
         parsed_protocol, errors = self.parser.parse(raw)
         previous_visible = state.get("fallback_response")
         parsed_visible = self.parser.response_text(raw)
@@ -904,10 +764,10 @@ class NodeFactory:
                         },
                     }
                 )
-            guarded_response, capability_violations = enforce_capability_claims(
+            guarded_response, capability_violations = enforce_tool_claims(
                 protocol.response,
-                plan=state.get("capability_plan"),
-                results=state.get("capability_results", []),
+                state.get("tool_result"),
+                tool_hint=state.get("tool_hint", ""),
             )
             if capability_violations and guarded_response != protocol.response:
                 protocol = protocol.model_copy(update={"response": guarded_response})
@@ -924,7 +784,7 @@ class NodeFactory:
                         "event": "response.replace",
                         "data": {
                             "content": guarded_response,
-                            "reason": "unverified_capability_claim_blocked",
+                            "reason": "unverified_tool_claim_blocked",
                         },
                     }
                 )
@@ -1102,6 +962,7 @@ class NodeFactory:
             protocol.response,
             replace_round=request.mode == "regenerate",
             write_receipt=receipt,
+            tool_execution=(state["tool_result"].model_dump(mode="json") if state.get("tool_result") else None),
         )
         memory_stats: dict[str, int] = {}
         if self.deps.memory is not None and request.mode == "primary" and not request.initiative:
@@ -1135,6 +996,7 @@ class NodeFactory:
                     request_id=state.get("request_id")
                     or f"{request.session_id}:{request.round}:{persisted['assistant_message_id']}",
                     session_id=request.session_id,
+                    character_id=request.character_id,
                     round_num=request.round,
                     epoch_id=state["context_epoch_id"],
                     pending_events=pending_events,
@@ -1198,6 +1060,7 @@ class NodeFactory:
                 "chat": sum(item.source == "chat" for item in state.get("ranked_context", [])),
                 "history": sum(item.source == "memory" for item in state.get("ranked_context", [])),
             },
+            tool_execution=(state["tool_result"].model_dump(mode="json") if state.get("tool_result") else {}),
             errors=validation.errors,
             trace=[*state.get("trace", []), "persist_turn"],
             llm_call_count=state.get("llm_call_count", 0),
@@ -1248,3 +1111,4 @@ class NodeFactory:
         if state.get("protocol") is not None and not state.get("protocol_errors"):
             return "valid"
         return "fail"
+

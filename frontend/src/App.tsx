@@ -1782,37 +1782,39 @@ function App() {
       setMessages((items) => items.map((item) => item.status === "streaming"
         ? { ...item, voice_cue: ttsVoiceCueRef.current }
         : item));
-    } else if (event.event === "capability.notice") {
-      // Capability progress is transient UI state.  It must not become assistant
-      // prose, persisted memory, or TTS audio; the final answer remains one reply.
-      addEvent({ event: event.event, label: str(data.label || "AI 正在补充只读信息"), timestamp: event.timestamp, data, state: "active" });
-      if (voiceOpenRef.current) setVoice((current) => ({ ...current, phase: "thinking" }));
-    } else if (event.event.startsWith("capability.")) {
-      const capability = str(data.capability || data.reason || "只读能力");
-      const state = event.event === "capability.failed" ? "error" : event.event === "capability.started" ? "active" : "done";
-      const capabilityNames: Record<string, string> = {
-        "web.search": "联网搜索",
-        "web.open": "网页查阅",
-        "web.trending": "实时热点",
-        "local.status": "本机状态",
-        "mindspace.health": "Mindspace 服务",
-        "local.knowledge": "本地知识",
-      };
-      const output = asRecord(data.output);
-      const argumentsData = asRecord(data.arguments);
-      const query = str(output.query || output.related_query || argumentsData.query || argumentsData.url);
-      const capabilityName = capabilityNames[capability] || capability;
+    } else if (event.event.startsWith("tool.")) {
+      if (event.event === "tool.hinted") return;
+      const tool = str(data.tool || "tool");
+      const state = event.event === "tool.failed" ? "error" : ["tool.requested", "tool.started"].includes(event.event) ? "active" : "done";
+      const toolNames: Record<string, string> = { web: "联网", memory: "记忆", task: "任务" };
+      const summary = str(data.parameter_summary);
       const labels: Record<string, string> = {
-        "capability.routing": "判断是否需要补充信息",
-        "capability.planned": "补充查询规划完成",
-        "capability.reviewed": "证据复核与二次查阅完成",
-        "capability.started": `正在读取：${capabilityName}${query ? ` · ${query}` : ""}`,
-        "capability.completed": `读取完成：${capabilityName}${query ? ` · ${query}` : ""}`,
-        "capability.failed": `读取失败：${capabilityName}${query ? ` · ${query}` : ""}`,
+        "tool.requested": `请求${toolNames[tool] || tool}${summary ? ` · ${summary}` : ""}`,
+        "tool.reviewed": `任务审查${bool(data.allowed) ? "通过" : "拒绝"}`,
+        "tool.started": `正在执行${toolNames[tool] || tool}${summary ? ` · ${summary}` : ""}`,
+        "tool.completed": `${toolNames[tool] || tool}执行完成`,
+        "tool.failed": `${toolNames[tool] || tool}执行失败`,
       };
       const callId = str(data.call_id);
-      const eventId = callId ? `capability:${callId}` : `${event.event}:${event.seq}`;
-      if (callId && event.event !== "capability.started") {
+      const eventId = callId ? `tool:${callId}` : `${event.event}:${event.seq}`;
+      if (callId) {
+        setMessages((items) => items.map((message) => message.role === "assistant" && message.status === "streaming" ? {
+          ...message,
+          tool_execution: {
+            call_id: callId,
+            tool: (tool === "memory" || tool === "task" ? tool : "web"),
+            level: num(data.level, 3) === 2 ? 2 : 3,
+            status: event.event === "tool.failed" ? (str(data.status) === "denied" ? "denied" : "failed") : event.event === "tool.completed" ? "success" : event.event === "tool.reviewed" ? "reviewing" : event.event === "tool.started" ? "running" : "requested",
+            parameter_summary: summary || message.tool_execution?.parameter_summary || "",
+            elapsed_ms: num(data.elapsed_ms, message.tool_execution?.elapsed_ms || 0),
+            source_count: num(data.source_count, message.tool_execution?.source_count || 0),
+            data: asRecord(data.data || message.tool_execution?.data),
+            error: str(data.error || message.tool_execution?.error),
+            receipt: asRecord(data.receipt || message.tool_execution?.receipt),
+          },
+        } : message));
+      }
+      if (callId && event.event !== "tool.requested") {
         setEvents((items) => {
           const existing = items.find((item) => item.event === eventId);
           if (!existing) return [...items.slice(-79), { event: eventId, label: labels[event.event] || event.event, timestamp: event.timestamp, data, state }];
@@ -3218,6 +3220,21 @@ function App() {
   const title = sessions.find((item) => item.session_id === sessionId)?.title || "新对话";
   const userName = str(settings?.persona.user_name || "用户");
   const characterName = activeCharacter?.display_name || str(settings?.persona.character_name || "Mindspace");
+  const interactionActions = useMemo(() => {
+    const normal = ["摸头", "拥抱", "牵手", "贴近", "亲吻"];
+    if (!adultMode) return { normal, adult: [] as string[] };
+    const gender = str(activeCharacter?.gender || "不指定");
+    if (gender === "女") return { normal, adult: ["奶子", "阴蒂"] };
+    if (gender === "男") return { normal, adult: ["鸡巴", "龟头"] };
+    return { normal, adult: [] as string[] };
+  }, [activeCharacter?.gender, adultMode]);
+  const insertInteraction = useCallback((action: string) => {
+    setInput((current) => {
+      const command = `@互动：${action}`;
+      const content = current.trimEnd();
+      return content ? `${content}\n${command}` : command;
+    });
+  }, []);
   const pickerCharacters = characters;
   const interruptedSession = sessions.find((item) => Boolean((item as SessionSummary & { interrupted?: boolean }).interrupted));
 
@@ -3330,8 +3347,9 @@ function App() {
               <button className="voice-entry" onClick={openVoiceEntry}><span>●</span> 实时语音</button>
               <button className={`scene-entry${conversationScene?.scene ? " active" : ""}`} onClick={() => navigate("scenes")}><img src="/assets/archive/icons/activity-scene.svg" alt="" /><span>{conversationScene?.scene?.title || "场景"}</span></button>
               <button className={`presentation-entry ${presentationMode}`} aria-label="切换表达方式" title="场景模式只允许必要叙述，不会强制生成动作" onClick={cyclePresentationMode}><span>表达</span><b>{presentationMode === "auto" ? `自动·${resolvedPresentationMode === "scene" ? "场景" : "对话"}` : presentationMode === "scene" ? "场景" : "对话"}</b></button>
+              <details className="composer-menu interaction-menu"><summary>互动</summary><div><section><b>常规互动</b>{interactionActions.normal.map((action) => <button type="button" key={action} onClick={(event) => { insertInteraction(action); event.currentTarget.closest("details")?.removeAttribute("open"); }}>@互动：{action}</button>)}</section>{adultMode && <section className="adult-interactions"><b>{interactionActions.adult.length ? "NSFW 互动" : "NSFW 互动需先确定角色性别"}</b>{interactionActions.adult.map((action) => <button type="button" key={action} onClick={(event) => { insertInteraction(action); event.currentTarget.closest("details")?.removeAttribute("open"); }}>@互动：{action}</button>)}</section>}</div></details>
               <button className="initiative-inline" disabled={generating} onClick={() => void sendMessage("", "primary", round, true)}>✦ 让 {characterName} 先说</button>
-              <details className="composer-menu composer-add-menu"><summary aria-label="更多对话功能"><span className="visually-hidden">更多</span><b aria-hidden="true">＋</b></summary><div><button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showFlow(); }}>会话流程与执行详情</button><button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showContext(); }}>本轮引用 <b>{retrieval.length}</b></button><button onClick={exportSession}>导出当前会话</button><button className={`adult-entry${adultMode ? " active" : ""}`} aria-label="NSFW" aria-pressed={adultMode} onClick={toggleAdultMode}>NSFW <span>{adultMode ? "已开启" : "已关闭"}</span></button>{adultMode && <label className="r18-style-menu-label"><span>成人模式风格</span><select className="r18-style-select" value={r18StyleId} aria-label="R18 风格包" onChange={(event) => { const next = event.target.value; setR18StyleId(next); localStorage.setItem(R18_STYLE_STORAGE_KEY, next); }}><option value="high_intensity">高强度推进</option><option value="immersive_narrative">叙事沉浸</option><option value="dialogue_led">台词主导</option></select></label>}<button className="composer-clear-action" onClick={() => void clearCurrent()}>清空当前上下文</button></div></details>
+              <details className="composer-menu composer-add-menu"><summary aria-label="更多对话功能"><span className="visually-hidden">更多</span><b aria-hidden="true">＋</b></summary><div><button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showFlow(); }}>会话流程与执行详情</button><button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showContext(); }}>RAG 引用 <b>{retrieval.length}</b></button><button onClick={exportSession}>导出当前会话</button><button className={`adult-entry${adultMode ? " active" : ""}`} aria-label="NSFW" aria-pressed={adultMode} onClick={toggleAdultMode}>NSFW <span>{adultMode ? "已开启" : "已关闭"}</span></button>{adultMode && <label className="r18-style-menu-label"><span>成人模式风格</span><select className="r18-style-select" value={r18StyleId} aria-label="R18 风格包" onChange={(event) => { const next = event.target.value; setR18StyleId(next); localStorage.setItem(R18_STYLE_STORAGE_KEY, next); }}><option value="high_intensity">高强度推进</option><option value="immersive_narrative">叙事沉浸</option><option value="dialogue_led">台词主导</option></select></label>}<button className="composer-clear-action" onClick={() => void clearCurrent()}>清空当前上下文</button></div></details>
             </div>
             <button className="send" onClick={() => generating ? void cancelRun() : void sendMessage()} disabled={!generating && !input.trim()} aria-label={generating ? "停止生成" : "发送消息"}>{generating ? "■" : "↑"}</button>
           </div>
@@ -3363,9 +3381,21 @@ const MessageList = memo(function MessageList({ messages, avatars, userName, cha
   return <div className="message-list">{messages.map((message, index) => {
     const label = message.role === "user" ? userName : characterName;
     const initiativeLabel = message.initiative_trigger === "continuous_companionship" ? "· 连续陪伴" : message.kind === "initiative_response" ? "· 主动回应" : "";
-    return <article className={`message ${message.role} ${message.status || "complete"}`} key={message.message_id || `${message.round}-${message.role}-${index}`}><PortraitAvatar role={message.role} avatars={avatars} label={label} onClick={() => onProfile(message.role)} /><div className="message-content"><div className="message-head"><strong>{message.status === "error" ? "Mindspace" : label}</strong><span>第 {message.round} 轮 {initiativeLabel}{message.status === "streaming" && "· 正在生成"}{message.status === "cancelled" && "· 已打断"}{message.status === "interrupted" && "· 回答在此处中断"}{message.status === "error" && "· 连接失败"}</span></div><div className="message-text">{richText(message.content || (message.status === "streaming" ? "" : "…"))}{message.status === "streaming" && <i className="stream-caret" />}</div>{message.status === "error" ? <div className="message-actions error-actions"><button className="primary" onClick={onConfigure}>立即配置 API</button><button onClick={() => { const user = messages.find((item) => item.role === "user" && item.round === message.round); if (user) onRegenerate(user.content, message.round); }}>重新尝试</button></div> : message.role === "assistant" && message.status !== "streaming" && <div className="message-actions"><button onClick={() => onCopy(message.content)}>复制</button><button onClick={() => onSpeak(message.content, message.voice_cue)}>朗读</button><button onClick={() => { if (message.kind === "initiative_response") { onInitiative(message.round); return; } const user = messages.find((item) => item.role === "user" && item.round === message.round); if (user) onRegenerate(user.content, message.round); }}>重新生成</button><button onClick={() => onDelete(message.message_id)}>删除回复</button></div>}</div></article>;
+    return <article className={`message ${message.role} ${message.status || "complete"}`} key={message.message_id || `${message.round}-${message.role}-${index}`}><PortraitAvatar role={message.role} avatars={avatars} label={label} onClick={() => onProfile(message.role)} /><div className="message-content"><div className="message-head"><strong>{message.status === "error" ? "Mindspace" : label}</strong><span>第 {message.round} 轮 {initiativeLabel}{message.status === "streaming" && "· 正在生成"}{message.status === "cancelled" && "· 已打断"}{message.status === "interrupted" && "· 回答在此处中断"}{message.status === "error" && "· 连接失败"}</span></div>{message.tool_execution && <ToolCard tool={message.tool_execution} />}<div className="message-text">{richText(message.content || (message.status === "streaming" ? "" : "…"))}{message.status === "streaming" && <i className="stream-caret" />}</div>{message.status === "error" ? <div className="message-actions error-actions"><button className="primary" onClick={onConfigure}>立即配置 API</button><button onClick={() => { const user = messages.find((item) => item.role === "user" && item.round === message.round); if (user) onRegenerate(user.content, message.round); }}>重新尝试</button></div> : message.role === "assistant" && message.status !== "streaming" && <div className="message-actions"><button onClick={() => onCopy(message.content)}>复制</button><button onClick={() => onSpeak(message.content, message.voice_cue)}>朗读</button><button onClick={() => { if (message.kind === "initiative_response") { onInitiative(message.round); return; } const user = messages.find((item) => item.role === "user" && item.round === message.round); if (user) onRegenerate(user.content, message.round); }}>重新生成</button><button onClick={() => onDelete(message.message_id)}>删除回复</button></div>}</div></article>;
   })}</div>;
 });
+
+const PROMPT_LAYER_LABELS: Record<string, string> = {
+  system_and_current_character_profile: "角色与系统规则",
+  system_data_contract: "数据契约",
+  global_user_and_character_runtime: "权威档案与运行状态",
+  conversation_summary: "压缩连续性包",
+  retrieval_context: "RAG 召回输入",
+  conversation_history: "近期原始历史",
+  turn_control: "本轮时间与控制",
+  current_user: "当前用户输入",
+  roleplay_post_history: "最终角色校准",
+};
 
 function Inspector({ open, tab, onTab, onClose, events, retrieval, runId }: { open: boolean; tab: InspectorTab; onTab: (tab: InspectorTab) => void; onClose: () => void; events: InspectorEvent[]; retrieval: Record<string, unknown>[]; runId: string }) {
   const [prompt, setPrompt] = useState<PromptInspection | null>(null);
@@ -3380,9 +3410,19 @@ function Inspector({ open, tab, onTab, onClose, events, retrieval, runId }: { op
     }
   }, [runId]);
   useEffect(() => {
-    if (open && tab === "prompt") void loadPrompt(false);
+    if (open && tab === "prompt") void loadPrompt(true);
   }, [loadPrompt, open, tab]);
-  return <aside className={`inspector ${open ? "open" : ""}`} hidden={!open} aria-hidden={!open}><header><div><span className="eyebrow">LIVE TRACE</span><h2>执行详情</h2><small>节点、引用与模型实际输入</small></div><button onClick={onClose} aria-label="关闭执行详情">×</button></header><div className="inspector-tabs"><button className={tab === "flow" ? "active" : ""} onClick={() => onTab("flow")}>编排流程</button><button className={tab === "context" ? "active" : ""} onClick={() => onTab("context")}>本轮引用 <b>{retrieval.length}</b></button><button className={tab === "prompt" ? "active" : ""} onClick={() => onTab("prompt")}>模型输入</button></div>{tab === "flow" ? <div className="trace-list">{events.length ? events.map((item, index) => <TraceItem item={item} key={`${item.event}-${index}`} />) : <div className="empty-mini">发送消息后，这里会实时显示检索、生成、校验和写回节点。</div>}</div> : tab === "context" ? <div className="context-list">{retrieval.length ? retrieval.map((item, index) => <article key={str(item.chunk_id || index)}><header><span>{str(item.source || "召回内容")}</span><b>{num(item.weighted_score || item.score).toFixed(3)}</b></header><p>{str(item.text)}</p><small>{str(asRecord(item.metadata).source || item.session_id || "")}</small></article>) : <div className="empty-mini">本轮尚无引用内容。发送消息后，召回的知识和记忆会显示在这里。</div>}</div> : <div className="prompt-inspection">{!runId ? <div className="empty-mini">发送消息后可检查该轮模型输入。</div> : promptError ? <div className="empty-mini">{promptError}</div> : !prompt ? <div className="empty-mini">正在读取模型输入…</div> : <><header><span>{prompt.message_count} 层 · 约 {prompt.estimated_tokens} tokens</span><button onClick={() => void loadPrompt(!prompt.revealed)}>{prompt.revealed ? "恢复脱敏" : "临时显示完整内容"}</button></header>{prompt.layers.map((layer) => <details key={`${layer.index}-${layer.layer}`}><summary><b>{layer.layer}</b><span>{layer.role} · {layer.chars} 字</span></summary><pre>{layer.content}</pre></details>)}</>}</div>}</aside>;
+  const compactCount = prompt?.layers.filter((layer) => layer.layer === "conversation_summary").length || 0;
+  const historyCount = prompt?.layers.filter((layer) => layer.layer === "conversation_history").length || 0;
+  return <aside className={`inspector ${open ? "open" : ""}`} hidden={!open} aria-hidden={!open}>
+    <header><div><span className="eyebrow">LIVE TRACE</span><h2>执行详情</h2><small>节点、RAG 与实际发送给模型的完整输入</small></div><button onClick={onClose} aria-label="关闭执行详情">×</button></header>
+    <div className="inspector-tabs">
+      <button className={tab === "flow" ? "active" : ""} onClick={() => onTab("flow")}>编排流程</button>
+      <button className={tab === "context" ? "active" : ""} onClick={() => onTab("context")}>RAG 引用 <b>{retrieval.length}</b></button>
+      <button className={tab === "prompt" ? "active" : ""} onClick={() => onTab("prompt")}>模型实际输入{prompt ? <b>{prompt.message_count}</b> : null}</button>
+    </div>
+    {tab === "flow" ? <div className="trace-list">{events.length ? events.map((item, index) => <TraceItem item={item} key={`${item.event}-${index}`} />) : <div className="empty-mini">发送消息后，这里会实时显示检索、生成、校验和写回节点。</div>}</div> : tab === "context" ? <div className="context-list"><div className="context-scope-note"><strong>这里只统计 RAG 候选</strong><span>压缩连续性包、最近原始对话、角色档案和本轮控制位于“模型实际输入”，不计入这里的 {retrieval.length} 条。</span></div>{retrieval.length ? retrieval.map((item, index) => <article key={str(item.chunk_id || index)}><header><span>{str(item.source || "召回内容")}</span><b>{num(item.weighted_score || item.score).toFixed(3)}</b></header><p>{str(item.text)}</p><small>{str(asRecord(item.metadata).source || item.session_id || "")}</small></article>) : <div className="empty-mini">本轮没有 RAG 引用；这不代表模型没有收到压缩上下文或近期对话。</div>}</div> : <div className="prompt-inspection">{!runId ? <div className="empty-mini">发送消息后可检查该轮实际模型输入。</div> : promptError ? <div className="empty-mini">{promptError}</div> : !prompt ? <div className="empty-mini">正在读取实际模型输入…</div> : <><header className="prompt-inspection-head"><div><strong>实际发送 {prompt.message_count} 层 · {prompt.total_chars} 字符 · 约 {prompt.estimated_tokens} tokens</strong><small>Run {prompt.run_id}<br />SHA-256 {prompt.sha256}</small></div><button onClick={() => void loadPrompt(!prompt.revealed)}>{prompt.revealed ? "恢复脱敏" : "临时显示完整内容"}</button></header><div className="prompt-metrics"><span>压缩包 <b>{compactCount}</b></span><span>原始历史 <b>{historyCount}</b></span><span>RAG 层 <b>{prompt.layers.filter((layer) => layer.layer === "retrieval_context").length}</b></span><span>当前输入 <b>{prompt.layers.filter((layer) => layer.layer === "current_user").length}</b></span></div><p className="prompt-order-note">以下顺序就是发送给模型的顺序。字符数统计原始内容；脱敏只影响当前界面显示。</p>{prompt.layers.map((layer) => { const compressed = layer.layer === "conversation_summary"; return <details className={compressed ? "compressed-layer" : ""} open={compressed} key={`${layer.index}-${layer.layer}`}><summary><b><i>{String(layer.index + 1).padStart(2, "0")}</i>{PROMPT_LAYER_LABELS[layer.layer] || layer.layer}{compressed ? <em>已参与</em> : null}</b><span>{layer.role} · {layer.chars} 字</span></summary><pre>{layer.content}</pre></details>; })}</>}</div>}
+  </aside>;
 }
 
 function safeWebUrl(value: unknown) {
@@ -3392,9 +3432,19 @@ function safeWebUrl(value: unknown) {
 
 function TraceItem({ item }: { item: InspectorEvent }) {
   const data = asRecord(item.data);
-  const capability = str(data.capability);
-  const isWeb = capability.startsWith("web.");
-  return <div className={`trace-item ${item.state || "done"}`}><i /><span><strong>{item.label}</strong><small>{formatTime(item.timestamp)}</small>{item.data != null && <details className="trace-details"><summary>{isWeb ? "展开联网查询与证据" : "展开节点数据"}</summary>{isWeb ? <WebTraceData data={data} /> : <pre>{JSON.stringify(item.data, null, 2)}</pre>}</details>}</span></div>;
+  const isTool = item.event.startsWith("tool:") || item.event.startsWith("tool.");
+  return <div className={`trace-item ${item.state || "done"}`}><i /><span><strong>{item.label}</strong><small>{formatTime(item.timestamp)}</small>{item.data != null && <details className="trace-details"><summary>{isTool ? "展开工具状态" : "展开节点数据"}</summary>{isTool ? <ToolTraceData data={data} /> : <pre>{JSON.stringify(item.data, null, 2)}</pre>}</details>}</span></div>;
+}
+
+function ToolCard({ tool }: { tool: import("./types").ToolExecution }) {
+  const statusLabel = { requested: "已请求", reviewing: "审查中", running: "执行中", success: "已完成", denied: "已拒绝", failed: "失败" }[tool.status];
+  return <details className={`tool-card ${tool.status}`}><summary><span><b>{tool.tool === "web" ? "联网" : tool.tool === "memory" ? "记忆" : "任务"}</b><em>L{tool.level}</em></span><small>{statusLabel} · {num(tool.elapsed_ms)} ms · {num(tool.source_count)} 项</small></summary><ToolTraceData data={tool as unknown as Record<string, unknown>} /></details>;
+}
+
+function ToolTraceData({ data }: { data: Record<string, unknown> }) {
+  const payload = asRecord(data.data);
+  const sources = Array.isArray(payload.sources) ? payload.sources.map(asRecord) : [];
+  return <div className="tool-trace"><p><b>参数</b><span>{str(data.parameter_summary) || "无"}</span></p><p><b>状态</b><span>{str(data.status || (bool(data.allowed) ? "approved" : "reviewed"))}</span></p>{str(data.error || data.reason) && <p className="tool-error"><b>说明</b><span>{str(data.error || data.reason)}</span></p>}{sources.length > 0 && <details><summary>联网来源（{sources.length}）</summary>{sources.map((source, index) => { const url = safeWebUrl(source.url); return <article key={`${url}-${index}`}><strong>{str(source.title || source.source)}</strong>{str(source.content) && <p>{str(source.content)}</p>}{url && <a href={url} target="_blank" rel="noreferrer">打开来源</a>}</article>; })}</details>}{!sources.length && Object.keys(payload).length > 0 && <pre>{JSON.stringify(payload, null, 2)}</pre>}</div>;
 }
 
 function WebTraceData({ data }: { data: Record<string, unknown> }) {
@@ -3923,6 +3973,9 @@ const PROFILE_FIELD_LABELS: Record<string, string> = {
   intimate: "亲密互动示例", roleplay_state: "角色场景状态", scene: "当前场景",
   description: "角色基础信息", scenario: "关系与日常情境", first_mes: "首次开场",
   alternate_greetings: "备用开场", mes_example: "对话示例", memory: "长期记忆",
+  appearance: "外表设定", height_cm: "身高（cm）", body_shape: "体型", body_features: "身体特征",
+  face: "面部特征", hair: "发型发色", eyes: "眼睛", skin: "肤色与质感",
+  distinguishing_features: "辨识特征", signature_outfit: "标志穿着", intimate_features: "亲密身体特征",
   preferences: "偏好记忆", tasks: "任务记忆", relationship: "关系类型",
   relationship_context: "关系补充", user_alias: "AI 对你的称呼",
   location: "地点", time_anchor: "时间锚点", character_outfit: "角色穿着",
@@ -3982,6 +4035,7 @@ function v2ProfileEditorDocument(record: Record<string, unknown>): Record<string
     user_alias: str(record.user_alias || mindspace.user_alias),
     relationship: str(mindspace.relationship || record.relationship_label),
     relationship_context: str(mindspace.relationship_context),
+    appearance: profileObject(mindspace.appearance),
     description: str(data.description),
     personality: str(data.personality),
     scenario: str(data.scenario),
@@ -4046,6 +4100,7 @@ function ProfileDialog({ characterId, initialName, onClose, onDirty, onOpenConne
         };
         const relationship = str(parsed.relationship).trim();
         const userAlias = str(parsed.user_alias).trim();
+        const appearance = profileObject(parsed.appearance);
         const nextCard = {
           ...v2Card,
           data: {
@@ -4066,6 +4121,7 @@ function ProfileDialog({ characterId, initialName, onClose, onDirty, onOpenConne
                 relationship,
                 relationship_context: str(parsed.relationship_context),
                 user_alias: userAlias,
+                appearance,
               },
             },
           },

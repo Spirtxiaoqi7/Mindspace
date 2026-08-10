@@ -7,8 +7,8 @@ from typing import Annotated, Any
 
 from typing_extensions import TypedDict
 
-from mindspace_graph.capabilities import CapabilityPlan, CapabilityResult
 from mindspace_graph.emotion import EmotionState, TextEmotionState
+from mindspace_graph.tool_chain import ToolExecutionResult, ToolInstruction
 from mindspace_graph.models import (
     ChatRequest,
     ChatResponse,
@@ -32,17 +32,16 @@ class TurnState(TypedDict, total=False):
     retrieval_query: str
     retrieval_query_mode: str
     adult_recall_opened: bool
-    knowledge_chunks: list[RetrievedChunk]
     chat_chunks: list[RetrievedChunk]
     ranked_context: list[RetrievedChunk]
     deletion_events: list[DeletionEvent]
     profile_bootstrap: ProfileBootstrap
-    available_capabilities: list[dict[str, Any]]
-    capability_policy: dict[str, Any]
-    capability_plan: CapabilityPlan
-    capability_results: list[CapabilityResult]
-    capability_notice: str
-    preflight_required: bool
+    tool_hint: str
+    tool_instruction: ToolInstruction
+    tool_result: ToolExecutionResult
+    tool_parse_error: str
+    task_review_allowed: bool
+    task_review_reason: str
     text_emotion: TextEmotionState
     emotion_state: EmotionState
     prompt_messages: list[dict[str, str]]

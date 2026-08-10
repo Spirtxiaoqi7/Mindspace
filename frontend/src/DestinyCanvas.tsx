@@ -36,6 +36,7 @@ type SeedForm = {
   custom_relationship: string;
   relationship_context: string;
   character_expectation: string;
+  appearance_expectation: string;
   adult_character: boolean;
   avatar: AvatarEntry | null;
 };
@@ -99,6 +100,7 @@ function defaultSeed(userName = "用户"): SeedForm {
     custom_relationship: "",
     relationship_context: "",
     character_expectation: "",
+    appearance_expectation: "",
     adult_character: true,
     avatar: null,
   };
@@ -304,6 +306,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
       relationship: relationshipLabel,
       relationship_context: seed.relationship_context,
       character_expectation: seed.character_expectation,
+      appearance_expectation: seed.appearance_expectation,
       adult_character: seed.adult_character,
       avatar: nextAvatar || {},
     };
@@ -939,6 +942,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
             <div className="form-row"><label>关系类型<select aria-label="关系类型" value={seed.relationship} onChange={(event) => updateSeed("relationship", event.target.value)}>{RELATIONSHIPS.map((item) => <option key={item}>{item}</option>)}</select></label>{seed.relationship === "自定义" && <label>自定义关系<input aria-label="自定义关系" value={seed.custom_relationship} maxLength={100} onChange={(event) => updateSeed("custom_relationship", event.target.value)} /></label>}</div>
             <label>关系补充<textarea aria-label="关系补充" value={seed.relationship_context} maxLength={2400} onChange={(event) => updateSeed("relationship_context", event.target.value)} placeholder="可选：说明当前关系状态和相处背景" /></label>
             <label>角色期待<textarea aria-label="角色期待" value={seed.character_expectation} required maxLength={2400} onChange={(event) => updateSeed("character_expectation", event.target.value)} placeholder="必填：希望对方是什么样、怎样相处" /></label>
+            <label>外表期待<textarea aria-label="外表期待" value={seed.appearance_expectation} maxLength={1200} onChange={(event) => updateSeed("appearance_expectation", event.target.value)} placeholder="可选：例如 175cm、高挑丰腴、黑色长发；未填写时由角色卡自然补全" /></label>
             <label className="adult-toggle"><input type="checkbox" checked={seed.adult_character} onChange={(event) => updateSeed("adult_character", event.target.checked)} /><b>成年角色</b><span>关闭后不会生成成人亲密方向。</span></label>
           </section>
         </div>

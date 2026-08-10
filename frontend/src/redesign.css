@@ -200,6 +200,18 @@ button, input, textarea, select { transition: color .16s ease, background-color 
 .composer-add-menu > div button { width:100%; padding: 9px 10px; text-align:left; }
 .composer-add-menu > div .adult-entry { color: var(--muted); background: transparent; letter-spacing:0; }
 .composer-add-menu > div .adult-entry.active { color:#fff; background: linear-gradient(135deg,#913d49,#aa5945); }
+.interaction-menu { position:relative; }
+.interaction-menu > summary { display:grid; place-items:center; min-height:30px; padding:0 10px; list-style:none; color:#6d625c; border:1px solid rgba(77,63,56,.12); border-radius:9px; background:rgba(255,255,255,.56); font-size:.63rem; font-weight:720; cursor:pointer; }
+.interaction-menu > summary::-webkit-details-marker { display:none; }
+.interaction-menu[open] > summary { color:#4c7168; border-color:rgba(77,125,114,.25); background:rgba(226,240,234,.76); }
+.interaction-menu > div { position:absolute; z-index:30; left:0; bottom:calc(100% + 9px); width:min(320px,calc(100vw - 32px)); padding:9px; border:1px solid var(--line); border-radius:15px; background:var(--panel-2); box-shadow:var(--shadow); }
+.interaction-menu section { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
+.interaction-menu section + section { margin-top:9px; padding-top:9px; border-top:1px solid var(--line); }
+.interaction-menu section > b { grid-column:1/-1; padding:2px 3px; color:var(--dim); font-size:.56rem; font-weight:650; }
+.interaction-menu section button { padding:8px 9px; color:#5b4a42; border:1px solid rgba(77,63,56,.1); border-radius:9px; background:rgba(255,255,255,.62); font-size:.61rem; text-align:left; }
+.interaction-menu section button:hover { color:#3f665d; border-color:rgba(77,125,114,.24); background:rgba(226,240,234,.7); }
+.interaction-menu .adult-interactions button { color:#8c3d4a; border-color:rgba(145,61,73,.16); background:rgba(145,61,73,.06); }
+.interaction-menu .adult-interactions button:hover { color:#fff; background:linear-gradient(135deg,#913d49,#aa5945); }
 .r18-style-menu-label { display:grid; gap:5px; padding:7px 10px; color:var(--dim); font-size:.56rem; }
 .r18-style-menu-label select { width:100%; padding:7px; border:1px solid var(--line); border-radius:8px; background:var(--panel-2); }
 .composer-clear-action { margin-top:4px; color:var(--danger)!important; border-top:1px solid var(--line)!important; border-radius:0!important; }

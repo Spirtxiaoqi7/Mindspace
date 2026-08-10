@@ -140,12 +140,6 @@ class MemoryWritebackService:
                         persisted=persisted,
                         write_receipt=receipt,
                     )
-                if self.dependencies.context is not None and receipt.applied:
-                    self.dependencies.context.invalidate(
-                        request.session_id,
-                        reason="post_turn_memory_writeback",
-                        details={"round": request.round, "patch_count": len(receipt.patches)},
-                    )
                 self.dependencies.audit.record(
                     "memory_writeback_completed",
                     {

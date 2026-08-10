@@ -1,5 +1,18 @@
 [
   {
+    "version": "0.8.2",
+    "published_at": "2026-08-10",
+    "status": "local_regression_validated",
+    "title": "压缩式指令执行链路",
+    "summary": [
+      "LangGraph 使用单条 T/R 握手替代能力规划与研究复查模型",
+      "web 与 memory 采用 L3 直接执行，task 采用 L2 独立短审查，不注册本地命令执行器",
+      "结构化任务绑定角色 revision 并以 request_id 和命令哈希保证幂等",
+      "工具 SSE、折叠卡片和会话回执支持断线续传与刷新恢复",
+      "Core、Web 与 Launcher 统一升至 0.8.2"
+    ]
+  },
+  {
     "version": "0.8.1",
     "published_at": "2026-08-09",
     "status": "local_regression_validated",

@@ -124,6 +124,7 @@ class InMemorySessionRepository:
         *,
         replace_round: bool,
         write_receipt: JsonWriteReceipt,
+        tool_execution: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         messages = self.sessions.setdefault(request.session_id, [])
         if replace_round:
@@ -157,6 +158,7 @@ class InMemorySessionRepository:
                     "role_quality": role_quality["quality"],
                     "role_quality_reasons": role_quality["reasons"],
                     "role_quality_correction": role_quality["correction"],
+                    "tool_execution": deepcopy(tool_execution or {}),
                 },
             ]
         )
@@ -217,13 +219,6 @@ class DeterministicLanguageModel:
                 "temporary_cues": [],
                 "lane": "DAILY",
             },
-            ensure_ascii=False,
-        )
-
-    @staticmethod
-    def plan_capabilities(messages: list[dict[str, str]], config: ApiConfig) -> str:
-        return json.dumps(
-            {"decision": "direct_answer", "reason": "none", "calls": []},
             ensure_ascii=False,
         )
 
@@ -354,3 +349,4 @@ def demo_dependencies() -> Dependencies:
         role_policy=RegexRolePolicy(),
         audit=InMemoryAudit(),
     )
+

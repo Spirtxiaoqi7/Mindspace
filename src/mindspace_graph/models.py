@@ -303,9 +303,8 @@ class ModelUsage(BaseModel):
         "repair",
         "compaction",
         "role_audit",
-        "capability_plan",
-        "preflight",
-        "research_review",
+        "task_review",
+        "final_generation",
         "emotion_post",
         "memory_extract",
         "character_generate",
@@ -323,13 +322,13 @@ class ModelUsage(BaseModel):
 
 class ModelCallRecord(BaseModel):
     kind: Literal[
-        "planner",
-        "research_review",
         "generation",
+        "task_review",
+        "final_generation",
         "protocol_repair",
         "memory_extract",
     ]
-    status: Literal["success", "degraded", "skipped"]
+    status: Literal["success", "degraded", "denied", "skipped"]
     elapsed_ms: float = Field(default=0, ge=0)
     error: str = Field(default="", max_length=500)
 
@@ -384,6 +383,7 @@ class ChatResponse(BaseModel):
     presentation_mode: Literal["dialogue", "scene"] = "dialogue"
     writeback_applied: bool = False
     retrieval_counts: dict[str, int] = Field(default_factory=dict)
+    tool_execution: dict[str, Any] = Field(default_factory=dict)
     errors: list[str] = Field(default_factory=list)
     trace: list[str] = Field(default_factory=list)
     llm_call_count: int = 0

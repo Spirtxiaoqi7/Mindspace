@@ -601,8 +601,22 @@ class JsonSessionRepository:
         else:
             with self._lock, path.open("r", encoding="utf-8") as handle:
                 session = json.load(handle)
+        timestamp_dirty = False
+        fallback_timestamp = str(session.get("created_at") or session.get("updated_at") or _now())
         for message in session.get("messages", []):
             message.pop("analysis", None)
+            if not str(message.get("timestamp") or "").strip():
+                timing = message.get("timing") if isinstance(message.get("timing"), dict) else {}
+                message["timestamp"] = str(
+                    timing.get("assistant_completed_at_utc")
+                    or timing.get("server_received_at_utc")
+                    or timing.get("request_received_at_utc")
+                    or fallback_timestamp
+                )
+                message["timestamp_source"] = "legacy_backfill"
+                timestamp_dirty = True
+        if timestamp_dirty:
+            self._store_session(session_id, session)
         return session
 
     def session_exists(self, session_id: str) -> bool:
@@ -765,6 +779,7 @@ class JsonSessionRepository:
         *,
         replace_round: bool,
         write_receipt: JsonWriteReceipt,
+        tool_execution: dict[str, Any] | None = None,
     ) -> dict[str, str]:
         with self._lock:
             session = self.load_session(request.session_id)
@@ -791,6 +806,7 @@ class JsonSessionRepository:
                         "round": request.round,
                         "status": "complete",
                         "timestamp": user_timestamp,
+                        "timestamp_source": "server_received_at",
                         "timing": {
                             "client_sent_at": (
                                 request.client_sent_at.isoformat() if request.client_sent_at is not None else None
@@ -812,6 +828,7 @@ class JsonSessionRepository:
                         "round": request.round,
                         "status": "complete",
                         "timestamp": assistant_timestamp,
+                        "timestamp_source": "server_completed_at",
                         "timing": {
                             "request_received_at_utc": user_timestamp,
                             "assistant_completed_at_utc": assistant_timestamp,
@@ -825,6 +842,7 @@ class JsonSessionRepository:
                         "role_quality": role_quality["quality"],
                         "role_quality_reasons": role_quality["reasons"],
                         "role_quality_correction": role_quality["correction"],
+                        "tool_execution": deepcopy(tool_execution or {}),
                     },
                 ]
             )

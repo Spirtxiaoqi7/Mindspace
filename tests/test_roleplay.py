@@ -211,7 +211,8 @@ def test_legacy_private_r18_protocol_is_not_loaded_into_the_compact_adult_packet
     assert adult["turn_style"] == "intimate"
     assert "private_overlay" not in adult["r18_director"]
     assert "intensity_ladder" not in adult["r18_director"]
-    assert "鸡巴" in adult["r18_director"]["vocabulary"]["colloquial_body_terms"]
+    assert "vocabulary" not in adult["r18_director"]
+    assert adult["r18_director"]["direct_output_required"] is True
 
 
 def test_adult_role_correction_does_not_leak_into_daily_lane():
@@ -233,7 +234,7 @@ def test_adult_role_correction_does_not_leak_into_daily_lane():
     assert "previous_turn_correction" not in layer
 
 
-def test_r18_director_does_not_upgrade_on_initiative_silence():
+def test_r18_director_stays_explicit_while_adult_mode_is_enabled():
     bundle = profiles()
     layer = build_roleplay_layer(
         request("继续", adult_mode=True, initiative=True),
@@ -241,8 +242,8 @@ def test_r18_director_does_not_upgrade_on_initiative_silence():
         [{"role": "assistant", "content": "已有互动", "hidden": False}],
     )
 
-    assert layer["r18_director"]["scene_state"]["engagement"] == "silent"
-    assert layer["r18_director"]["scene_state"]["advance"] is False
+    assert layer["r18_director"]["scene_state"]["engagement"] == "explicit"
+    assert layer["r18_director"]["scene_state"]["advance"] is True
 
 
 def test_stable_role_profile_excludes_conditional_card_payloads():
@@ -311,7 +312,7 @@ def test_voice_stage_direction_is_reported_for_next_turn_correction():
     assert "第一人称动作播报" in result["correction"]
 
 
-def test_r18_quality_marks_only_vague_active_continuation_as_hard_drift():
+def test_r18_quality_does_not_gate_a_response_by_first_sentence_vocabulary():
     result = evaluate_roleplay_quality(
         "我吻住你，指尖慢慢解开你的衣扣，低声问你准备好了吗？",
         request("继续", adult_mode=True),
@@ -323,9 +324,8 @@ def test_r18_quality_marks_only_vague_active_continuation_as_hard_drift():
         ],
     )
 
-    assert result["quality"] == "drift"
-    assert result["reasons"] == ["r18_vague_active_scene"]
-    assert "不必强行升级强度" in result["correction"]
+    assert result["quality"] == "pass"
+    assert result["reasons"] == []
 
 
 def test_r18_quality_allows_adult_discussion_without_forcing_a_new_action():
@@ -335,10 +335,21 @@ def test_r18_quality_allows_adult_discussion_without_forcing_a_new_action():
         [{"role": "assistant", "content": "待会儿再让你好好感受。"}],
     )
 
-    assert "r18_vague_active_scene" not in result["reasons"]
+    assert "r18_first_sentence_not_explicit" not in result["reasons"]
 
 
-def test_r18_packet_has_direct_vocabulary_without_an_intensity_ladder():
+def test_r18_quality_does_not_reject_a_direct_request_response_by_vocabulary():
+    result = evaluate_roleplay_quality(
+        "我先抱紧你，问你想从哪里开始。",
+        request("我想要", adult_mode=True),
+        [],
+    )
+
+    assert result["quality"] == "pass"
+    assert result["reasons"] == []
+
+
+def test_r18_packet_requires_direct_output_without_injecting_a_word_list():
     history = [
         {"role": "assistant", "content": "让我想想，待会儿再说。"},
         {"role": "user", "content": "好"},
@@ -352,9 +363,9 @@ def test_r18_packet_has_direct_vocabulary_without_an_intensity_ladder():
 
     assert "intensity_ladder" not in packet
     assert "modules" not in packet
-    assert packet["vocabulary"]["neutral_body_terms"][:2] == ["阴茎", "龟头"]
-    assert "鸡巴" in packet["vocabulary"]["colloquial_body_terms"]
-    assert "无需每轮升级强度" in packet["progress_rule"]
+    assert "vocabulary" not in packet
+    assert packet["direct_output_required"] is True
+    assert "直接写 R18 行为正在发生" in packet["progress_rule"]
 
 
 def test_r18_quality_accepts_explicit_sexual_action_progress():
@@ -365,18 +376,29 @@ def test_r18_quality_accepts_explicit_sexual_action_progress():
     )
 
     assert result["quality"] == "pass"
-    assert "r18_vague_active_scene" not in result["reasons"]
+    assert "r18_first_sentence_not_explicit" not in result["reasons"]
 
 
-def test_r18_voice_quality_does_not_reject_by_length():
+def test_r18_quality_accepts_direct_anatomical_language():
+    result = evaluate_roleplay_quality(
+        "我已经湿透了，手指正按在阴蒂上揉着。",
+        request("我想要", adult_mode=True),
+        [],
+    )
+
+    assert result["quality"] == "pass"
+    assert "r18_first_sentence_not_explicit" not in result["reasons"]
+
+
+def test_r18_voice_quality_does_not_reject_by_length_or_vocabulary():
     result = evaluate_roleplay_quality(
         "我现在开始动了，你待会儿可别后悔。",
         request("继续", adult_mode=True, interaction_mode="voice"),
         [],
     )
 
-    assert result["quality"] == "drift"
-    assert "r18_vague_active_scene" in result["reasons"]
+    assert result["quality"] == "pass"
+    assert "r18_first_sentence_not_explicit" not in result["reasons"]
     assert "r18_missing_dirty_language" not in result["reasons"]
     assert "r18_response_too_short" not in result["reasons"]
     assert "180至250个中文字符" not in result["correction"]

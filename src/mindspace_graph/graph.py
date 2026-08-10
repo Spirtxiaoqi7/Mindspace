@@ -21,19 +21,20 @@ def build_graph(dependencies: Dependencies, *, checkpointer: Any | None = None):
     nodes = NodeFactory(dependencies)
     builder = StateGraph(TurnState)
 
-    # 图分成五个阶段：装载与召回、能力调度、Prompt/生成、确定性校验、唯一提交。
-    # 除两路召回和能力执行器内部的只读批次外，主图按阶段顺序推进。
+    # 单轮只允许一次 T/R 握手；工具结果不会进入普通聊天历史。
     builder.add_node("validate_request", nodes.validate_request)
     builder.add_node("load_context", nodes.load_context)
-    builder.add_node("retrieve_knowledge", nodes.retrieve_knowledge)
     builder.add_node("retrieve_chat", nodes.retrieve_chat)
     builder.add_node("rank_context", nodes.rank_context)
-    builder.add_node("capability_route", nodes.capability_route)
-    builder.add_node("plan_capabilities", nodes.plan_capabilities)
-    builder.add_node("execute_capabilities", nodes.execute_capabilities)
-    builder.add_node("review_capabilities", nodes.review_capabilities)
+    builder.add_node("tool_hint", nodes.tool_hint)
     builder.add_node("compose_prompt", nodes.compose_prompt)
     builder.add_node("generate_candidate", nodes.generate_candidate)
+    builder.add_node("parse_tool_instruction", nodes.parse_tool_request)
+    builder.add_node("authorize_tool", nodes.authorize_tool)
+    builder.add_node("review_task", nodes.review_task)
+    builder.add_node("execute_tool", nodes.execute_tool)
+    builder.add_node("inject_result", nodes.inject_tool_result)
+    builder.add_node("generate_final", nodes.generate_final)
     builder.add_node("parse_protocol", nodes.parse_protocol)
     builder.add_node("validate_role", nodes.validate_role)
     builder.add_node("validate_json_update", nodes.validate_json_update)
@@ -42,25 +43,30 @@ def build_graph(dependencies: Dependencies, *, checkpointer: Any | None = None):
 
     builder.add_edge(START, "validate_request")
     builder.add_edge("validate_request", "load_context")
-    builder.add_edge("load_context", "retrieve_knowledge")
     builder.add_edge("load_context", "retrieve_chat")
-    # LangGraph 会并行执行这两个无写入分支；rank_context 等待两边都返回后再继续。
-    builder.add_edge(["retrieve_knowledge", "retrieve_chat"], "rank_context")
-    builder.add_edge("rank_context", "capability_route")
-    builder.add_conditional_edges(
-        "capability_route",
-        nodes.route_capability_plan,
-        {
-            "planner": "plan_capabilities",
-            "execute": "execute_capabilities",
-            "compose": "compose_prompt",
-        },
-    )
-    builder.add_edge("plan_capabilities", "execute_capabilities")
-    builder.add_edge("execute_capabilities", "review_capabilities")
-    builder.add_edge("review_capabilities", "compose_prompt")
+    builder.add_edge("retrieve_chat", "rank_context")
+    builder.add_edge("rank_context", "tool_hint")
+    builder.add_edge("tool_hint", "compose_prompt")
     builder.add_edge("compose_prompt", "generate_candidate")
-    builder.add_edge("generate_candidate", "parse_protocol")
+    builder.add_edge("generate_candidate", "parse_tool_instruction")
+    builder.add_conditional_edges(
+        "parse_tool_instruction",
+        nodes.route_tool_request,
+        {"tool": "authorize_tool", "answer": "parse_protocol"},
+    )
+    builder.add_conditional_edges(
+        "authorize_tool",
+        nodes.route_tool_authorization,
+        {"task": "review_task", "execute": "execute_tool", "inject": "inject_result"},
+    )
+    builder.add_conditional_edges(
+        "review_task",
+        nodes.route_task_review,
+        {"execute": "execute_tool", "inject": "inject_result"},
+    )
+    builder.add_edge("execute_tool", "inject_result")
+    builder.add_edge("inject_result", "generate_final")
+    builder.add_edge("generate_final", "parse_protocol")
     builder.add_conditional_edges(
         "parse_protocol",
         nodes.route_protocol,

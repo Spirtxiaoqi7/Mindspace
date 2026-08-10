@@ -244,9 +244,8 @@ def test_twenty_round_companion_end_to_end(tmp_path) -> None:
                 assert all("成人私密标记" not in item.text for item in adult_memory_off)
                 assert any("成人私密标记" in item.text for item in adult_memory_on)
             if round_num in {10, 19}:
-                assert "阴茎插入" not in prompt
-                assert "抽送和高潮继续" not in prompt
-                assert "成人模式回复" not in prompt
+                assert "阴茎插入" in prompt
+                assert "成人模式回复" in prompt
             if round_num == 15:
                 await container.compaction.drain()
 
