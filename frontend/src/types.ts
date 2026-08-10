@@ -610,3 +610,29 @@ export interface MemoryItem {
   assistant_message_id?: string;
   source_text?: string;
 }
+
+export type EventMemoryCategory = "user_related" | "ai_related" | "relationship_related";
+
+export interface EventMemoryItem {
+  id: string;
+  group: "pending" | "subject";
+  category: EventMemoryCategory;
+  title: string;
+  summary: string;
+  status: "active" | "completed" | "cancelled" | "replaced";
+  due_at?: string | null;
+  importance: number;
+  created_at: string;
+  updated_at: string;
+  source_session_id?: string;
+}
+
+export interface EventMemorySnapshot {
+  schema_version: string;
+  character_id: string;
+  revision: number;
+  pending: EventMemoryItem[];
+  subjects: Record<EventMemoryCategory, EventMemoryItem | null>;
+  history: EventMemoryItem[];
+  updated_at: string;
+}

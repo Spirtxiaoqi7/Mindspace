@@ -36,13 +36,13 @@ export const MessageList = memo(function MessageList({ messages, avatars, userNa
     const retry = message.status === "error";
     return <article className={`message ${message.role} ${message.status || "complete"}`} key={`${message.message_id || message.round}-${message.role}-${index}`}>
       <div className="message-avatar-column"><PortraitAvatar role={message.role} avatars={avatars} label={label} onClick={() => onProfile(message.role)} /><span>第 {message.round} 轮</span></div>
-      <div className="message-card"><header><strong>{label}</strong><details className="message-more" onToggle={(event) => { if (event.currentTarget.open) onReply(message); }}><summary>更多</summary><div><button onClick={() => onInteract(message)}>互动</button></div></details></header>
+      <div className="message-card"><div className="message-content"><header className="message-head"><strong>{label}</strong>{message.role === "assistant" && <details className="message-more" onToggle={(event) => { if (event.currentTarget.open) onReply(message); }}><summary>更多</summary><div><button onClick={() => onInteract(message)}>互动</button></div></details>}</header>
         {message.reply_to_message_id && <div className="message-reference">@本条消息</div>}
-        {message.interactions?.length ? <div className="message-interactions">{message.interactions.map((item) => <span key={item.id}>{item.action}{item.target ? ` · ${item.target}` : ""}</span>)}</div> : null}
-        {message.attachments?.length ? <div className="message-attachments">{message.attachments.map((item) => <span key={item.attachment_id}>{item.name}</span>)}</div> : null}
+        {message.interactions?.length ? <div className="message-tag-row">{message.interactions.map((item) => <span key={item.id}>{item.action}{item.target ? ` · ${item.target}` : ""}</span>)}</div> : null}
+        {message.attachments?.length ? <div className="message-tag-row attachments">{message.attachments.map((item) => <span key={item.attachment_id}>{item.name}</span>)}</div> : null}
         {shouldRenderToolExecution(message.tool_execution) && <ToolCard tool={message.tool_execution} />}
-        <div className="message-content">{richText(message.content)}</div>
-        <footer><button onClick={() => onReply(message)}>@本条消息</button><button onClick={() => onCopy(message.content)}>复制</button>{message.role === "assistant" && <button onClick={() => onSpeak(message.content)}>朗读</button>}{message.role === "assistant" && <button onClick={() => onRegenerate(message, message.round)}>重新生成</button>}{message.role === "assistant" && <button onClick={() => onDelete(message.message_id || "")}>删除回复</button>}{retry && <button onClick={onConfigure}>立即配置 API</button>}{retry && <button onClick={() => onInitiative(message.round)}>重新尝试</button>}</footer>
+        <div className="message-text">{richText(message.content)}</div></div>
+        <footer className="message-actions"><button onClick={() => onReply(message)}>@本条消息</button><button onClick={() => onCopy(message.content)}>复制</button>{message.role === "assistant" && <button onClick={() => onSpeak(message.content)}>朗读</button>}{message.role === "assistant" && <button onClick={() => onRegenerate(message, message.round)}>重新生成</button>}{message.role === "assistant" && <button onClick={() => onDelete(message.message_id || "")}>删除回复</button>}{retry && <button onClick={onConfigure}>立即配置 API</button>}{retry && <button onClick={() => onInitiative(message.round)}>重新尝试</button>}</footer>
       </div>
     </article>;
   })}</div>;

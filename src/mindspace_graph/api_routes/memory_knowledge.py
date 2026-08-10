@@ -6,7 +6,9 @@ import json
 from typing import Annotated
 
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
 
+from mindspace_graph.event_memory import SUBJECT_CATEGORIES, parse_event_operation
 from mindspace_graph.memory_registry import DEFAULT_MEMORY_REGISTRY
 
 from .context import (
@@ -19,6 +21,16 @@ from .context import (
     MemoryRebuildRequest,
     MemoryValueRequest,
 )
+
+
+class EventMemoryRequest(BaseModel):
+    character_id: str = Field(default="", max_length=64)
+    group: str = Field(pattern="^(pending|subject)$")
+    category: str = Field(pattern="^(user_related|ai_related|relationship_related)$")
+    title: str = Field(min_length=1, max_length=20)
+    summary: str = Field(min_length=1, max_length=160)
+    due_at: str | None = Field(default=None, max_length=64)
+    importance: int = Field(default=2, ge=1, le=3)
 
 
 def register_routes(app: FastAPI, context: ApiContext) -> None:
@@ -37,6 +49,66 @@ def register_routes(app: FastAPI, context: ApiContext) -> None:
     @app.get("/api/v1/memory/registry")
     async def memory_registry():
         return {"fields": DEFAULT_MEMORY_REGISTRY.public()}
+
+    @app.get("/api/v1/memory/events")
+    async def event_memories(character_id: str = Query(default="", max_length=64)):
+        return container.event_memory.snapshot(character_id)
+
+    @app.post("/api/v1/memory/events")
+    async def create_event_memory(payload: EventMemoryRequest):
+        operation = parse_event_operation(
+            json.dumps({"operation": "add", **payload.model_dump(mode="json")}, ensure_ascii=False)
+        )
+        return container.event_memory.apply(payload.character_id, operation)
+
+    @app.put("/api/v1/memory/events/{event_id}")
+    async def update_event_memory(event_id: str, payload: EventMemoryRequest):
+        operation = parse_event_operation(
+            json.dumps(
+                {"operation": "update", "target_id": event_id, **payload.model_dump(mode="json")},
+                ensure_ascii=False,
+            )
+        )
+        try:
+            return container.event_memory.apply(payload.character_id, operation)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/v1/memory/events/{event_id}/complete")
+    async def complete_event_memory(
+        event_id: str,
+        character_id: str = Query(default="", max_length=64),
+    ):
+        try:
+            return container.event_memory.apply(
+                character_id,
+                {
+                    "operation": "complete",
+                    "group": "pending",
+                    "category": SUBJECT_CATEGORIES[0],
+                    "target_id": event_id,
+                },
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.delete("/api/v1/memory/events/{event_id}")
+    async def delete_event_memory(
+        event_id: str,
+        character_id: str = Query(default="", max_length=64),
+    ):
+        try:
+            return container.event_memory.apply(
+                character_id,
+                {
+                    "operation": "remove",
+                    "group": "subject",
+                    "category": SUBJECT_CATEGORIES[0],
+                    "target_id": event_id,
+                },
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @app.get("/api/v1/memory/entities")
     async def list_entities(scope: str | None = Query(default=None)):

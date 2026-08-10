@@ -30,6 +30,7 @@ class TurnState(TypedDict, total=False):
     request: ChatRequest
     profiles: ProfileBundle
     recent_history: list[dict[str, Any]]
+    event_memory: dict[str, Any]
     retrieval_query: str
     retrieval_query_mode: str
     adult_recall_opened: bool

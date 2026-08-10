@@ -29,6 +29,7 @@ from mindspace_graph.policies import rank_with_temporal_decay
 from mindspace_graph.ports import Dependencies
 from mindspace_graph.profile_bootstrap import evaluate_profile_bootstrap
 from mindspace_graph.prompting import build_prompt, resolve_initiative_request
+from mindspace_graph.event_memory import event_memory_lane
 from mindspace_graph.protocol import IncrementalResponseParser, ProtocolParser
 from mindspace_graph.r18_director import explicit_r18_requested
 from mindspace_graph.roleplay import (
@@ -215,6 +216,11 @@ class NodeFactory:
         request = resolve_initiative_request(request, profiles)
         deletion_events = self.deps.sessions.load_pending_deletions(request.session_id)
         recent_history = list(state.get("session_snapshot") or self.deps.sessions.load_all(request.session_id))
+        event_memory = (
+            self.deps.event_memory.prompt_snapshot(request.character_id)
+            if self.deps.event_memory is not None
+            else {"pending": [], "subjects": {}, "active_count": 0}
+        )
         if request.mode == "regenerate":
             recent_history = [item for item in recent_history if int(item.get("round", 0)) != request.round]
             if self.deps.context is not None:
@@ -233,6 +239,7 @@ class NodeFactory:
             "profiles": profiles,
             "deletion_events": deletion_events,
             "recent_history": recent_history,
+            "event_memory": event_memory,
             "profile_bootstrap": evaluate_profile_bootstrap(
                 request,
                 profiles,
@@ -376,6 +383,9 @@ class NodeFactory:
         """Produce a zero-call hint only; the model remains the tool selector."""
 
         self._check_cancelled(state)
+        if event_memory_lane(state["request"].message):
+            writer({"event": "tool.hinted", "data": {"hint": "", "model_calls": 0, "reason": "event_memory_lane"}})
+            return {"tool_hint": "", "trace": ["tool_hint"]}
         service = self.deps.capabilities
         hint = service.route_hint(state["request"], history=state.get("recent_history", [])) if service else ""
         writer({"event": "tool.hinted", "data": {"hint": hint, "model_calls": 0}})
@@ -591,7 +601,7 @@ class NodeFactory:
         """把权威数据、账本历史和本轮临时上下文组装成主模型 messages。"""
 
         self._check_cancelled(state)
-        native_tools_enabled = supports_native_tools(state["request"].api.base_url) and callable(
+        native_tools_enabled = not event_memory_lane(state["request"].message) and supports_native_tools(state["request"].api.base_url) and callable(
             getattr(self.deps.llm, "stream_with_tools", None)
         )
         built = build_prompt(
@@ -605,6 +615,7 @@ class NodeFactory:
             state.get("emotion_state"),
             context_ledger=self.deps.context,
             native_tools_enabled=native_tools_enabled,
+            event_memory=state.get("event_memory"),
         )
         snapshot = built.context_snapshot
         if self.deps.prompt_inspector is not None:

@@ -167,6 +167,7 @@ class Dependencies:
     audit: AuditPort
     cancellation: CancellationPort | None = None
     memory: StructuredMemoryPort | None = None
+    event_memory: Any | None = None
     context: ContextLedger | None = None
     database: ProductDatabase | None = None
     role_audit_enabled: bool = True

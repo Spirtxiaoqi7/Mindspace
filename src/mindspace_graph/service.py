@@ -35,6 +35,7 @@ from mindspace_graph.entity_registry import EntityRegistry
 from mindspace_graph.graph import build_graph
 from mindspace_graph.memory_service import StructuredMemoryService
 from mindspace_graph.memory_writeback import MemoryWritebackService
+from mindspace_graph.event_memory import EventMemoryStore, EventMemoryWritebackService
 from mindspace_graph.models import (
     ActivityPromptContext,
     ApiConfig,
@@ -84,6 +85,7 @@ class ProductContainer:
     knowledge: LocalKnowledgeRetriever
     memory: StructuredMemoryStore
     memory_service: StructuredMemoryService
+    event_memory: EventMemoryStore
     audit: JsonlAudit
     config: ProductConfigStore
     conversation: ConversationService
@@ -137,6 +139,13 @@ class ConversationService:
             dependencies=self.dependencies,
             api_provider=self._memory_writeback_api,
         )
+        if dependencies.event_memory is None:
+            raise ValueError("ConversationService requires event memory")
+        self.event_memory_writeback = EventMemoryWritebackService(
+            dependencies=self.dependencies,
+            store=dependencies.event_memory,
+            api_provider=self._memory_writeback_api,
+        )
         self._run_repository = ConversationRunRepository(dependencies.database)
         # Compatibility views retained for existing diagnostics and tests.
         self._stream_runs = self._run_repository.active_runs
@@ -178,6 +187,7 @@ class ConversationService:
 
     def close(self) -> None:
         self.memory_writeback.close()
+        self.event_memory_writeback.close()
         for task in self._retrieval_warmups.values():
             task.cancel()
         for resource in (
@@ -191,6 +201,7 @@ class ConversationService:
 
     async def aclose(self) -> None:
         await self.memory_writeback.drain()
+        await self.event_memory_writeback.drain()
         tasks = [run.task for run in self._stream_runs.values() if run.task is not None and not run.task.done()]
         tasks.extend(task for task in self._retrieval_warmups.values() if not task.done())
         for task in tasks:
@@ -462,6 +473,7 @@ class ConversationService:
             # run.error event instead of leaving subscribers after run.accepted
             # with a permanently running durable record.
             await self.memory_writeback.flush_session(request.session_id)
+            await self.event_memory_writeback.flush_session(request.session_id)
             session_snapshot = self.dependencies.sessions.load_all(request.session_id)
             server_request = self._server_request(request, session_snapshot)
             async for part in self.graph.astream(
@@ -512,6 +524,7 @@ class ConversationService:
                 run_finished = True
                 self._kick_retrieval_warmup(server_request)
                 self.memory_writeback.kick(server_request, final)
+                self.event_memory_writeback.kick(server_request, final)
                 self.compaction.kick()
                 self.role_audit.kick()
                 payload = events.sse("run.completed", {"response": final.model_dump(mode="json")})
@@ -563,6 +576,7 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
     config = ProductConfigStore(settings.runtime_dir / "config" / "settings.json", settings)
     cancellation = CancellationRegistry()
     database = ProductDatabase(settings.runtime_dir / "data" / "context" / "context.db")
+    event_memory = EventMemoryStore(database)
     database.begin_projection_repair()
     prompt_inspector = PromptInspectionStore(database)
     entities = EntityRegistry(database)
@@ -640,6 +654,7 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
         audit=audit,
         cancellation=cancellation,
         memory=memory,
+        event_memory=event_memory,
         context=context,
         database=database,
         role_audit_enabled=settings.role_audit_enabled,
@@ -660,6 +675,7 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
         knowledge=knowledge,
         memory=memory,
         memory_service=memory_service,
+        event_memory=event_memory,
         audit=audit,
         config=config,
         conversation=conversation,

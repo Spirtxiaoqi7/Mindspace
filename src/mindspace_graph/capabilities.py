@@ -190,12 +190,12 @@ class ReadOnlyCapabilityService:
 
         del history
         message = request.message.strip()
-        if re.search(r"(任务|待办|提醒|截止|完成.{0,8}(?:任务|待办))", message):
-            return "task"
         if _URL_PATTERN.search(message) or _EXPLICIT_WEB_HINTS.search(message) or (
             _FRESH_HINTS.search(message) and _FRESH_INFORMATION_HINTS.search(message)
         ):
             return "web"
+        if re.search(r"(任务|待办|提醒|截止|完成.{0,8}(?:任务|待办))", message):
+            return "task"
         if _AMBIGUOUS_HINTS.search(message) and _EXTERNAL_SUBJECT_HINTS.search(message):
             return "web"
         if _KNOWLEDGE_HINTS.search(message) or _HISTORY_HINTS.search(message):

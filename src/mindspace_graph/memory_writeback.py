@@ -11,6 +11,7 @@ from mindspace_graph.memory_update import (
     parse_memory_plan,
     should_extract_memory,
 )
+from mindspace_graph.event_memory import event_memory_lane
 from mindspace_graph.models import ApiConfig, ChatRequest, ChatResponse, JsonWriteReceipt
 from mindspace_graph.policies import validate_json_update
 from mindspace_graph.ports import Dependencies
@@ -42,6 +43,8 @@ class MemoryWritebackService:
             response.status != "success"
             or request.mode != "primary"
             or request.initiative
+            or response.tool_execution is not None
+            or event_memory_lane(request.message)
             or not should_extract_memory(request.message)
             or not callable(getattr(self.dependencies.llm, "extract_memory", None))
         ):
