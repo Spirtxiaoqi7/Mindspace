@@ -1,0 +1,517 @@
+{
+  "version": 1,
+  "override_groups": [
+    {
+      "key": "root\n:root",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n:root:not([data-theme=\"dark\"])",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n:root[data-theme=\"dark\"]",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n:root[data-theme=\"dark\"] .app-shell",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.account-card",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.account-settings",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.account-settings b",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.account-settings small",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.account-settings strong",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.app-shell",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.app-shell,\r\n.app-shell.inspector-hidden",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.app-shell.inspector-hidden",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.archive-link",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.archive-link b",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.brand-mark",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.brand-row",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.brand-row small",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.brand-row strong",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.chapter-heart-entry",
+      "reason": "base-source-order-contract"
+    },
+    {
+      "key": "root\n.chat-scene-background::after",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.composer",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.composer textarea",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.composer-menu > summary",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.composer-menu > summary::after",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.composer-meta",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.composer-primary-tools",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.composer-row",
+      "reason": "base-source-order-contract"
+    },
+    {
+      "key": "root\n.composer-row .send",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.composer-row .send:hover",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.composer-row .voice-entry",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.composer-row button",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.composer-wrap",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.composer:focus-within",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.conversation",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.custom-card .mode-card-ornament",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.danger-zone",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.inspector",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.inspector-tabs",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.inspector-tabs button",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.json-editor",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.message",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.message-actions",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.message-content",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.message-head",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.message-head span",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.message-head strong",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.message-list",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.message-text",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.message.user",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.message.user .message-content",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.modal",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.modal-backdrop",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-card",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-card footer",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-card footer b",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-card h2",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-card p,.mode-card footer small,.mode-lobby-footnote",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-card-grid",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-card-ornament",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-card::after",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-card::before",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-card:hover",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-lobby",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-lobby-footnote span::before",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-lobby-header",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-lobby-header .brand-mark",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-lobby-header h1",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-lobby-header p",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.mode-lobby::before",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.model-chip",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.model-chip.warning",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.new-chat",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.new-chat span",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.new-chat:hover",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.persona-entry b",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.portrait-avatar",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.portrait-avatar.small",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.prompt-grid",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.prompt-grid button",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.prompt-grid button:hover",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.search-box",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.search-box input",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.search-box input::placeholder",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.session-delete",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.session-delete:hover",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.session-glyph",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.session-heading",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.session-heading small",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.session-item",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.session-item:hover",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.session-item.active",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.session-list",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.session-open",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.session-open small",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.session-open strong",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.sidebar",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.sidebar-memory-entry",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.sidebar-memory-entry i",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.sidebar-memory-entry span",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.sidebar-memory-entry:hover",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.sidebar-tools",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.sidebar::after",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.title-block > span:last-child",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.title-block h1",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.top-actions",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.top-actions button",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.top-character-avatar",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.top-character-entry",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.topbar",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.topbar-kicker",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.topbar-settings-menu > div",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.topbar-settings-menu > div button",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.topbar-settings-menu > div button:hover",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.topbar-settings-menu > summary",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.topbar::after",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.welcome-panel",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.welcome-panel h2",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.welcome-panel p",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.workshop-actions .primary",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.workshop-layout",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.workshop-panel",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.workshop-panel > h1",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.workshop-steps",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.workshop-steps > button.active",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.workshop-steps > button.active b",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\n.workspace",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\nbody",
+      "reason": "redesign-override-authority"
+    },
+    {
+      "key": "root\nbutton, input, textarea, select",
+      "reason": "redesign-override-authority"
+    }
+  ]
+}

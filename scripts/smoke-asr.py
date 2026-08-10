@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import wave
 from pathlib import Path
 
@@ -51,7 +52,9 @@ async def run(url: str, audio: Path, run_id: str = "") -> tuple[dict, bool]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--url", default="ws://127.0.0.1:8766/ws")
+    registry = json.loads((Path(__file__).resolve().parents[1] / "config" / "service-ports.json").read_text(encoding="utf-8"))
+    asr_port = int(os.environ.get("MINDSPACE_ASR_PORT") or registry["services"]["asr"])
+    parser.add_argument("--url", default=f"ws://127.0.0.1:{asr_port}/ws")
     parser.add_argument("--run-id", default="")
     parser.add_argument("--expect-interrupt", action="store_true")
     parser.add_argument(

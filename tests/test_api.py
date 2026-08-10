@@ -902,3 +902,27 @@ def test_avatar_config_normalizes_legacy_values_and_upload_returns_config(tmp_pa
     )
     assert uploaded.status_code == 200
     assert uploaded.json()["config"]["assistant"]["src"].startswith("/api/v1/avatar/files/assistant-")
+def test_available_models_preserves_current_model_and_sorts_provider_results(monkeypatch, tmp_path) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict[str, object]:
+            return {"data": [{"id": "zeta"}, {"id": "alpha"}, {"id": "alpha"}, {}]}
+
+    async def fake_get(self, url, **kwargs):  # noqa: ANN001, ANN202
+        assert str(url).endswith("/models")
+        return FakeResponse()
+
+    monkeypatch.setattr("httpx.AsyncClient.get", fake_get)
+    settings = make_settings(tmp_path)
+    app = create_app(settings)
+    with TestClient(app) as client:
+        response = client.get("/api/v1/models/available")
+
+    assert response.status_code == 200
+    body = response.json()
+    ids = [item["id"] if isinstance(item, dict) else item for item in body.get("models", body)]
+    assert settings.llm_model in ids
+    assert "alpha" in ids
+    assert "zeta" in ids

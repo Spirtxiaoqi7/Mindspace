@@ -57,18 +57,15 @@ test("crashed services use bounded restart backoff", () => {
 });
 
 test("ASR startup trusts the installer marker instead of repeating CUDA imports", () => {
-  const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
-  assert.match(main, /asrReadyMarker/);
-  assert.doesNotMatch(main, /runProcessCheck\(asrPython/);
-  assert.doesNotMatch(main, /fs\.rmSync\(asrReadyMarker/);
+  const supervisor = fs.readFileSync(path.join(__dirname, "service-supervisor.cjs"), "utf8");
+  assert.match(supervisor, /asrReadyMarker/);
+  assert.doesNotMatch(supervisor, /runProcessCheck\(asrPython/);
+  assert.doesNotMatch(supervisor, /fs\.rmSync\(asrReadyMarker/);
 });
 
 test("bulk startup starts local TTS without awaiting ASR cold load", () => {
   const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
-  const bulkStart = main.slice(
-    main.indexOf("async function allServices"),
-    main.indexOf("function stopServicesForUpdate"),
-  );
+  const bulkStart = main.match(/async function allServices\(action\) \{[\s\S]*?\n\}/)?.[0] || "";
   assert.match(bulkStart, /scheduleStartupHealthRecheck\(name\)/);
   assert.doesNotMatch(bulkStart, /await waitForServiceReady\("asr", 90_000\)/);
   assert.doesNotMatch(bulkStart, /startLocalTtsAfterAsr/);
@@ -84,10 +81,10 @@ test("default launcher startup requests Core only", () => {
 });
 
 test("the product grants microphone access only to its loopback Core origin", () => {
-  const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
-  assert.match(main, /configureProductMediaPermissions\(productWindow\.webContents\.session\)/);
-  assert.match(main, /origin === "http:\/\/127\.0\.0\.1:8765"/);
-  assert.match(main, /permission === "media"/);
-  assert.match(main, /mediaType === "audio"/);
-  assert.match(main, /mediaType === "unknown"/);
+  const windows = fs.readFileSync(path.join(__dirname, "product-windows.cjs"), "utf8");
+  assert.match(windows, /configureProductMediaPermissions\(win\.webContents\.session\)/);
+  assert.match(windows, /services\.api\.origin/);
+  assert.match(windows, /permission === "media"/);
+  assert.match(windows, /details\.mediaType === "audio"/);
+  assert.match(windows, /details\.mediaType === "unknown"/);
 });

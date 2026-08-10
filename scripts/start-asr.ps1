@@ -3,6 +3,8 @@ param([string]$Device = 'cuda:0')
 
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+. (Join-Path $PSScriptRoot 'service-ports.ps1')
+$ServicePorts = Get-MindspaceServicePorts -ProjectRoot $ProjectRoot
 $VenvRoot = if ($env:MINDSPACE_ASR_VENV) { $env:MINDSPACE_ASR_VENV } else { Join-Path $ProjectRoot '.venv-asr' }
 $PythonExe = Join-Path $VenvRoot 'Scripts\python.exe'
 $ReadyMarker = Join-Path $VenvRoot '.mindspace-asr-ready.json'
@@ -15,4 +17,4 @@ if (-not (Test-Path -LiteralPath $ReadyMarker)) {
 }
 Set-Location $ProjectRoot
 $env:PYTHONPATH = Join-Path $ProjectRoot 'src'
-& $PythonExe -m mindspace_graph.asr_worker --device $Device --model-root $ModelRoot
+& $PythonExe -m mindspace_graph.asr_worker --device $Device --model-root $ModelRoot --port $ServicePorts.asr

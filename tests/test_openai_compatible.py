@@ -2,8 +2,10 @@ import json
 
 import httpx
 
+from mindspace_graph.adapters.in_memory import demo_dependencies
 from mindspace_graph.adapters.openai_compatible import OpenAICompatibleLanguageModel
-from mindspace_graph.models import ApiConfig
+from mindspace_graph.graph import build_graph
+from mindspace_graph.models import ApiConfig, ChatRequest
 
 
 def test_private_structured_calls_disable_thinking_and_request_json():
@@ -102,6 +104,9 @@ def test_role_audit_uses_structured_compatibility_ladder():
 
     assert model.audit_role([], ApiConfig(api_key="test", max_tokens=1000)) == "{}"
     assert len(bodies) == 3
+    attempts = model.take_provider_attempts()
+    assert [item.status for item in attempts] == ["http_error", "http_error", "success"]
+    assert [item.attempt for item in attempts] == [1, 2, 3]
     assert "thinking" not in bodies[-1]
     assert "response_format" not in bodies[-1]
     client.close()
@@ -148,6 +153,9 @@ def test_stream_retries_connect_handshake_before_first_token():
 
     assert model.generate([], ApiConfig(api_key="test")) == "恢复"
     assert attempts == 2
+    provider_attempts = model.take_provider_attempts()
+    assert [item.status for item in provider_attempts] == ["transport_error", "success"]
+    assert provider_attempts[1].retry_reason == "connection_retry"
     client.close()
 
 
@@ -194,6 +202,9 @@ def test_visible_stream_falls_back_when_compatibility_fields_are_rejected():
 
     assert model.generate([], ApiConfig(api_key="test")) == "兼容"
     assert len(bodies) == 3
+    provider_attempts = model.take_provider_attempts()
+    assert [item.status for item in provider_attempts] == ["http_error", "http_error", "success"]
+    assert provider_attempts[-1].retry_reason == "compatibility_fallback"
     assert "thinking" not in bodies[-1]
     assert "stream_options" not in bodies[-1]
     client.close()
@@ -275,9 +286,46 @@ def test_visible_stream_retries_one_reasoning_only_result_before_ui_output():
 
     assert model.generate([], ApiConfig(api_key="test")) == "重试正文"
     assert len(bodies) == 2
+    provider_attempts = model.take_provider_attempts()
+    assert [item.status for item in provider_attempts] == ["empty", "success"]
+    assert provider_attempts[1].retry_reason == "empty_output_retry"
     assert bodies[0]["thinking"] == {"type": "disabled"}
     assert bodies[1]["thinking"] == {"type": "disabled"}
     assert "stream_options" not in bodies[1]
+    client.close()
+
+
+def test_provider_attempts_are_exposed_in_graph_model_diagnostics():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"content":"<response>记录成功。</response>"},'
+                '"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'
+            ),
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    deps = demo_dependencies()
+    deps.llm = OpenAICompatibleLanguageModel(client=client)
+    result = build_graph(deps).invoke(
+        {
+            "request": ChatRequest(
+                message="记录调用",
+                session_id="provider-attempt-diagnostics",
+                api=ApiConfig(api_key="test", base_url="https://provider.invalid/v1"),
+                retrieval={"rag_enabled": False},
+            ),
+            "request_id": "provider-attempt-run",
+        },
+        config={"recursion_limit": 20},
+    )
+
+    diagnostics = result["response"].model
+    assert diagnostics.total_calls == 1
+    assert diagnostics.total_http_attempts == 1
+    assert diagnostics.provider_attempts[0].status == "success"
     client.close()
 
 

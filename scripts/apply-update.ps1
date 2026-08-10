@@ -9,34 +9,11 @@ param(
 $ErrorActionPreference = 'Stop'
 $Root = [IO.Path]::GetFullPath($Root).TrimEnd('\')
 $UpdateRoot = Join-Path $Root 'runtime\updates'
-$AllowedTargets = @(
-    'src\mindspace_graph',
-    'scripts',
-    'vendor\cosyvoice_mindspace_worker.py',
-    'vendor\gpt_sovits_mindspace_worker.py',
-    'vendor\GPT-SoVITS\GPT_SoVITS',
-    'vendor\GPT-SoVITS\tools',
-    'vendor\GPT-SoVITS\LICENSE',
-    'vendor\CosyVoice\cosyvoice',
-    'vendor\CosyVoice\third_party\Matcha-TTS\matcha',
-    'vendor\CosyVoice\LICENSE',
-    'vendor\CosyVoice\third_party\Matcha-TTS\LICENSE',
-    'config\gpt-sovits-voices.json',
-    'pyproject.toml',
-    'uv.lock',
-    'README.md',
-    'CHANGELOG.md',
-    'docs\voice-session-architecture.md',
-    'docs\QWEN3_TTS_RUNTIME.md',
-    'docs\MULTI_CHARACTER_ARCHITECTURE.md',
-    'docs\CHARACTER_ART_LIBRARY.md',
-    'docs\ART_PREVIEW_PROVENANCE_0.7.0.md',
-    'docs\SHARED_CHAPTERS_ARCHITECTURE.md',
-    'docs\CHARACTER_CARD_PACKAGE.md',
-    'docs\MIGRATION_ROLLBACK_0.6.0.md',
-    'docs\DEVELOPMENT_DESIGN_HISTORY.md',
-    'docs\release-history.json'
-)
+$AllowlistPath = Join-Path $Root 'config\core-release-allowlist.json'
+if (-not (Test-Path -LiteralPath $AllowlistPath -PathType Leaf)) { throw "Core release allowlist is missing: $AllowlistPath" }
+$ReleaseAllowlist = Get-Content -LiteralPath $AllowlistPath -Raw | ConvertFrom-Json
+if ($ReleaseAllowlist.schema_version -ne '1.0.0') { throw 'Unsupported Core release allowlist schema' }
+$AllowedTargets = @($ReleaseAllowlist.targets | ForEach-Object { [string]$_ })
 
 function Assert-UnderRoot([string]$Path, [string]$ExpectedRoot) {
     $resolved = [IO.Path]::GetFullPath($Path)
@@ -105,11 +82,31 @@ $Package = [IO.Path]::GetFullPath($Package)
 if (-not (Test-Path -LiteralPath $Package -PathType Leaf)) { throw "Update package not found: $Package" }
 if ($Version -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') { throw 'Invalid semantic version' }
 
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$archive = [IO.Compression.ZipFile]::OpenRead($Package)
+try {
+    foreach ($entry in $archive.Entries) {
+        $name = ([string]$entry.FullName).Replace('\', '/')
+        if (-not $name -or $name.StartsWith('/') -or $name -match '^[A-Za-z]:' -or $name.Split('/') -contains '..') { throw "Unsafe update archive entry: $name" }
+        if (-not $name.StartsWith('payload/', [StringComparison]::Ordinal)) { throw "Update archive entry is outside payload/: $name" }
+        $unixType = ([int64]$entry.ExternalAttributes -shr 16) -band 0xF000
+        if ($unixType -eq 0xA000) { throw "Update archive contains a symbolic link: $name" }
+        if ($name.EndsWith('.map', [StringComparison]::OrdinalIgnoreCase)) { throw "Update archive contains a forbidden source map: $name" }
+    }
+} finally { $archive.Dispose() }
+
 $Token = "$Version-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
 $StagingRoot = Assert-UnderRoot (Join-Path $UpdateRoot "staging\$Token") $UpdateRoot
 $BackupRoot = Assert-UnderRoot (Join-Path $UpdateRoot "backups\$Token") $UpdateRoot
 New-Item -ItemType Directory -Path $StagingRoot, (Join-Path $BackupRoot 'payload') -Force | Out-Null
 Expand-Archive -LiteralPath $Package -DestinationPath $StagingRoot -Force
+$reparse = Get-ChildItem -LiteralPath $StagingRoot -Recurse -Force | Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint } | Select-Object -First 1
+if ($reparse) { throw "Update payload contains a reparse point: $($reparse.FullName)" }
+$embeddedSources = Get-ChildItem -LiteralPath $StagingRoot -Recurse -File -Force |
+    Where-Object { $_.Extension -in @('.js', '.json', '.css', '.html') } |
+    Where-Object { Select-String -LiteralPath $_.FullName -SimpleMatch '"sourcesContent"' -Quiet } |
+    Select-Object -First 1
+if ($embeddedSources) { throw "Update payload embeds sourcesContent: $($embeddedSources.FullName)" }
 $PayloadRoot = Join-Path $StagingRoot 'payload'
 $PayloadManifestPath = Join-Path $PayloadRoot 'payload.json'
 if (-not (Test-Path -LiteralPath $PayloadManifestPath)) { throw 'Update payload.json is missing' }

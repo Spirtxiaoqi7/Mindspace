@@ -22,6 +22,7 @@ from mindspace_graph.models import (
 )
 from mindspace_graph.policies import normalize_json_update
 from mindspace_graph.product_database import ProductDatabase
+from mindspace_graph.prompting import build_prompt
 from mindspace_graph.retrieval_fusion import BM25Plus, reciprocal_rank_fusion
 
 
@@ -56,6 +57,139 @@ def test_shared_transaction_rolls_back_every_canonical_store(tmp_path):
     assert sessions.load_session("tx")["messages"] == []
     assert memory.snapshot()["active"] == {}
     assert database.integrity_check()["ok"] is True
+
+
+def test_regenerate_withdraws_old_memory_context_and_indexes_atomically(tmp_path):
+    database = ProductDatabase(tmp_path / "data" / "context.db")
+    profiles = JsonProfileRepository(tmp_path / "profiles", database=database)
+    sessions = JsonSessionRepository(tmp_path / "sessions", database=database)
+    memory = StructuredMemoryStore(tmp_path / "memory.json", database=database)
+    ledger = ContextLedger(tmp_path / "data" / "context.db", database=database)
+    bundle = profiles.load_bundle()
+    original = ChatRequest(message="我喜欢草莓", session_id="regen", round=1)
+    original_built = build_prompt(
+        original,
+        bundle,
+        [],
+        [],
+        [],
+        context_ledger=ledger,
+    )
+    assert original_built.context_snapshot is not None
+    receipt = JsonWriteReceipt(
+        turn_id="round_1",
+        applied=True,
+        patches=[
+            {
+                "target": "user_profile",
+                "op": "add",
+                "path": "/stable_preferences/likes/-",
+                "before": None,
+                "after": "草莓",
+                "evidence_ids": ["current_user"],
+            }
+        ],
+    )
+    with database.transaction(operation="seed_regenerate_test"):
+        persisted = sessions.persist_turn(
+            original,
+            "旧回答会被撤销",
+            replace_round=False,
+            write_receipt=receipt,
+        )
+        memory.record_turn(
+            original,
+            "旧回答会被撤销",
+            persisted=persisted,
+            write_receipt=receipt,
+        )
+        ledger.append_turn(
+            request_id="old-request",
+            session_id="regen",
+            round_num=1,
+            epoch_id=original_built.context_snapshot.epoch_id,
+            pending_events=original_built.pending_events,
+            response="旧回答会被撤销",
+            user_message_id=persisted["user_message_id"],
+            assistant_message_id=persisted["assistant_message_id"],
+            receipt=receipt,
+            profiles=bundle,
+        )
+        ledger.record_model_usage(
+            request_id="old-request",
+            session_id="regen",
+            round_num=1,
+            usages=[{"request_kind": "generation", "model": "test", "total_tokens": 10}],
+        )
+        ledger.enqueue_role_audit(session_id="regen", round_num=1, payload={"response": "旧回答"})
+
+    regenerated = original.model_copy(update={"mode": "regenerate"})
+    regenerated_built = build_prompt(
+        regenerated,
+        bundle,
+        [],
+        [],
+        sessions.load_recent("regen"),
+        context_ledger=ledger,
+    )
+    assert regenerated_built.context_snapshot is not None
+
+    with pytest.raises(RuntimeError):
+        with database.transaction(operation="regenerate_rollback_probe"):
+            memory.forget_session("regen", 1)
+            ledger.replace_round("regen", 1)
+            sessions.persist_turn(
+                regenerated,
+                "不会提交的新回答",
+                replace_round=True,
+                write_receipt=JsonWriteReceipt(turn_id="round_1"),
+            )
+            raise RuntimeError("force rollback")
+
+    assert sessions.load_session("regen")["messages"][-1]["content"] == "旧回答会被撤销"
+    assert ledger.find_turn_commit("old-request") is not None
+    assert any("旧回答会被撤销" in episode["text"] for episode in memory.snapshot()["episodes"].values())
+
+    with database.transaction(operation="regenerate_commit"):
+        memory.forget_session("regen", 1)
+        replaced = ledger.replace_round("regen", 1)
+        new_ids = sessions.persist_turn(
+            regenerated,
+            "新的回答",
+            replace_round=True,
+            write_receipt=JsonWriteReceipt(turn_id="round_1"),
+        )
+        ledger.append_turn(
+            request_id="new-request",
+            session_id="regen",
+            round_num=1,
+            epoch_id=regenerated_built.context_snapshot.epoch_id,
+            pending_events=regenerated_built.pending_events,
+            response="新的回答",
+            user_message_id=new_ids["user_message_id"],
+            assistant_message_id=new_ids["assistant_message_id"],
+            receipt=JsonWriteReceipt(turn_id="round_1"),
+            profiles=bundle,
+        )
+
+    assert replaced["commits"] == 1
+    assert sessions.load_session("regen")["messages"][-1]["content"] == "新的回答"
+    assert ledger.find_turn_commit("old-request") is None
+    assert ledger.find_turn_commit("new-request") is not None
+    snapshot = memory.snapshot()
+    assert all("旧回答会被撤销" not in episode.get("text", "") for episode in snapshot["episodes"].values())
+    assert all(
+        "旧回答会被撤销" not in item.get("source_episode", {}).get("text", "")
+        for item in snapshot["tombstones"]
+    )
+    with ledger._connect() as db:
+        context_text = "\n".join(
+            str(row["content"])
+            for row in db.execute("SELECT content FROM context_events WHERE session_id='regen'").fetchall()
+        )
+        assert "旧回答会被撤销" not in context_text
+        assert db.execute("SELECT COUNT(*) FROM model_usage WHERE session_id='regen'").fetchone()[0] == 0
+        assert db.execute("SELECT COUNT(*) FROM role_audit_jobs WHERE session_id='regen'").fetchone()[0] == 0
 
 
 def test_alias_identity_removes_opposing_value_without_model_judgment(tmp_path):

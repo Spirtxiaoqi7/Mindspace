@@ -1,3 +1,5 @@
+> 文档状态：prototype。内容尚未成为当前产品承诺；当前权威见 `docs/INDEX.md`。
+
 # 用户与 AI 的第一认同性别
 
 Mindspace 的用户档案和 AI 档案都在 `identity.gender` 保存第一认同性别。

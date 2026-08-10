@@ -45,7 +45,29 @@ logs/
 # Models and local voice material are distributed separately
 assets/models/
 assets/audio/**/*.wav
-payload.json
+# Local reports and real-provider evidence are never release inputs.
+reports/
+.real-api-*/
+.real-api-*
+.runtime-*/
+.runtime-*
+.test-tmp/
+.test-tmp*/
+.tmp/
+.tmp*/
+visual-regression/
+visual-artifacts/
+deployment-tmp/
+release-staging/
+artifacts/
+runtime/
+.deploy-*/
+.venv-*/
+dist-launcher*/
+
+# Production outputs and bootstrap payloads are generated locally.
+src/mindspace_graph/web/assets/*.map
+src/mindspace_graph/web/*.map
 
 # Locally sealed, user-authorized R18 source material.  The encrypted resource
 # is intentionally available to local packaging but is never committed.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -580,11 +581,28 @@ class JsonSessionRepository:
         self.database.defer_projection(lambda: _atomic_json(self.events_path, snapshot))
 
     def _path(self, session_id: str) -> Path:
+        safe = (self.SAFE_ID.sub("-", session_id).strip(".-") or "session")[:48]
+        digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+        return self.root / f"{safe}-{digest}.json"
+
+    def _legacy_path(self, session_id: str) -> Path:
         safe = self.SAFE_ID.sub("-", session_id).strip(".-") or "session"
         return self.root / f"{safe}.json"
 
+    def _owned_legacy_path(self, session_id: str) -> Path | None:
+        path = self._legacy_path(session_id)
+        if not path.exists():
+            return None
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        return path if str(value.get("session_id") or path.stem) == session_id else None
+
     def load_session(self, session_id: str) -> dict[str, Any]:
         path = self._path(session_id)
+        if not path.exists():
+            path = self._owned_legacy_path(session_id) or path
         stored = self.database.get_document(self._session_key(session_id)) if self.database is not None else None
         if not isinstance(stored, dict) and not path.exists():
             return {
@@ -622,7 +640,7 @@ class JsonSessionRepository:
     def session_exists(self, session_id: str) -> bool:
         if self.database is not None:
             return self.database.has_document(self._session_key(session_id))
-        return self._path(session_id).exists()
+        return self._path(session_id).exists() or self._owned_legacy_path(session_id) is not None
 
     def ensure_session(
         self,
@@ -820,6 +838,12 @@ class JsonSessionRepository:
                         "adult_mode": request.adult_mode,
                         "companion_lane": companion_lane(request),
                         "presentation_mode": presentation_mode,
+                        "reply_to_message_id": request.reply_to_message_id,
+                        "interactions": [item.model_dump(mode="json") for item in request.interactions],
+                        "attachments": [
+                            item.model_dump(mode="json", exclude={"content"})
+                            for item in request.attachments
+                        ],
                     },
                     {
                         "message_id": assistant_message_id,
@@ -842,12 +866,21 @@ class JsonSessionRepository:
                         "role_quality": role_quality["quality"],
                         "role_quality_reasons": role_quality["reasons"],
                         "role_quality_correction": role_quality["correction"],
-                        "tool_execution": deepcopy(tool_execution or {}),
+                        "tool_execution": deepcopy(tool_execution) if tool_execution else None,
                     },
                 ]
             )
             if session.get("title") == "新对话":
-                session["title"] = f"{request.character_name}的主动问候" if request.initiative else request.message[:28]
+                interaction_title = "、".join(
+                    item.action + (f"-{item.target}" if item.target else "")
+                    for item in request.interactions[:2]
+                )
+                attachment_title = request.attachments[0].name if request.attachments else ""
+                session["title"] = (
+                    f"{request.character_name}的主动问候"
+                    if request.initiative
+                    else (request.message[:28] or interaction_title or attachment_title or "新互动")
+                )
             session["updated_at"] = assistant_timestamp
             self._store_session(request.session_id, session)
             receipts = self._read_receipts()
@@ -876,9 +909,12 @@ class JsonSessionRepository:
                 else:
                     with path.open("r", encoding="utf-8") as handle:
                         value = json.load(handle)
+                session_id = str(value.get("session_id") or path.stem)
+                if path != self._path(session_id) and self._path(session_id).exists():
+                    continue
                 items.append(
                     {
-                        "session_id": value.get("session_id", path.stem),
+                        "session_id": session_id,
                         "title": value.get("title", "未命名对话"),
                         "character_id": value.get("character_id", ""),
                         "mode": value.get("mode", "custom"),
@@ -892,7 +928,12 @@ class JsonSessionRepository:
 
     def delete_session(self, session_id: str) -> bool:
         path = self._path(session_id)
-        exists = self.database.has_document(self._session_key(session_id)) if self.database else path.exists()
+        legacy_path = self._owned_legacy_path(session_id)
+        exists = (
+            self.database.has_document(self._session_key(session_id))
+            if self.database
+            else path.exists() or legacy_path is not None
+        )
         if not exists:
             return False
         with self._lock:
@@ -902,8 +943,12 @@ class JsonSessionRepository:
             if self.database is not None:
                 self.database.delete_document(self._session_key(session_id))
                 self.database.defer_projection(lambda: path.unlink(missing_ok=True))
+                if legacy_path is not None:
+                    self.database.defer_projection(lambda: legacy_path.unlink(missing_ok=True))
             else:
-                path.unlink()
+                path.unlink(missing_ok=True)
+                if legacy_path is not None:
+                    legacy_path.unlink(missing_ok=True)
             receipts = self._read_receipts()
             receipts = {key: value for key, value in receipts.items() if key not in message_ids}
             self._store_receipts(receipts)
@@ -989,7 +1034,11 @@ class JsonSessionRepository:
 
     def clear_session(self, session_id: str) -> bool:
         path = self._path(session_id)
-        exists = self.database.has_document(self._session_key(session_id)) if self.database else path.exists()
+        exists = (
+            self.database.has_document(self._session_key(session_id))
+            if self.database
+            else path.exists() or self._owned_legacy_path(session_id) is not None
+        )
         if not exists:
             return False
         with self._lock:
@@ -1063,6 +1112,8 @@ class JsonSessionRepository:
                 with path.open("r", encoding="utf-8") as handle:
                     session = json.load(handle)
             sid = str(session.get("session_id", path.stem))
+            if path != self._path(sid) and self._path(sid).exists():
+                continue
             for index, message in enumerate(session.get("messages", [])):
                 if not chat_message_retrieval_eligible(message):
                     continue

@@ -1,3 +1,5 @@
+> 文档状态：prototype。内容尚未成为当前产品承诺；当前权威见 `docs/INDEX.md`。
+
 # Mindspace 产品介绍与用户指南
 
 ## 认识 Mindspace

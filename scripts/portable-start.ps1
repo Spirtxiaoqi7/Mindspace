@@ -5,6 +5,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $BundleRoot = $PSScriptRoot
+. (Join-Path $PSScriptRoot 'scripts\service-ports.ps1')
+$ServicePorts = Get-MindspaceServicePorts -ProjectRoot $BundleRoot
 $Wheel = Get-ChildItem -LiteralPath $BundleRoot -Filter '*.whl' | Select-Object -First 1
 
 if (-not $Wheel) {
@@ -26,7 +28,7 @@ if (Test-Path -LiteralPath (Join-Path $BundleRoot '.env')) {
     }
 }
 
-$port = if ($env:MINDSPACE_PORT) { [int]$env:MINDSPACE_PORT } else { 8765 }
+$port = $ServicePorts.core
 if ($OpenBrowser) {
     Start-Process "http://127.0.0.1:$port/"
 }

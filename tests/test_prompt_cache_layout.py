@@ -10,8 +10,8 @@ from mindspace_graph.models import (
     ProfileBundle,
     RetrievedChunk,
 )
-from mindspace_graph.prompting import build_prompt, split_history_for_cache
 from mindspace_graph.native_tools import NATIVE_TOOL_GUIDANCE
+from mindspace_graph.prompting import build_prompt, split_history_for_cache
 
 
 def profiles() -> ProfileBundle:
@@ -411,6 +411,11 @@ def test_gender_identity_is_the_first_high_priority_system_content():
     assert first["content"].startswith("【身份状态】")
     assert "用户性别：男；角色性别：女" in first["content"]
     assert "你是Mindspace" in first["content"]
+    assert "【身份与身体一致性】" in first["content"]
+    assert "女性角色自身不得出现男性器官或男性生理反应" in first["content"]
+    assert "【V2 权威角色档案】" in first["content"]
+    assert "【角色扮演合约】" in first["content"]
+    assert first["content"].count("【V2 权威角色档案】") == 1
 
 
 def test_reply_length_is_only_added_from_explicit_user_setting():

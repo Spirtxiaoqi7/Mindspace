@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$SourceRoot = 'A:\Mindscape',
+    [Parameter(Mandatory)] [string]$SourceRoot,
     [string]$TargetRoot = (Join-Path $PSScriptRoot '..\assets\models')
 )
 

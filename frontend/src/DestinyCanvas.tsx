@@ -9,7 +9,7 @@ import {
   type PointerEvent,
   type WheelEvent,
 } from "react";
-import { HttpError } from "./api";
+import { apiV1Request, HttpError } from "./api";
 import "./destiny-canvas.css";
 
 type Willingness = "low" | "neutral" | "normal" | "high";
@@ -104,13 +104,6 @@ function defaultSeed(userName = "用户"): SeedForm {
     adult_character: true,
     avatar: null,
   };
-}
-
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api/v1${path}`, init);
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new HttpError(response.status, body);
-  return body as T;
 }
 
 function willingnessLabel(value: Willingness): string {
@@ -220,7 +213,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     async function restore() {
       let loadedDefinition: Definition;
       try {
-        loadedDefinition = await api<Definition>("/destiny/definition");
+        loadedDefinition = await apiV1Request<Definition>("/destiny/definition");
         if (cancelled) return;
         setDefinition(loadedDefinition);
       } catch (reason) {
@@ -245,7 +238,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
           }
         }
         if (!journeyId) return;
-        const saved = await api<Journey>(`/destiny/journeys/${journeyId}`);
+        const saved = await apiV1Request<Journey>(`/destiny/journeys/${journeyId}`);
         if (cancelled) return;
         if (saved.status === "committed" || saved.character_id) {
           window.localStorage.removeItem(RESUME_KEY);
@@ -324,7 +317,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     if (!avatarFile) return seed.avatar;
     const form = new FormData();
     form.append("file", avatarFile);
-    const response = await api<{ avatar: AvatarEntry }>("/destiny/avatars", { method: "POST", body: form });
+    const response = await apiV1Request<{ avatar: AvatarEntry }>("/destiny/avatars", { method: "POST", body: form });
     const adjusted = mergeUploadedAvatar(response.avatar, seed.avatar);
     setSeed((current) => ({ ...current, avatar: adjusted }));
     setAvatarFile(null);
@@ -340,7 +333,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     const filename = entry!.src.split("/").pop();
     if (!filename) return;
     try {
-      await api(`/destiny/avatars/${encodeURIComponent(filename)}`, { method: "DELETE" });
+      await apiV1Request(`/destiny/avatars/${encodeURIComponent(filename)}`, { method: "DELETE" });
     } catch {
       // A network close must never erase the user's local seed edits. The server cleanup
       // removes a now-unreferenced temporary file on the next application startup.
@@ -354,7 +347,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     try {
       const query = new URLSearchParams({ expected_revision: String(current.revision) });
       if (useDefault) query.set("use_default", "true");
-      const finished = await api<Journey>(`/destiny/journeys/${current.journey_id}/cards?${query.toString()}`, { method: "POST" });
+      const finished = await apiV1Request<Journey>(`/destiny/journeys/${current.journey_id}/cards?${query.toString()}`, { method: "POST" });
       setJourney(finished);
       window.localStorage.setItem(RESUME_KEY, finished.journey_id);
       const next = slots.find((slot) => !finished.selections?.[slot.id]) || slots[0];
@@ -370,7 +363,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
       }, 420);
     } catch (reason) {
       try {
-        setJourney(await api<Journey>(`/destiny/journeys/${current.journey_id}`));
+        setJourney(await apiV1Request<Journey>(`/destiny/journeys/${current.journey_id}`));
       } catch {
         // Keep the last usable snapshot; the visible stage error remains actionable.
       }
@@ -387,12 +380,12 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     try {
       const query = new URLSearchParams({ expected_revision: String(current.revision) });
       if (useDefault) query.set("use_default", "true");
-      const directions = await api<Journey>(`/destiny/journeys/${current.journey_id}/archetypes?${query.toString()}`, { method: "POST" });
+      const directions = await apiV1Request<Journey>(`/destiny/journeys/${current.journey_id}/archetypes?${query.toString()}`, { method: "POST" });
       setJourney(directions);
       await runCards(directions, useDefault);
     } catch (reason) {
       try {
-        setJourney(await api<Journey>(`/destiny/journeys/${current.journey_id}`));
+        setJourney(await apiV1Request<Journey>(`/destiny/journeys/${current.journey_id}`));
       } catch {
         // Keep the last usable snapshot; the visible stage error remains actionable.
       }
@@ -411,7 +404,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     setFallbackStage("");
     try {
       const nextAvatar = await uploadAvatar();
-      const created = await api<Journey>("/destiny/journeys", {
+      const created = await apiV1Request<Journey>("/destiny/journeys", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(seedPayload(nextAvatar)),
@@ -429,7 +422,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     if (!journey || !fallbackStage) return;
     setError("");
     try {
-      const latest = await api<Journey>(`/destiny/journeys/${journey.journey_id}`);
+      const latest = await apiV1Request<Journey>(`/destiny/journeys/${journey.journey_id}`);
       setJourney(latest);
       if (fallbackStage === "archetypes") await runArchetypes(latest, true);
       else await runCards(latest, true);
@@ -449,7 +442,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     if (!journey || !journey.archetypes.length || savingSelection) return;
     setSavingSelection(true); setError("");
     try {
-      const updated = await api<Journey>(`/destiny/journeys/${journey.journey_id}/rewind/archetypes?expected_revision=${journey.revision}`, { method: "POST" });
+      const updated = await apiV1Request<Journey>(`/destiny/journeys/${journey.journey_id}/rewind/archetypes?expected_revision=${journey.revision}`, { method: "POST" });
       setJourney(updated); setModelState("archetypes_failed"); setFallbackStage("archetypes");
       setSeedOpen(true); setStageOpen(false); setCompletionOpen(false); setDrawerOpen(false);
       setActiveSlotId(""); setPreviewCardId(""); setRotation(0);
@@ -485,7 +478,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     setError("");
     setSavingSelection(true);
     try {
-      const updated = await api<Journey>(`/destiny/journeys/${journey.journey_id}/selections/${activeSlot.id}`, {
+      const updated = await apiV1Request<Journey>(`/destiny/journeys/${journey.journey_id}/selections/${activeSlot.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ card_id: card.card_id, expected_revision: journey.revision }),
@@ -535,7 +528,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     }
     setSavingSelection(true);
     try {
-      const updated = await api<Journey>(`/destiny/journeys/${journey.journey_id}/selections?expected_revision=${journey.revision}`, { method: "DELETE" });
+      const updated = await apiV1Request<Journey>(`/destiny/journeys/${journey.journey_id}/selections?expected_revision=${journey.revision}`, { method: "DELETE" });
       setJourney(updated);
       setDissolveArmed(false);
       setActiveSlotId(slots[0]?.id || "");
@@ -560,7 +553,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     if (!previous) return;
     setSavingSelection(true); setError("");
     try {
-      const updated = await api<Journey>(`/destiny/journeys/${journey.journey_id}/selections/${previous.id}?expected_revision=${journey.revision}`, { method: "DELETE" });
+      const updated = await apiV1Request<Journey>(`/destiny/journeys/${journey.journey_id}/selections/${previous.id}?expected_revision=${journey.revision}`, { method: "DELETE" });
       setJourney(updated); setCompletionOpen(false); setDrawerOpen(false); setActiveSlotId(previous.id);
       setPreviewCardId(""); setRotation(0); setStageOpen(true);
       setNotice(`已回退到 ${previous.axis}，请重新选择。`); focusNode(previous);
@@ -577,7 +570,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     setModelState("synthesis");
     setError("");
     try {
-      const updated = await api<Journey>(`/destiny/journeys/${current.journey_id}/synthesize?expected_revision=${current.revision}`, { method: "POST" });
+      const updated = await apiV1Request<Journey>(`/destiny/journeys/${current.journey_id}/synthesize?expected_revision=${current.revision}`, { method: "POST" });
       setJourney(updated);
       setDrawerTab("card");
       setModelState("idle");
@@ -594,7 +587,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     setError("");
     let character: any;
     try {
-      const response = await api<{ success: boolean; character: any }>(`/destiny/journeys/${current.journey_id}/commit?expected_revision=${current.revision}`, { method: "POST" });
+      const response = await apiV1Request<{ success: boolean; character: any }>(`/destiny/journeys/${current.journey_id}/commit?expected_revision=${current.revision}`, { method: "POST" });
       character = response.character;
       setCommittedCharacter(character);
       window.localStorage.setItem(PENDING_CHAT_KEY, JSON.stringify(character));

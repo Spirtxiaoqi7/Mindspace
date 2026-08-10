@@ -440,73 +440,83 @@ class ProductDatabase:
     def recover_interrupted_runs(self) -> int:
         """Close runs left active by a previous process without re-executing them."""
 
-        now = self._now()
-        recovered = 0
         with self.connection() as db:
-            rows = db.execute("SELECT * FROM conversation_runs WHERE status='running'").fetchall()
-            for row in rows:
-                # A client may have consumed a few in-memory delta sequence IDs
-                # after the last 500 ms checkpoint. A large recovery epoch keeps
-                # the synthetic terminal event strictly newer without persisting
-                # every provider token.
-                sequence = int(row["latest_seq"]) + 1_000_000
-                partial = str(row["partial_text"] or "")
-                if partial:
-                    sequence += 1
-                    replacement = {
-                        "version": "1.0",
-                        "event": "response.replace",
-                        "seq": sequence,
-                        "run_id": row["run_id"],
-                        "session_id": row["session_id"],
-                        "round": row["round_num"],
-                        "timestamp": now,
-                        "data": {"content": partial, "reason": "process_recovery"},
-                    }
-                    payload = (
-                        f"id: {sequence}\nevent: response.replace\n"
-                        f"data: {json.dumps(replacement, ensure_ascii=False)}\n\n"
-                    )
-                    db.execute(
-                        """
-                        INSERT OR REPLACE INTO conversation_run_events(
-                            run_id, sequence, event, payload, created_at
-                        ) VALUES(?, ?, 'response.replace', ?, ?)
-                        """,
-                        (row["run_id"], sequence, payload, now),
-                    )
+            run_ids = [
+                str(row["run_id"])
+                for row in db.execute("SELECT run_id FROM conversation_runs WHERE status='running'").fetchall()
+            ]
+        return sum(self.interrupt_orphaned_conversation_run(run_id) for run_id in run_ids)
+
+    def interrupt_orphaned_conversation_run(self, run_id: str) -> int:
+        """Atomically terminalize one ownerless durable run without replaying work."""
+
+        now = self._now()
+        with self.connection() as db:
+            row = db.execute("SELECT * FROM conversation_runs WHERE run_id=?", (run_id,)).fetchone()
+            if row is None or str(row["status"]) != "running":
+                return 0
+            # A client may have consumed in-memory deltas newer than the latest
+            # checkpoint. A recovery epoch keeps synthetic events strictly newer.
+            sequence = int(row["latest_seq"]) + 1_000_000
+            partial = str(row["partial_text"] or "")
+            if partial:
                 sequence += 1
-                interrupted = {
+                replacement = {
                     "version": "1.0",
-                    "event": "run.interrupted",
+                    "event": "response.replace",
                     "seq": sequence,
                     "run_id": row["run_id"],
                     "session_id": row["session_id"],
                     "round": row["round_num"],
                     "timestamp": now,
-                    "data": {"partial_text": partial, "reason": "core_restarted"},
+                    "data": {"content": partial, "reason": "process_recovery"},
                 }
                 payload = (
-                    f"id: {sequence}\nevent: run.interrupted\ndata: {json.dumps(interrupted, ensure_ascii=False)}\n\n"
+                    f"id: {sequence}\nevent: response.replace\n"
+                    f"data: {json.dumps(replacement, ensure_ascii=False)}\n\n"
                 )
                 db.execute(
                     """
                     INSERT OR REPLACE INTO conversation_run_events(
                         run_id, sequence, event, payload, created_at
-                    ) VALUES(?, ?, 'run.interrupted', ?, ?)
+                    ) VALUES(?, ?, 'response.replace', ?, ?)
                     """,
                     (row["run_id"], sequence, payload, now),
                 )
-                db.execute(
-                    """
-                    UPDATE conversation_runs SET status='interrupted',
-                        terminal_event='run.interrupted', latest_seq=?, updated_at=?
-                    WHERE run_id=?
-                    """,
-                    (sequence, now, row["run_id"]),
-                )
-                recovered += 1
-        return recovered
+            sequence += 1
+            interrupted = {
+                "version": "1.0",
+                "event": "run.interrupted",
+                "seq": sequence,
+                "run_id": row["run_id"],
+                "session_id": row["session_id"],
+                "round": row["round_num"],
+                "timestamp": now,
+                "data": {"partial_text": partial, "reason": "core_restarted"},
+            }
+            payload = (
+                f"id: {sequence}\nevent: run.interrupted\n"
+                f"data: {json.dumps(interrupted, ensure_ascii=False)}\n\n"
+            )
+            db.execute(
+                """
+                INSERT OR REPLACE INTO conversation_run_events(
+                    run_id, sequence, event, payload, created_at
+                ) VALUES(?, ?, 'run.interrupted', ?, ?)
+                """,
+                (row["run_id"], sequence, payload, now),
+            )
+            updated = db.execute(
+                """
+                UPDATE conversation_runs SET status='interrupted',
+                    terminal_event='run.interrupted', latest_seq=?, updated_at=?
+                WHERE run_id=? AND status='running'
+                """,
+                (sequence, now, row["run_id"]),
+            )
+            if updated.rowcount != 1:
+                raise RuntimeError("orphaned conversation run changed during recovery")
+        return 1
 
     def prune_conversation_runs(self, retention_hours: int = 24) -> int:
         cutoff = (datetime.now(UTC) - timedelta(hours=retention_hours)).isoformat()

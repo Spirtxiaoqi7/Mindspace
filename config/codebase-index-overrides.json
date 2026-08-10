@@ -1,0 +1,176 @@
+{
+  "src/mindspace_graph/api.py": {
+    "domain": "API composition",
+    "responsibility": "Creates the FastAPI application, wires shared services and delegates route registration to the split api_routes modules.",
+    "entry": "create_app; module compatibility exports",
+    "tests": "tests/test_api.py; tests/test_api_route_contract.py"
+  },
+  "src/mindspace_graph/api_routes/context.py": {
+    "domain": "API composition",
+    "responsibility": "Defines request DTOs, shared response normalizers and the ApiContext dependency bundle consumed by every route registrar.",
+    "entry": "ApiContext; request models; normalization helpers",
+    "tests": "tests/test_api.py; tests/test_api_route_contract.py"
+  },
+  "src/mindspace_graph/api_routes/chat_runs.py": {
+    "domain": "Chat and durable runs",
+    "responsibility": "Registers synchronous chat, streaming chat, durable run event replay, cancellation and interruption endpoints.",
+    "entry": "register_routes",
+    "tests": "tests/test_chat_execution_state_machine.py; tests/test_api.py"
+  },
+  "src/mindspace_graph/api_routes/characters_cards.py": {
+    "domain": "Characters and V2 cards",
+    "responsibility": "Registers character library, V2 card, avatar, session and profile compatibility endpoints.",
+    "entry": "register_routes",
+    "tests": "tests/test_characters.py; tests/test_api.py"
+  },
+  "src/mindspace_graph/api_routes/destiny_routes.py": {
+    "domain": "V7 destiny",
+    "responsibility": "Registers V7 journey, avatar, archetype, 6+6 card batch, selection, synthesis and commit endpoints.",
+    "entry": "register_routes",
+    "tests": "tests/test_destiny.py; tests/test_api_route_contract.py"
+  },
+  "src/mindspace_graph/api_routes/system_settings.py": {
+    "domain": "Settings and provider",
+    "responsibility": "Registers product settings, provider connection tests, model discovery and public configuration endpoints.",
+    "entry": "register_routes",
+    "tests": "tests/test_api.py; tests/test_product_config_secrets.py"
+  },
+  "src/mindspace_graph/api_routes/memory_knowledge.py": {
+    "domain": "Memory and retrieval",
+    "responsibility": "Registers memory, knowledge, entity and retrieval maintenance endpoints against the shared API context.",
+    "entry": "register_routes",
+    "tests": "tests/test_api.py; tests/test_memory_registry.py; tests/test_structured_memory.py"
+  },
+  "src/mindspace_graph/api_routes/audio_scenes.py": {
+    "domain": "Audio and scenes",
+    "responsibility": "Registers ASR, TTS, voice catalog, scene, journal and presentation-facing endpoints.",
+    "entry": "register_routes",
+    "tests": "tests/test_audio.py; tests/test_api.py; tests/test_shared_chapters.py"
+  },
+  "src/mindspace_graph/api_routes/legacy_routes.py": {
+    "domain": "Legacy compatibility",
+    "responsibility": "Keeps explicit legacy and 410 route contracts isolated from current product route modules.",
+    "entry": "register_routes",
+    "tests": "tests/test_api_route_contract.py"
+  },
+  "src/mindspace_graph/conversation_runs.py": {
+    "domain": "Chat and durable runs",
+    "responsibility": "Persists durable conversation runs and ordered SSE envelopes, supports replay, join, completion and orphan recovery.",
+    "entry": "ConversationRunRepository; BufferedStreamRun; StreamEnvelopeFactory; decode_sse",
+    "tests": "tests/test_chat_execution_state_machine.py; tests/test_api.py"
+  },
+  "src/mindspace_graph/service.py": {
+    "domain": "Chat orchestration",
+    "responsibility": "Coordinates a conversation turn across profiles, retrieval, LangGraph execution, persistence, compaction and post-turn work.",
+    "tests": "tests/test_graph.py; tests/test_prompt_cache_layout.py; tests/test_chat_execution_state_machine.py"
+  },
+  "src/mindspace_graph/graph.py": {
+    "domain": "Chat orchestration",
+    "responsibility": "Builds the single-turn LangGraph and its conditional native-tool execution path.",
+    "tests": "tests/test_graph.py; tests/test_capabilities.py"
+  },
+  "src/mindspace_graph/destiny.py": {
+    "domain": "V7 destiny",
+    "responsibility": "Owns V7 journey state, two half-card batches, tolerant card parsing, selections, V2 synthesis and commit.",
+    "tests": "tests/test_destiny.py; tests/test_destiny_dialogue_regression.py"
+  },
+  "src/mindspace_graph/adapters/openai_compatible.py": {
+    "domain": "Provider adapter",
+    "responsibility": "Implements OpenAI-compatible streaming, structured output compatibility ladders, native tool calls and provider attempt diagnostics.",
+    "tests": "tests/test_openai_compatible.py"
+  },
+  "src/mindspace_graph/native_tools.py": {
+    "domain": "Native tools",
+    "responsibility": "Defines the compact native tool schemas, provider eligibility and validated host-call conversion.",
+    "tests": "tests/test_native_tools.py; tests/test_capabilities.py"
+  },
+  "frontend/src/api.ts": {
+    "domain": "Frontend transport",
+    "responsibility": "Provides the typed API/SSE client, durable run stream access and desktop-settings transport switch.",
+    "entry": "apiV1Request; openChatStream; openRunEventStream; cancelRunRequest",
+    "tests": "frontend/src/api.test.ts"
+  },
+  "frontend/src/chat/useConversation.ts": {
+    "domain": "Frontend chat",
+    "responsibility": "Owns chat request submission, durable run recovery, SSE event reduction and message state transitions.",
+    "entry": "useConversation",
+    "tests": "frontend/src/chat/useConversation.test.tsx; frontend/src/chat-contract.test.ts"
+  },
+  "frontend/src/chat/Composer.tsx": {
+    "domain": "Frontend chat",
+    "responsibility": "Renders the composer, attachments, model switch, ASR/send action and multi-select interaction tags.",
+    "entry": "Composer",
+    "tests": "frontend/src/chat/Composer.test.tsx"
+  },
+  "frontend/src/chat/ExecutionInspector.tsx": {
+    "domain": "Frontend chat",
+    "responsibility": "Renders persisted RAG, provider and tool attempts without inventing cards for null executions.",
+    "entry": "ExecutionInspector",
+    "tests": "frontend/src/chat/ExecutionInspector.test.tsx"
+  },
+  "frontend/src/settings/SettingsWorkspace.tsx": {
+    "domain": "Frontend settings",
+    "responsibility": "Presents provider, model, appearance, voice and storage settings through the controlled settings bridge.",
+    "entry": "SettingsWorkspace",
+    "tests": "frontend/src/api.test.ts; desktop/settings-bridge.test.cjs"
+  },
+  "frontend/src/characters/CharacterExperience.tsx": {
+    "domain": "Frontend characters",
+    "responsibility": "Presents mode lobby, character picker/library and navigation into V7 creation or local chat.",
+    "entry": "ModeLobby; CharacterPicker; CharacterLibrary",
+    "tests": "frontend/src/App.test.tsx; frontend/src/DestinyCanvas.test.tsx"
+  },
+  "desktop/main.cjs": {
+    "domain": "Desktop composition",
+    "responsibility": "Composes Electron lifecycle, windows, preload security, service supervision, settings and update controllers.",
+    "tests": "desktop/desktop-architecture.test.cjs; desktop/security-boundaries.test.cjs"
+  },
+  "desktop/preload.cjs": {
+    "domain": "Desktop bridge",
+    "responsibility": "Exposes the narrow renderer IPC bridge for settings, updates, diagnostics, storage and window operations.",
+    "tests": "desktop/security-boundaries.test.cjs; desktop/settings-bridge.test.cjs"
+  },
+  "desktop/settings-controller.cjs": {
+    "domain": "Desktop controllers",
+    "responsibility": "Coordinates Core-first settings writes with encrypted provider secret persistence and rollback-safe status reporting.",
+    "tests": "desktop/settings-bridge.test.cjs"
+  },
+  "desktop/update-controller.cjs": {
+    "domain": "Desktop controllers",
+    "responsibility": "Coordinates signed Core and Launcher update checks, progress, installation and recovery policies.",
+    "tests": "desktop/update-manager.test.cjs; desktop/launcher-updater.test.cjs"
+  },
+  "desktop/service-supervisor.cjs": {
+    "domain": "Desktop controllers",
+    "responsibility": "Starts, observes and boundedly restarts Core and optional voice services using the shared port registry.",
+    "tests": "desktop/service-policy.test.cjs; desktop/service-ports.test.cjs"
+  },
+  "scripts/generate-codebase-index.mjs": {
+    "domain": "Repository governance",
+    "responsibility": "Builds architecture and per-file indexes from the explicit maintained-file set and fails check mode on coverage drift.",
+    "entry": "CLI: generate or --check",
+    "tests": "node scripts/generate-codebase-index.mjs --check"
+  },
+  "scripts/verify-repository-policy.mjs": {
+    "domain": "Repository governance",
+    "responsibility": "Enforces dependency, secret, source-map, documentation, release allowlist, bootstrap and index-completeness policy.",
+    "entry": "CLI verification",
+    "tests": "CI governance job"
+  },
+  "scripts/verify-current-doc-paths.mjs": {
+    "domain": "Repository governance",
+    "responsibility": "Checks path-like references in current authority documents and fails when a maintained target moved or disappeared.",
+    "entry": "CLI verification",
+    "tests": "CI governance job; repository policy"
+  },
+  "config/version.json": {
+    "domain": "Version and release",
+    "responsibility": "Canonical product and signed-runtime version contract consumed by synchronization and verification tools.",
+    "tests": "node scripts/verify-version-consistency.mjs"
+  },
+  "config/core-release-allowlist.json": {
+    "domain": "Version and release",
+    "responsibility": "Positive allowlist for Core update source trees and explicit runtime files.",
+    "tests": "desktop/release-targets.test.cjs; scripts/verify-repository-policy.mjs"
+  }
+}

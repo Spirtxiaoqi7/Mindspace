@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0.0",
+  "targets": [
+    "src\\mindspace_graph",
+    "scripts",
+    "vendor\\cosyvoice_mindspace_worker.py",
+    "vendor\\gpt_sovits_mindspace_worker.py",
+    "vendor\\GPT-SoVITS\\GPT_SoVITS",
+    "vendor\\GPT-SoVITS\\tools",
+    "vendor\\GPT-SoVITS\\LICENSE",
+    "vendor\\CosyVoice\\cosyvoice",
+    "vendor\\CosyVoice\\third_party\\Matcha-TTS\\matcha",
+    "vendor\\CosyVoice\\LICENSE",
+    "vendor\\CosyVoice\\third_party\\Matcha-TTS\\LICENSE",
+    "config\\gpt-sovits-voices.json",
+    "config\\service-ports.json",
+    "config\\core-release-allowlist.json",
+    "pyproject.toml",
+    "uv.lock"
+  ],
+  "source_trees": [
+    {
+      "path": "src\\mindspace_graph",
+      "extensions": [".py", ".bin", ".css", ".html", ".js", ".json", ".png", ".svg", ".webp"]
+    },
+    { "path": "vendor\\GPT-SoVITS\\GPT_SoVITS", "extensions": [".py", ".json", ".yaml", ".yml", ".txt"] },
+    { "path": "vendor\\GPT-SoVITS\\tools", "extensions": [".py", ".json", ".yaml", ".yml", ".txt"] },
+    { "path": "vendor\\CosyVoice\\cosyvoice", "extensions": [".py", ".json", ".yaml", ".yml", ".txt"] },
+    { "path": "vendor\\CosyVoice\\third_party\\Matcha-TTS\\matcha", "extensions": [".py", ".json", ".yaml", ".yml", ".txt"] }
+  ],
+  "runtime_files": [
+    "scripts\\apply-update.ps1",
+    "scripts\\download-asr-models.py",
+    "scripts\\extract-voice-archive.py",
+    "scripts\\prepare-asr.ps1",
+    "scripts\\prepare-gpt-sovits.ps1",
+    "scripts\\prepare-qwen3-tts.ps1",
+    "scripts\\prepare-tts.ps1",
+    "scripts\\repair.ps1",
+    "scripts\\runtime-verify.ps1",
+    "scripts\\service-ports.ps1",
+    "scripts\\start-asr.ps1",
+    "scripts\\start-qwen3-tts.ps1",
+    "scripts\\start-tts.ps1",
+    "scripts\\start.ps1",
+    "scripts\\stop-services.ps1",
+    "scripts\\verify-source-integrity.ps1",
+    "vendor\\cosyvoice_mindspace_worker.py",
+    "vendor\\gpt_sovits_mindspace_worker.py",
+    "vendor\\GPT-SoVITS\\LICENSE",
+    "vendor\\CosyVoice\\LICENSE",
+    "vendor\\CosyVoice\\third_party\\Matcha-TTS\\LICENSE",
+    "config\\gpt-sovits-voices.json",
+    "config\\service-ports.json",
+    "config\\core-release-allowlist.json",
+    "pyproject.toml",
+    "uv.lock"
+  ]
+}

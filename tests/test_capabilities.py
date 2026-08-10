@@ -52,6 +52,7 @@ def test_route_hint_is_zero_call_and_local_is_never_exposed(tmp_path):
         runtime_dir=tmp_path,
     )
     assert service.route_hint(ChatRequest(message="搜索 DeepSeek 最新模型")) == "web"
+    assert service.route_hint(ChatRequest(message="网络搜索一下有没有新鲜事")) == "web"
     assert service.route_hint(ChatRequest(message="你还记得我喜欢什么吗")) == "memory"
     assert service.route_hint(ChatRequest(message="你还记不记得我刚才说过什么")) == "memory"
     assert service.route_hint(ChatRequest(message="我之前是不是说过不想吃辣")) == "memory"

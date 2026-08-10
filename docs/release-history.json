@@ -1,5 +1,17 @@
 [
   {
+    "version": "0.8.3",
+    "published_at": "2026-08-10",
+    "status": "development",
+    "title": "0.8.3 工程治理与发布边界",
+    "summary": [
+      "建立单一版本契约、可复现依赖和跨平台 CI 门禁",
+      "历史真实 API 脚本改为拒绝读取桌面明文设置的 fail-closed 墓碑",
+      "建立文档状态索引、废弃清单、报告脱敏和协作分支规范",
+      "近期 V7、durable run、provider/tool attempt 与桌面安全测试纳入门禁"
+    ]
+  },
+  {
     "version": "0.8.2",
     "published_at": "2026-08-10",
     "status": "local_release",

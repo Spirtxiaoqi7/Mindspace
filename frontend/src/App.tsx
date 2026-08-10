@@ -1,7 +1,26 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DrawWorkshop } from "./DestinyCanvas";
 import type { CSSProperties, ReactNode } from "react";
-import { consumeResumableEventStream, request } from "./api";
+import {
+  getAudioStatus,
+  rawRequest,
+  request,
+} from "./api";
+import {
+  clearActiveRun,
+  clearTurnRequestSnapshots,
+  composerAction,
+  hasMissingAttachmentContent,
+  hydrateTurnRequestSnapshots,
+  mergeAttachmentFiles,
+  modelAttemptInspectorEvent,
+  modelSummaryInspectorEvent,
+  parseModelDiagnostics,
+  providerToolCapability,
+  readActiveRun,
+  requestAttachments,
+  shouldShowComposerAction,
+} from "./chat-contract";
 import {
   estimateDeliveredPrefix,
   hasSpeakableContent,
@@ -12,8 +31,16 @@ import {
   CharacterLibrary,
   CharacterPicker,
   ModeLobby,
-} from "./CharacterExperience";
-import type { AppView } from "./CharacterExperience";
+} from "./characters/CharacterExperience";
+import type { AppView } from "./characters/CharacterExperience";
+import { Composer } from "./chat/Composer";
+import { ExecutionInspector } from "./chat/ExecutionInspector";
+import { MessageList } from "./chat/MessageList";
+import { useConversation } from "./chat/useConversation";
+import { Modal } from "./settings/Modal";
+import { Field, SettingsWorkspace } from "./settings/SettingsWorkspace";
+import { styledConfirm } from "./ui/styledConfirm";
+import { avatarStyle, DEFAULT_AVATARS, normalizeAvatarConfig, PortraitAvatar } from "./ui/avatar";
 import { ScenePickerPage, sceneAssetPath } from "./SceneExperience";
 import type {
   AvatarConfig,
@@ -28,8 +55,10 @@ import type {
   MemoryItem,
   Message,
   ProductSettings,
-  PresentationModePreference,
-  PresentationModeResolved,
+  InteractionTag,
+  ChatAttachment,
+  ChatTurnRequest,
+  ProviderHttpAttempt,
   ProfileCardData,
   ProfileHistoryItem,
   PromptInspection,
@@ -90,11 +119,6 @@ interface WarmVoiceCapture {
   timer: number;
 }
 
-const DEFAULT_AVATARS: AvatarConfig = {
-  user: { src: "/assets/avatar-user-default.webp", aspect: "2 / 3", scale: 1.08, x: -12, y: 0 },
-  assistant: { src: "/assets/avatar-ai-default.webp", aspect: "2 / 3", scale: 1, x: 0, y: 0 },
-};
-
 const VOICE_LABELS: Record<VoicePhase, string> = {
   idle: "准备开始",
   preparing: "正在准备麦克风",
@@ -112,77 +136,6 @@ const VOICE_LABELS: Record<VoicePhase, string> = {
 };
 
 const uid = () => crypto.randomUUID();
-
-interface ConfirmationOptions {
-  title: string;
-  message: string;
-  detail?: string;
-  confirmLabel?: string;
-  danger?: boolean;
-}
-
-function styledConfirm(options: ConfirmationOptions): Promise<boolean> {
-  return new Promise((resolve) => {
-    const backdrop = document.createElement("div");
-    backdrop.className = "confirmation-backdrop";
-    const card = document.createElement("section");
-    card.className = `confirmation-card${options.danger ? " danger" : ""}`;
-    card.setAttribute("role", "alertdialog");
-    card.setAttribute("aria-modal", "true");
-
-    const mark = document.createElement("span");
-    mark.className = "confirmation-mark";
-    mark.textContent = options.danger ? "!" : "◇";
-    const copy = document.createElement("div");
-    copy.className = "confirmation-copy";
-    const kicker = document.createElement("small");
-    kicker.textContent = options.danger ? "需要确认" : "确认操作";
-    const title = document.createElement("h2");
-    title.textContent = options.title;
-    const message = document.createElement("p");
-    message.textContent = options.message;
-    copy.append(kicker, title, message);
-    if (options.detail) {
-      const detail = document.createElement("span");
-      detail.textContent = options.detail;
-      copy.append(detail);
-    }
-
-    const actions = document.createElement("footer");
-    const cancel = document.createElement("button");
-    cancel.className = "confirmation-cancel";
-    cancel.textContent = "取消";
-    const confirm = document.createElement("button");
-    confirm.className = "confirmation-accept";
-    confirm.textContent = options.confirmLabel || "继续";
-    actions.append(cancel, confirm);
-    card.append(mark, copy, actions);
-    backdrop.append(card);
-
-    let settled = false;
-    const finish = (value: boolean) => {
-      if (settled) return;
-      settled = true;
-      document.removeEventListener("keydown", onKeyDown);
-      backdrop.remove();
-      resolve(value);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") finish(false);
-    };
-    cancel.addEventListener("click", () => finish(false));
-    confirm.addEventListener("click", () => finish(true));
-    backdrop.addEventListener("mousedown", (event) => {
-      if (event.target === backdrop) finish(false);
-    });
-    document.addEventListener("keydown", onKeyDown);
-    document.body.append(backdrop);
-    window.requestAnimationFrame(() => {
-      backdrop.classList.add("visible");
-      confirm.focus();
-    });
-  });
-}
 
 // A recovered SSE stream is historical UI state. It must never become a new
 // audio job: restoring a page must not make the companion read an old answer.
@@ -210,11 +163,9 @@ export function alignPCM16Chunk(carry: Uint8Array, incoming: Uint8Array): {
     remainder,
   };
 }
-const ACTIVE_RUN_STORAGE_KEY = "mindspace.active_run";
 const ADULT_MODE_STORAGE_KEY = "mindspace.r18_enhanced";
 const NSFW_ADULT_CONFIRMED_STORAGE_KEY = "mindspace.nsfw_adult_confirmed";
 const R18_STYLE_STORAGE_KEY = "mindspace.r18_style";
-const PRESENTATION_MODE_STORAGE_KEY = "mindspace.presentation_mode";
 const VOICE_INPUT_DEVICE_STORAGE_KEY = "mindspace.voice_input_device";
 const VOICE_CAPTURE_RECOVERY_STORAGE_KEY = "mindspace.voice_capture_recovery";
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -308,29 +259,6 @@ async function preferredVoiceCaptureConstraints(): Promise<MediaStreamConstraint
   return { audio: { deviceId: { exact: selected.deviceId } } };
 }
 
-interface ActiveRunRecord {
-  run_id: string;
-  session_id: string;
-  round: number;
-  user_content: string;
-  started_at: string;
-}
-
-function readActiveRun(): ActiveRunRecord | null {
-  try {
-    const value = JSON.parse(localStorage.getItem(ACTIVE_RUN_STORAGE_KEY) || "null") as ActiveRunRecord | null;
-    return value?.run_id && value.session_id ? value : null;
-  } catch {
-    localStorage.removeItem(ACTIVE_RUN_STORAGE_KEY);
-    return null;
-  }
-}
-
-function clearActiveRun(runId = "") {
-  const active = readActiveRun();
-  if (!runId || active?.run_id === runId) localStorage.removeItem(ACTIVE_RUN_STORAGE_KEY);
-}
-
 const asRecord = (value: unknown): Record<string, unknown> =>
   value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 const bool = (value: unknown) => Boolean(value);
@@ -380,16 +308,16 @@ async function requestWithTimeout<T>(
 }
 
 function savedVoiceInteraction(settings: ProductSettings | null): VoiceInteractionContext {
-  const interaction = settings?.interaction || {};
-  const configuredMode = str(interaction.voice_entry_mode);
+  const interaction = settings?.interaction;
+  const configuredMode = str(interaction?.voice_entry_mode);
   return {
     mode: configuredMode === "face_to_face" ? "face_to_face" : "call",
-    scene: str(interaction.face_to_face_scene).trim().slice(0, 2000),
+    scene: str(interaction?.face_to_face_scene).trim().slice(0, 2000),
   };
 }
 
 export function companionContinuationPlan(
-  interaction: Record<string, unknown>,
+  interaction: NonNullable<ProductSettings["interaction"]>,
   afterPlayback: boolean,
   completedRounds: number,
 ) {
@@ -504,23 +432,6 @@ export function asrClientDisposition(data: Record<string, unknown>) {
   };
 }
 
-function normalizeAvatarConfig(value: unknown): AvatarConfig {
-  const raw = asRecord(value);
-  const normalize = (role: Role): AvatarEntry => {
-    const entry = asRecord(raw[role]);
-    const fallback = DEFAULT_AVATARS[role];
-    const aspect = str(entry.aspect || fallback.aspect);
-    return {
-      src: str(entry.src || fallback.src),
-      aspect: (["2 / 3", "3 / 4", "4 / 5", "9 / 16", "1 / 1"].includes(aspect) ? aspect : fallback.aspect) as AvatarEntry["aspect"],
-      scale: Math.max(0.6, Math.min(3, num(entry.scale, fallback.scale))),
-      x: Math.max(-80, Math.min(80, num(entry.x, fallback.x))),
-      y: Math.max(-80, Math.min(80, num(entry.y, fallback.y))),
-    };
-  };
-  return { user: normalize("user"), assistant: normalize("assistant") };
-}
-
 function formatTime(value?: string) {
   if (!value) return "";
   const date = new Date(value);
@@ -529,77 +440,11 @@ function formatTime(value?: string) {
     : new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
-function formatBytes(value: number) {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
-  return `${(value / 1024 / 1024).toFixed(1)} MiB`;
-}
-
-function encodeMonoWav(samples: Float32Array, sampleRate: number) {
-  const buffer = new ArrayBuffer(44 + samples.length * 2);
-  const view = new DataView(buffer);
-  const write = (offset: number, value: string) => {
-    for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
-  };
-  write(0, "RIFF"); view.setUint32(4, 36 + samples.length * 2, true); write(8, "WAVE");
-  write(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true); view.setUint16(34, 16, true); write(36, "data");
-  view.setUint32(40, samples.length * 2, true);
-  samples.forEach((sample, index) => view.setInt16(44 + index * 2, Math.round(Math.max(-1, Math.min(1, sample)) * 32767), true));
-  return buffer;
-}
-
-async function normalizeReferenceAudio(file: File) {
-  const context = new AudioContext();
-  let decoded: AudioBuffer;
-  try { decoded = await context.decodeAudioData(await file.arrayBuffer()); } finally { await context.close(); }
-  if (decoded.duration < 0.2) throw new Error("参考音频过短，至少需要 0.2 秒");
-  if (decoded.duration > 120) throw new Error("参考音频过长，请裁剪到 120 秒以内");
-  const sampleRate = 16000;
-  const offline = new OfflineAudioContext(1, Math.ceil(decoded.duration * sampleRate), sampleRate);
-  const source = offline.createBufferSource(); source.buffer = decoded; source.connect(offline.destination); source.start();
-  const rendered = await offline.startRendering();
-  const name = `${file.name.replace(/\.[^.]+$/, "") || "reference"}.wav`;
-  return new File([encodeMonoWav(rendered.getChannelData(0), sampleRate)], name, { type: "audio/wav" });
-}
-
 function friendlyValue(value: unknown): string {
   if (value == null || value === "") return "暂无";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
   if (Array.isArray(value)) return value.map(friendlyValue).join("、") || "暂无";
   return Object.entries(asRecord(value)).map(([key, item]) => `${key}：${friendlyValue(item)}`).join("；") || "暂无";
-}
-
-function richText(text: string) {
-  const parts = text.split(/(```[\s\S]*?```|`[^`]+`)/g);
-  return parts.map((part, index) => {
-    if (part.startsWith("```") && part.endsWith("```")) return <pre key={index}><code>{part.slice(3, -3).trim()}</code></pre>;
-    if (part.startsWith("`") && part.endsWith("`")) return <code key={index}>{part.slice(1, -1)}</code>;
-    const lines = part.split("\n");
-    return lines.map((line, lineIndex) => <span key={`${index}-${lineIndex}`}>{line}{lineIndex < lines.length - 1 && <br />}</span>);
-  });
-}
-
-function avatarStyle(entry: AvatarEntry): CSSProperties {
-  return {
-    "--avatar-aspect": entry.aspect,
-    "--avatar-scale": entry.scale,
-    "--avatar-x": `${entry.x}%`,
-    "--avatar-y": `${entry.y}%`,
-  } as CSSProperties;
-}
-
-function PortraitAvatar({ role, avatars, label, onClick, className = "" }: {
-  role: Role;
-  avatars: AvatarConfig;
-  label: string;
-  onClick?: () => void;
-  className?: string;
-}) {
-  const entry = avatars[role];
-  const fallback = DEFAULT_AVATARS[role].src;
-  return <button type="button" className={`portrait-avatar ${className}`} style={avatarStyle(entry)} onClick={onClick} title={`查看${label}人物卡`} aria-label={`查看${label}人物卡`}><img src={entry.src} alt={`${label}头像`} onError={(event) => { if (!event.currentTarget.src.endsWith(fallback)) event.currentTarget.src = fallback; }} /></button>;
 }
 
 function NsfwAdultConfirmation({ seconds, onCancel, onConfirm }: {
@@ -627,7 +472,6 @@ function App() {
   const [avatars, setAvatars] = useState<AvatarConfig>(DEFAULT_AVATARS);
   const [characters, setCharacters] = useState<CharacterSummary[]>([]);
   const [activeCharacterId, setActiveCharacterId] = useState("");
-  const [activeActivitySessionId, setActiveActivitySessionId] = useState("");
   const [conversationScene, setConversationScene] = useState<ConversationScene | null>(null);
   const [appView, setAppView] = useState<AppView>(() => appViewFromHash());
   const [characterPickerOpen, setCharacterPickerOpen] = useState(false);
@@ -638,6 +482,16 @@ function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [round, setRound] = useState(1);
   const [input, setInput] = useState("");
+  const [pendingInteractions, setPendingInteractions] = useState<InteractionTag[]>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
+  const [regenerationDraft, setRegenerationDraft] = useState<{ round: number; request: ChatTurnRequest } | null>(null);
+  const [replyTarget, setReplyTarget] = useState<Message | null>(null);
+  const [interactionOpen, setInteractionOpen] = useState(false);
+  const [interactionBranch, setInteractionBranch] = useState<"root" | "touch" | "kiss">("root");
+  const [customInteraction, setCustomInteraction] = useState("");
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [asrReady, setAsrReady] = useState(false);
   const [adultMode, setAdultMode] = useState(
     () => localStorage.getItem(ADULT_MODE_STORAGE_KEY) === "1"
       && localStorage.getItem(NSFW_ADULT_CONFIRMED_STORAGE_KEY) === "1",
@@ -647,11 +501,6 @@ function App() {
   const [r18StyleId, setR18StyleId] = useState(
     () => localStorage.getItem(R18_STYLE_STORAGE_KEY) || "high_intensity",
   );
-  const [presentationMode, setPresentationMode] = useState<PresentationModePreference>(() => {
-    const saved = localStorage.getItem(PRESENTATION_MODE_STORAGE_KEY);
-    return saved === "dialogue" || saved === "scene" ? saved : "auto";
-  });
-  const [resolvedPresentationMode, setResolvedPresentationMode] = useState<PresentationModeResolved>("dialogue");
   const [search, setSearch] = useState("");
   const [runId, setRunId] = useState("");
   const [initialDataLoaded, setInitialDataLoaded] = useState(false);
@@ -747,7 +596,7 @@ function App() {
   const inputRef = useRef("");
   const generatingRef = useRef(false);
   const roundRef = useRef(1);
-  const sendMessageRef = useRef<((text?: string, mode?: "primary" | "regenerate", targetRound?: number, initiative?: boolean, initiativeTrigger?: InitiativeTrigger, initiativeSequence?: number, initiativeSequenceLimit?: number) => Promise<void>) | null>(null);
+  const sendMessageRef = useRef<((text?: string, mode?: "primary" | "regenerate", targetRound?: number, initiative?: boolean, initiativeTrigger?: InitiativeTrigger, initiativeSequence?: number, initiativeSequenceLimit?: number, replayRequest?: ChatTurnRequest) => Promise<void>) | null>(null);
   const llmMode = str(settings?.llm.mode || "openai");
   const llmBaseUrl = str(settings?.llm.base_url);
   const llmLocalEndpoint = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::|\/|$)/i.test(llmBaseUrl);
@@ -801,18 +650,10 @@ function App() {
     notify("已确认成年，NSFW 已开启");
   }, [notify, nsfwConfirmationSeconds]);
 
-  const cyclePresentationMode = useCallback(() => {
-    const next: PresentationModePreference = presentationMode === "auto"
-      ? "dialogue"
-      : presentationMode === "dialogue" ? "scene" : "auto";
-    setPresentationMode(next);
-    localStorage.setItem(PRESENTATION_MODE_STORAGE_KEY, next);
-    notify(next === "auto" ? "表达方式已设为自动判断" : next === "dialogue" ? "表达方式已锁定对话" : "表达方式已锁定场景");
-  }, [notify, presentationMode]);
-
   useEffect(() => { inputRef.current = input; }, [input]);
   useEffect(() => { generatingRef.current = generating; }, [generating]);
   useEffect(() => { roundRef.current = round; }, [round]);
+
 
   useLayoutEffect(() => {
     if (!messages.length || !followConversationRef.current) return;
@@ -865,19 +706,19 @@ function App() {
   }, []);
 
   const scheduleIdleContinuation = useCallback((mode: "text" | "voice", afterPlayback = false) => {
-    const interaction = settings?.interaction || {};
-    const continuous = mode === "voice" && bool(interaction.unlimited_reply_enabled);
+    const interaction = settings?.interaction;
+    const continuous = mode === "voice" && bool(interaction?.unlimited_reply_enabled);
     const companionPlan = continuous
-      ? companionContinuationPlan(interaction, afterPlayback, companionRoundRef.current)
+      ? companionContinuationPlan(interaction || {}, afterPlayback, companionRoundRef.current)
       : null;
     if (continuous && !companionPlan) return;
     cancelIdleContinuation();
-    if (!continuous && (!bool(interaction.idle_continuation_enabled) || idleContinuationSentRef.current)) return;
+    if (!continuous && (!bool(interaction?.idle_continuation_enabled) || idleContinuationSentRef.current)) return;
     const delaySeconds = companionPlan
       ? companionPlan.delaySeconds
       : mode === "voice"
-        ? num(interaction.voice_idle_seconds, 30)
-        : num(interaction.text_idle_seconds, 180);
+        ? num(interaction?.voice_idle_seconds, 30)
+        : num(interaction?.text_idle_seconds, 180);
     idleTimerRef.current = window.setTimeout(() => {
       idleTimerRef.current = null;
       if (generatingRef.current || inputRef.current.trim()) return;
@@ -1030,13 +871,8 @@ function App() {
     setSessionId(id);
     localStorage.setItem("mindspace.session", id);
     setActiveCharacterId(value.character_id || value.character?.character_id || "");
-    setActiveActivitySessionId("");
     void loadConversationScene(id);
-    const loadedMessages = value.messages || [];
-    const latestResolved = [...loadedMessages].reverse().find(
-      (item) => item.role === "assistant" && item.presentation_mode,
-    )?.presentation_mode;
-    setResolvedPresentationMode(latestResolved || "dialogue");
+    const loadedMessages = hydrateTurnRequestSnapshots(id, value.messages || []);
     const sameSession = id === sessionId;
     const recovering = readActiveRun()?.session_id === id;
     setMessages((current) =>
@@ -1093,6 +929,27 @@ function App() {
       setInitialDataLoaded(true);
     }).catch((error: Error) => notify(error.message));
   }, [notify]);
+
+  useEffect(() => {
+    if (!initialDataLoaded) return;
+    let disposed = false;
+    const controller = new AbortController();
+    const refresh = async () => {
+      try {
+        const status = await getAudioStatus(controller.signal);
+        if (!disposed) setAsrReady(Boolean(status.asr_ready));
+      } catch {
+        if (!disposed) setAsrReady(false);
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 10_000);
+    return () => {
+      disposed = true;
+      controller.abort();
+      window.clearInterval(timer);
+    };
+  }, [initialDataLoaded, settings?.audio.asr_endpoint, settings?.audio.asr_model, settings?.audio.asr_provider]);
 
   useEffect(() => {
     if (!initialDataLoaded) return;
@@ -1400,7 +1257,7 @@ function App() {
       const responseTimeout = window.setTimeout(() => controller.abort("tts_response_timeout"), TTS_RESPONSE_TIMEOUT_MS);
       let response: Response;
       try {
-        response = await fetch("/api/v1/audio/tts/stream", {
+        response = await rawRequest("/api/v1/audio/tts/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1717,24 +1574,6 @@ function App() {
 
   useEffect(() => clearPendingResponseDelta, [clearPendingResponseDelta]);
 
-  const cancelRun = useCallback(async () => {
-    flushResponseDelta();
-    stopAudio();
-    abortRef.current?.abort();
-    const active = runIdRef.current;
-    if (active) await fetch(`/api/v1/runs/${encodeURIComponent(active)}/cancel`, { method: "POST" }).catch(() => undefined);
-    setMessages((items) => items.map((item) => item.status === "streaming" ? { ...item, status: "cancelled" as const } : item));
-    setGenerating(false);
-    runIdRef.current = "";
-    setRunId("");
-    clearActiveRun(active);
-    setVoiceInputLocked(false, "run_cancelled");
-    // Cancellation only owns the active LLM/TTS intent.  The resident ASR
-    // transport remains subscribed, so return directly to listening instead
-    // of leaving the call UI in an inert "interrupted" state.
-    if (voiceOpenRef.current) setVoice((current) => ({ ...current, phase: "listening", reply: "", level: 0, error: "" }));
-  }, [flushResponseDelta, setVoiceInputLocked, stopAudio]);
-
   const addEvent = useCallback((event: InspectorEvent) => setEvents((items) => [...items.slice(-79), event]), []);
 
   const handleStreamEvent = useCallback((event: StreamEnvelope, isRecoveryReplay = false) => {
@@ -1782,6 +1621,22 @@ function App() {
       setMessages((items) => items.map((item) => item.status === "streaming"
         ? { ...item, voice_cue: ttsVoiceCueRef.current }
         : item));
+    } else if (event.event === "model.attempt") {
+      const rawStatus = str(data.status);
+      const status: ProviderHttpAttempt["status"] = ["success", "http_error", "transport_error", "empty", "error"].includes(rawStatus)
+        ? rawStatus as ProviderHttpAttempt["status"]
+        : "error";
+      const attempt: ProviderHttpAttempt = {
+        attempt: Math.max(1, num(data.attempt, 1)),
+        request_kind: str(data.request_kind),
+        status,
+        elapsed_ms: Math.max(0, num(data.elapsed_ms)),
+        http_status: data.http_status == null ? null : num(data.http_status),
+        compatibility_variant: str(data.compatibility_variant),
+        retry_reason: str(data.retry_reason),
+        error: str(data.error),
+      };
+      addEvent(modelAttemptInspectorEvent(attempt, event.timestamp, event.seq));
     } else if (event.event.startsWith("tool.")) {
       if (event.event === "tool.hinted") return;
       const tool = str(data.tool || "tool");
@@ -1806,6 +1661,8 @@ function App() {
             level: num(data.level, 3) === 2 ? 2 : 3,
             status: event.event === "tool.failed" ? (str(data.status) === "denied" ? "denied" : "failed") : event.event === "tool.completed" ? "success" : event.event === "tool.reviewed" ? "reviewing" : event.event === "tool.started" ? "running" : "requested",
             parameter_summary: summary || message.tool_execution?.parameter_summary || "",
+            started_at: str(data.started_at || message.tool_execution?.started_at || (event.event === "tool.started" ? event.timestamp : "")),
+            completed_at: str(data.completed_at || message.tool_execution?.completed_at || (["tool.completed", "tool.failed"].includes(event.event) ? event.timestamp : "")),
             elapsed_ms: num(data.elapsed_ms, message.tool_execution?.elapsed_ms || 0),
             source_count: num(data.source_count, message.tool_execution?.source_count || 0),
             data: asRecord(data.data || message.tool_execution?.data),
@@ -1875,9 +1732,9 @@ function App() {
       activeInitiativeRef.current = { trigger: "none", sequence: 0 };
       currentAssistantIdRef.current = str(response.assistant_message_id);
       const completedPresentation = str(response.presentation_mode);
-      if (completedPresentation === "dialogue" || completedPresentation === "scene") {
-        setResolvedPresentationMode(completedPresentation);
-      }
+      const modelDiagnostics = parseModelDiagnostics(response.model, num(response.llm_call_count));
+      const modelSummary = modelSummaryInspectorEvent(modelDiagnostics, event.timestamp);
+      setEvents((items) => [...items.filter((item) => item.event !== "model.summary"), modelSummary]);
       if (shouldSynthesizeStreamEvent(isRecoveryReplay)) {
         if (shouldBufferQwenReplyForSinglePass(settings, voiceOpenRef.current)) {
           if (!qwenFullReplySubmittedRef.current) {
@@ -1941,6 +1798,9 @@ function App() {
       flushResponseDelta();
       activeInitiativeRef.current = { trigger: "none", sequence: 0 };
       const response = asRecord(data.response);
+      const modelDiagnostics = parseModelDiagnostics(response.model || data.model, num(response.llm_call_count));
+      const modelSummary = modelSummaryInspectorEvent(modelDiagnostics, event.timestamp, true);
+      setEvents((items) => [...items.filter((item) => item.event !== "model.summary"), modelSummary]);
       const errors = Array.isArray(response.errors) ? response.errors.join("；") : str(data.error);
       setMessages((items) => items.map((item) => item.status === "streaming" ? { ...item, content: errors || "生成失败", status: "error" as const } : item));
       setGenerating(false);
@@ -1962,6 +1822,37 @@ function App() {
     }
   }, [acceptSpeechDelta, addEvent, clearPendingResponseDelta, enqueueSpeech, flushResponseDelta, loadSessions, notify, scheduleIdleContinuation, scheduleResponseDelta, setVoiceInputLocked, settings, stopAudio]);
 
+  const { executeTurn, cancelRun, stageRegeneration, completeRegeneration } = useConversation({
+    sessionId,
+    initialDataLoaded,
+    generatingRef,
+    runIdRef,
+    abortRef,
+    setGenerating,
+    setRunId,
+    setMessages,
+    handleStreamEvent,
+    notify,
+    onBeforeRecovery: stopAudio,
+    onConversationJump: () => {
+      followConversationRef.current = true;
+      pendingConversationJumpRef.current = true;
+    },
+    onCancelEffects: () => {
+      flushResponseDelta();
+      stopAudio();
+      setVoiceInputLocked(false, "run_cancelled");
+      if (voiceOpenRef.current) setVoice((current) => ({ ...current, phase: "listening", reply: "", level: 0, error: "" }));
+    },
+    onRequestFailure: (error) => {
+      activeInitiativeRef.current = { trigger: "none", sequence: 0 };
+      setVoiceInputLocked(false, "request_failed");
+      if (voiceOpenRef.current) {
+        setVoice((current) => ({ ...current, phase: audioPlayingRef.current ? "assistant-speaking" : "listening", error: error.message, level: 0 }));
+      }
+    },
+  });
+
   const sendMessage = useCallback(async (
     text = input,
     mode: "primary" | "regenerate" = "primary",
@@ -1970,13 +1861,19 @@ function App() {
     initiativeTrigger: InitiativeTrigger = initiative ? "manual" : "none",
     initiativeSequence = 0,
     initiativeSequenceLimit = 0,
+    replayRequest?: ChatTurnRequest,
   ) => {
-    const content = initiative ? "请求 AI 主动回复" : text.trim();
-    const asrEvidence = !initiative && voiceOpenRef.current
+    const replay = mode === "regenerate" ? replayRequest : undefined;
+    const content = replay?.message ?? (initiative ? "请求 AI 主动回复" : text.trim());
+    const turnInteractions = replay?.interactions ?? (initiative ? [] : pendingInteractions);
+    const turnAttachments = replay?.attachments ?? (initiative ? [] : pendingAttachments);
+    const turnReplyTargetId = replay?.reply_to_message_id ?? (initiative ? "" : replyTarget?.message_id || "");
+    const asrEvidence = replay?.input_evidence?.asr ?? (!initiative && voiceOpenRef.current
       ? pendingASREvidenceRef.current
-      : null;
-    pendingASREvidenceRef.current = null;
-    if (!content) { notify("请输入消息内容"); return; }
+      : null);
+    if (!replay) pendingASREvidenceRef.current = null;
+    if (!content && !turnInteractions.length && !turnAttachments.length) { notify("请输入消息、选择互动或添加附件"); return; }
+    if (hasMissingAttachmentContent(turnAttachments)) { notify("原回合附件正文未保存在本地，请重新附加全部标记文件后再生成"); return; }
     if (!activeCharacterId) {
       notify("请先为当前会话选择角色");
       setCharacterPickerOpen(true);
@@ -2006,6 +1903,14 @@ function App() {
     ttsVoiceCueRef.current = "neutral";
     completedSpeechRef.current = [];
     setInput("");
+    if (!initiative) {
+      setPendingInteractions([]);
+      setPendingAttachments([]);
+      setReplyTarget(null);
+      setRegenerationDraft(null);
+      setInteractionOpen(false);
+      setInteractionBranch("root");
+    }
     setEvents([]);
     setRetrieval([]);
     if (voiceOpenRef.current) setVoice((current) => ({ ...current, transcript: initiative ? current.transcript : content, reply: "", phase: "thinking", error: "" }));
@@ -2015,34 +1920,34 @@ function App() {
     }
     const requestId = uid();
     activeInitiativeRef.current = { trigger: initiativeTrigger, sequence: initiativeSequence };
-    runIdRef.current = requestId;
-    setRunId(requestId);
-    setGenerating(true);
-    const clientSentAt = new Date().toISOString();
-    localStorage.setItem(ACTIVE_RUN_STORAGE_KEY, JSON.stringify({
-      run_id: requestId,
-      session_id: sessionId,
+    const clientSentAt = replay?.client_sent_at || new Date().toISOString();
+    const persona = settings?.persona;
+    const retrievalSettings = settings?.retrieval;
+    const llm = settings?.llm;
+    const payload: ChatTurnRequest = replay ? {
+      ...structuredClone(replay),
+      mode: "regenerate",
       round: targetRound,
-      user_content: initiative ? "" : content,
-      started_at: clientSentAt,
-    } satisfies ActiveRunRecord));
-    const user: Message = { role: "user", content, round: targetRound, status: "complete", timestamp: clientSentAt };
-    const assistant: Message = { role: "assistant", content: "", round: targetRound, status: "streaming", kind: initiative ? "initiative_response" : "message", initiative_trigger: initiativeTrigger };
-    const outgoing = initiative ? [assistant] : [user, assistant];
-    followConversationRef.current = true;
-    pendingConversationJumpRef.current = true;
-    setMessages((items) => [...(mode === "regenerate" ? items.filter((item) => item.round !== targetRound) : items), ...outgoing]);
-    const persona = settings?.persona || {};
-    const retrievalSettings = settings?.retrieval || {};
-    const llm = settings?.llm || {};
-    // 这里只提交公开的人格、检索和采样参数。API key、base URL 和模型名由服务端覆盖，
-    // 防止前端状态或请求重放改变真正使用的 provider 凭据。
-    const payload = {
-      message: content, session_id: sessionId, character_id: activeCharacterId,
-      activity_session_id: activeActivitySessionId,
+      attachments: requestAttachments(turnAttachments),
+    } : {
+      message: content,
+      session_id: sessionId,
+      character_id: activeCharacterId,
+      reply_to_message_id: turnReplyTargetId,
+      interactions: turnInteractions.map((item) => ({ ...item })),
+      attachments: requestAttachments(turnAttachments),
+      activity_session_id: "",
       session_mode: activeCharacter?.source === "draw" ? "draw" : "custom",
-      round: targetRound, mode, interaction_mode: voiceOpenRef.current ? "voice" : "text", presentation_mode: presentationMode, adult_mode: adultMode, r18_style_id: r18StyleId, initiative, initiative_trigger: initiativeTrigger,
-      initiative_sequence: initiativeSequence, initiative_sequence_limit: initiativeSequenceLimit,
+      round: targetRound,
+      mode,
+      interaction_mode: voiceOpenRef.current ? "voice" : "text",
+      presentation_mode: "auto",
+      adult_mode: adultMode,
+      r18_style_id: r18StyleId,
+      initiative,
+      initiative_trigger: initiativeTrigger,
+      initiative_sequence: initiativeSequence,
+      initiative_sequence_limit: initiativeSequenceLimit,
       client_sent_at: clientSentAt,
       client_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
       client_utc_offset_minutes: -new Date().getTimezoneOffset(),
@@ -2056,112 +1961,47 @@ function App() {
           decision_reasons: asrEvidence.decision_reasons,
         },
       } : null,
-      user_name: str(persona.user_name || "用户"), user_persona: str(persona.user_persona),
-      reply_length_preference: str(persona.reply_length_preference),
-      character_name: str(persona.character_name || "Mindspace"), system_prompt: str(persona.system_prompt),
-      api: { temperature: num(llm.temperature, 0.7), max_tokens: num(llm.max_tokens, 2000) },
+      user_name: str(persona?.user_name || "用户"),
+      user_persona: str(persona?.user_persona),
+      reply_length_preference: str(persona?.reply_length_preference),
+      character_name: str(persona?.character_name || "Mindspace"),
+      system_prompt: str(persona?.system_prompt),
+      api: { temperature: num(llm?.temperature, 0.7), max_tokens: num(llm?.max_tokens, 2000) },
       retrieval: {
-        rag_enabled: bool(retrievalSettings.rag_enabled ?? true), knowledge_enabled: bool(retrievalSettings.knowledge_enabled ?? true),
-        chat_enabled: bool(retrievalSettings.chat_enabled ?? true), structured_memory_enabled: bool(retrievalSettings.structured_memory_enabled ?? true), temporal_enabled: bool(retrievalSettings.temporal_enabled ?? true),
-        knowledge_k: num(retrievalSettings.knowledge_k, 2), chat_k: num(retrievalSettings.chat_k, 3), history_k: num(retrievalSettings.history_k, 3),
-        similarity_threshold: num(retrievalSettings.similarity_threshold, 0.5), decay_rounds: num(retrievalSettings.decay_rounds, 20),
-        decay_hours: num(retrievalSettings.decay_hours, 168),
-        fairness_enabled: bool(retrievalSettings.fairness_enabled ?? true), low_exposure_ratio: num(retrievalSettings.low_exposure_ratio, 0.2),
-        memory_family_limit: num(retrievalSettings.memory_family_limit, 2), starvation_rounds: num(retrievalSettings.starvation_rounds, 6),
-        starvation_boost: num(retrievalSettings.starvation_boost, 0.12),
-        bm25_enabled: bool(retrievalSettings.bm25_enabled ?? true), vector_enabled: bool(retrievalSettings.vector_enabled ?? true),
-        rrf_k: num(retrievalSettings.rrf_k, 60), candidate_multiplier: num(retrievalSettings.candidate_multiplier, 4),
-        max_total_boost: num(retrievalSettings.max_total_boost, 0.25), reranker_enabled: bool(retrievalSettings.reranker_enabled ?? false),
-        reranker_top_n: num(retrievalSettings.reranker_top_n, 12), boosts: retrievalSettings.boosts || {},
+        rag_enabled: bool(retrievalSettings?.rag_enabled ?? true),
+        knowledge_enabled: bool(retrievalSettings?.knowledge_enabled ?? true),
+        chat_enabled: bool(retrievalSettings?.chat_enabled ?? true),
+        structured_memory_enabled: bool(retrievalSettings?.structured_memory_enabled ?? true),
+        temporal_enabled: bool(retrievalSettings?.temporal_enabled ?? true),
+        knowledge_k: num(retrievalSettings?.knowledge_k, 2),
+        chat_k: num(retrievalSettings?.chat_k, 3),
+        history_k: num(retrievalSettings?.history_k, 3),
+        similarity_threshold: num(retrievalSettings?.similarity_threshold, 0.5),
+        decay_rounds: num(retrievalSettings?.decay_rounds, 20),
+        decay_hours: num(retrievalSettings?.decay_hours, 168),
+        fairness_enabled: bool(retrievalSettings?.fairness_enabled ?? true),
+        low_exposure_ratio: num(retrievalSettings?.low_exposure_ratio, 0.2),
+        memory_family_limit: num(retrievalSettings?.memory_family_limit, 2),
+        starvation_rounds: num(retrievalSettings?.starvation_rounds, 6),
+        starvation_boost: num(retrievalSettings?.starvation_boost, 0.12),
+        bm25_enabled: bool(retrievalSettings?.bm25_enabled ?? true),
+        vector_enabled: bool(retrievalSettings?.vector_enabled ?? true),
+        rrf_k: num(retrievalSettings?.rrf_k, 60),
+        candidate_multiplier: num(retrievalSettings?.candidate_multiplier, 4),
+        max_total_boost: num(retrievalSettings?.max_total_boost, 0.25),
+        reranker_enabled: bool(retrievalSettings?.reranker_enabled ?? false),
+        reranker_top_n: num(retrievalSettings?.reranker_top_n, 12),
+        boosts: retrievalSettings?.boosts || {},
       },
     };
+    const user: Message = { role: "user", content, round: targetRound, status: "complete", timestamp: clientSentAt, reply_to_message_id: turnReplyTargetId || undefined, interactions: turnInteractions, attachments: turnAttachments.map((item) => ({ ...item })), request_snapshot: payload };
+    const assistant: Message = { role: "assistant", content: "", round: targetRound, status: "streaming", kind: initiative ? "initiative_response" : "message", initiative_trigger: initiativeTrigger };
+    const outgoing = initiative ? [assistant] : [user, assistant];
     if (voiceOpenRef.current) voiceDeliveryRef.current = null;
-    const controller = new AbortController();
-    abortRef.current = controller;
-    try {
-      const response = await fetch("/api/v1/chat/stream", { method: "POST", headers: { "Content-Type": "application/json", "X-Request-ID": requestId }, body: JSON.stringify(payload), signal: controller.signal });
-      await consumeResumableEventStream(response, requestId, handleStreamEvent, controller.signal);
-    } catch (error) {
-      if ((error as Error).name !== "AbortError") {
-        notify((error as Error).message);
-        setMessages((items) => items.map((item) => item.status === "streaming" ? { ...item, content: "模型连接失败。请检查 API 地址、密钥或模型名称，然后重新尝试。", status: "error" as const } : item));
-        if (voiceOpenRef.current) {
-          setVoice((current) => ({
-            ...current,
-            phase: audioPlayingRef.current ? "assistant-speaking" : "listening",
-            error: (error as Error).message,
-            level: 0,
-          }));
-        }
-      }
-      setGenerating(false);
-      activeInitiativeRef.current = { trigger: "none", sequence: 0 };
-      setVoiceInputLocked(false, "request_failed");
-    } finally {
-      abortRef.current = null;
-    }
-  }, [activeActivitySessionId, activeCharacter, activeCharacterId, adultMode, cancelIdleContinuation, cancelRun, captureVoiceInterruption, clearPendingResponseDelta, generating, handleStreamEvent, input, llmReady, notify, presentationMode, r18StyleId, round, sessionId, setVoiceInputLocked, settings, stopAudio]);
+    await executeTurn({ requestId, payload, outgoing, mode, targetRound });
+  }, [activeCharacter, activeCharacterId, adultMode, cancelIdleContinuation, cancelRun, captureVoiceInterruption, clearPendingResponseDelta, executeTurn, generating, input, llmReady, notify, pendingAttachments, pendingInteractions, replyTarget, r18StyleId, round, sessionId, settings, stopAudio]);
 
   useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
-
-  useEffect(() => {
-    if (!initialDataLoaded || generatingRef.current) return;
-    const active = readActiveRun();
-    if (!active || active.session_id !== sessionId) return;
-    // This tab has no ownership of audio generated before it mounted. Clear
-    // every local playback reference before rebuilding the visual transcript.
-    stopAudio();
-    const controller = new AbortController();
-    abortRef.current = controller;
-    runIdRef.current = active.run_id;
-    setRunId(active.run_id);
-    setGenerating(true);
-    setMessages((items) => {
-      const hasUser = items.some((item) => item.round === active.round && item.role === "user");
-      const hasAssistant = items.some((item) => item.round === active.round && item.role === "assistant");
-      const recovered: Message[] = [];
-      if (!hasUser && active.user_content) {
-        recovered.push({
-          role: "user",
-          content: active.user_content,
-          round: active.round,
-          status: "complete",
-          timestamp: active.started_at,
-        });
-      }
-      if (!hasAssistant) {
-        recovered.push({
-          role: "assistant",
-          content: "",
-          round: active.round,
-          status: "streaming",
-        });
-      }
-      return recovered.length ? [...items, ...recovered] : items;
-    });
-    void fetch(`/api/v1/runs/${encodeURIComponent(active.run_id)}/stream?after=0`, {
-      headers: { "Last-Event-ID": "0" },
-      signal: controller.signal,
-    }).then((response) => consumeResumableEventStream(
-      response,
-      active.run_id,
-      (event) => handleStreamEvent(event, true),
-      controller.signal,
-    )).catch((error: Error) => {
-      if (error.name === "AbortError") return;
-      clearActiveRun(active.run_id);
-      runIdRef.current = "";
-      setRunId("");
-      setGenerating(false);
-      setMessages((items) => items.map((item) => item.status === "streaming"
-        ? { ...item, content: item.content || "未找到可恢复的运行", status: "error" as const }
-        : item));
-      notify(error.message);
-    }).finally(() => {
-      if (abortRef.current === controller) abortRef.current = null;
-    });
-    return () => controller.abort();
-  }, [handleStreamEvent, initialDataLoaded, notify, sessionId, stopAudio]);
 
   const flushVoiceSegments = useCallback(async () => {
     voiceMergeTimerRef.current = null;
@@ -3060,7 +2900,6 @@ function App() {
     setSessionId(id);
     localStorage.setItem("mindspace.session", id);
     setActiveCharacterId(character.character_id);
-    setActiveActivitySessionId("");
     await loadConversationScene(id);
     setMessages([]); setRound(1); setEvents([]); setRetrieval([]); setSidebarOpen(false);
     setCharacterPickerOpen(false);
@@ -3149,6 +2988,7 @@ function App() {
     if (!messages.length) { notify("当前会话没有可清空的内容"); return; }
     if (!(await styledConfirm({ title: "清空当前上下文？", message: "当前会话内容会被清空，但人物档案与长期记忆不会被删除。", confirmLabel: "清空上下文", danger: true }))) return;
     await request(`/api/v1/sessions/${encodeURIComponent(sessionId)}/clear`, { method: "POST" });
+    clearTurnRequestSnapshots(sessionId);
     setMessages([]); setRound(1); await loadSessions(); notify("当前上下文已清空");
   };
 
@@ -3220,21 +3060,86 @@ function App() {
   const title = sessions.find((item) => item.session_id === sessionId)?.title || "新对话";
   const userName = str(settings?.persona.user_name || "用户");
   const characterName = activeCharacter?.display_name || str(settings?.persona.character_name || "Mindspace");
-  const interactionActions = useMemo(() => {
-    const normal = ["摸头", "拥抱", "牵手", "贴近", "亲吻"];
-    if (!adultMode) return { normal, adult: [] as string[] };
+  const interactionTargets = useMemo(() => {
+    const normal = ["头发", "额头", "脸颊", "肩膀", "手", "后背"];
+    if (!adultMode) return { normal, intimate: [] as string[] };
     const gender = str(activeCharacter?.gender || "不指定");
-    if (gender === "女") return { normal, adult: ["奶子", "阴蒂"] };
-    if (gender === "男") return { normal, adult: ["鸡巴", "龟头"] };
-    return { normal, adult: [] as string[] };
+    if (gender === "女") return { normal, intimate: ["胸部", "乳头", "阴蒂", "阴部"] };
+    if (gender === "男") return { normal, intimate: ["胸膛", "阴茎", "龟头"] };
+    return { normal, intimate: [] as string[] };
   }, [activeCharacter?.gender, adultMode]);
-  const insertInteraction = useCallback((action: string) => {
-    setInput((current) => {
-      const command = `@互动：${action}`;
-      const content = current.trimEnd();
-      return content ? `${content}\n${command}` : command;
-    });
+  const addInteraction = useCallback((category: InteractionTag["category"], action: string, target = "", sensitivity: InteractionTag["sensitivity"] = "normal") => {
+    const id = `${category}:${action}:${target}`;
+    setPendingInteractions((items) => items.some((item) => item.id === id) ? items : [...items, { id, category, level: category === "daily" ? 0 : category === "touch" ? 1 : category === "kiss" ? 2 : 9, action, target, sensitivity }]);
   }, []);
+  const handleAttachmentFiles = useCallback(async (files: FileList | null) => {
+    if (!files?.length) return;
+    const result = await mergeAttachmentFiles(pendingAttachments, Array.from(files), Boolean(regenerationDraft));
+    setPendingAttachments(result.attachments);
+    if (result.feedback.length) notify(result.feedback.join("；"));
+  }, [notify, pendingAttachments, regenerationDraft]);
+  const regenerateMessage = useCallback((message: Message, targetRound: number) => {
+    const staged = stageRegeneration(message, targetRound);
+    if (!staged) {
+      notify("这个旧回合没有完整请求快照，无法保证一致重放；请作为新消息发送");
+      return;
+    }
+    const { snapshot, preparation } = staged;
+    if (preparation.request) {
+      void sendMessage(snapshot.message, "regenerate", targetRound, false, snapshot.initiative_trigger, snapshot.initiative_sequence, snapshot.initiative_sequence_limit, preparation.request);
+      return;
+    }
+    setRegenerationDraft({ round: targetRound, request: snapshot });
+    setInput(snapshot.message);
+    setPendingInteractions(snapshot.interactions.map((item) => ({ ...item })));
+    setPendingAttachments(preparation.stagedAttachments);
+    setReplyTarget(snapshot.reply_to_message_id
+      ? messages.find((item) => item.message_id === snapshot.reply_to_message_id) || null
+      : null);
+    notify(`请重新附加 ${preparation.missingAttachments.length} 个原附件；补齐前不会发送`);
+  }, [messages, notify, sendMessage, stageRegeneration]);
+  const cancelRegenerationDraft = useCallback(() => {
+    setRegenerationDraft(null);
+    setInput("");
+    setPendingInteractions([]);
+    setPendingAttachments([]);
+    setReplyTarget(null);
+    notify("已取消附件重附和重新生成");
+  }, [notify]);
+  const sendRegenerationDraft = useCallback(() => {
+    if (!regenerationDraft) return;
+    const preparation = completeRegeneration(regenerationDraft.request, pendingAttachments);
+    if (!preparation.request) {
+      notify(`仍有 ${preparation.missingAttachments.length} 个附件需要重新附加`);
+      return;
+    }
+    void sendMessage(
+      preparation.request.message,
+      "regenerate",
+      regenerationDraft.round,
+      false,
+      preparation.request.initiative_trigger,
+      preparation.request.initiative_sequence,
+      preparation.request.initiative_sequence_limit,
+      preparation.request,
+    );
+  }, [completeRegeneration, notify, pendingAttachments, regenerationDraft, sendMessage]);
+  const loadAvailableModels = useCallback(async () => {
+    if (modelsLoading) return;
+    setModelsLoading(true);
+    try { const result = await request<{ models: string[] }>("/api/v1/models/available"); setAvailableModels(result.models || []); }
+    catch (error) { notify((error as Error).message); }
+    finally { setModelsLoading(false); }
+  }, [modelsLoading, notify]);
+  const chooseModel = useCallback(async (model: string) => {
+    try {
+      const result = await request<{ settings: ProductSettings }>("/api/v1/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ llm: { model } }) });
+      setSettings(result.settings); notify(`已切换到 ${model}`);
+    } catch (error) { notify((error as Error).message); }
+  }, [notify]);
+  const composerHasPayload = Boolean(input.trim() || pendingInteractions.length || pendingAttachments.length);
+  const composerActionKind = composerAction(generating, composerHasPayload, asrReady);
+  const toolCapability = providerToolCapability(llmBaseUrl);
   const pickerCharacters = characters;
   const interruptedSession = sessions.find((item) => Boolean((item as SessionSummary & { interrupted?: boolean }).interrupted));
 
@@ -3335,31 +3240,62 @@ function App() {
         onTouchMove={pauseConversationFollow}
       >
         {!messages.length && <div className="welcome-panel companion-stage"><div className="stage-portrait"><PortraitAvatar role="assistant" avatars={effectiveAvatars} label={characterName} onClick={() => setProfileCardRole("assistant")} /></div><span className="eyebrow">{activeCharacter?.relationship_label || "PRIVATE COMPANION"}</span><h2>{userName} <i>×</i> {characterName}</h2><blockquote>“{activeCharacter?.user_alias || userName}，我在。今天想从哪里开始？”</blockquote><div className="stage-actions"><button className="stage-speak" disabled={generating} onClick={() => void sendMessage("", "primary", round, true)}><span>✦</span><b>让 {characterName} 先说</b><small>由当前人设与场景发起一句话</small></button><button onClick={() => navigate("scenes")}><span>⌑</span><b>{conversationScene?.scene?.title || "选择场景"}</b><small>改变这次见面的环境</small></button><button onClick={() => { setProfileEditorRole("assistant"); setModal("profile"); }}><span>◇</span><b>查看人设</b><small>人物、关系与运行状态</small></button></div></div>}
-        <MessageList messages={messages} avatars={effectiveAvatars} userName={userName} characterName={characterName} onProfile={setProfileCardRole} onCopy={(text) => { void navigator.clipboard.writeText(text); notify("已复制回复"); }} onSpeak={speakMessage} onRegenerate={(value, targetRound) => void sendMessage(value, "regenerate", targetRound)} onInitiative={(targetRound) => void sendMessage("", "regenerate", targetRound, true)} onDelete={(messageId) => void deleteReply(messageId)} onConfigure={() => openSettings("model")} />
+        <MessageList messages={messages} avatars={effectiveAvatars} userName={userName} characterName={characterName} onProfile={setProfileCardRole} onCopy={(text) => { void navigator.clipboard.writeText(text); notify("已复制回复"); }} onSpeak={speakMessage} onRegenerate={regenerateMessage} onInitiative={(targetRound) => void sendMessage("", "regenerate", targetRound, true)} onDelete={(messageId) => void deleteReply(messageId)} onConfigure={() => openSettings("model")} onReply={(message) => { if (!message.message_id) { notify("消息正在保存，请稍后再引用"); return; } setReplyTarget(message); }} onInteract={(message) => { if (message.message_id) setReplyTarget(message); setInteractionOpen(true); setInteractionBranch("root"); }} />
         <div className="conversation-tail" ref={conversationTailRef} aria-hidden="true" />
       </section>
-      <section className="composer-wrap">
-        {generating && <div className="run-strip"><span><i /> 正在回应</span><button onClick={() => void cancelRun()}>停止生成</button></div>}
-        <div className="composer">
-          <textarea value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void sendMessage(); } }} placeholder={`对 ${characterName} 说点什么…`} rows={1} />
-          <div className="composer-row">
-            <div className="composer-primary-tools">
-              <button className="voice-entry" onClick={openVoiceEntry}><span>●</span> 实时语音</button>
-              <button className={`scene-entry${conversationScene?.scene ? " active" : ""}`} onClick={() => navigate("scenes")}><img src="/assets/archive/icons/activity-scene.svg" alt="" /><span>{conversationScene?.scene?.title || "场景"}</span></button>
-              <button className={`presentation-entry ${presentationMode}`} aria-label="切换表达方式" title="场景模式只允许必要叙述，不会强制生成动作" onClick={cyclePresentationMode}><span>表达</span><b>{presentationMode === "auto" ? `自动·${resolvedPresentationMode === "scene" ? "场景" : "对话"}` : presentationMode === "scene" ? "场景" : "对话"}</b></button>
-              <details className="composer-menu interaction-menu"><summary>互动</summary><div><section><b>常规互动</b>{interactionActions.normal.map((action) => <button type="button" key={action} onClick={(event) => { insertInteraction(action); event.currentTarget.closest("details")?.removeAttribute("open"); }}>@互动：{action}</button>)}</section>{adultMode && <section className="adult-interactions"><b>{interactionActions.adult.length ? "NSFW 互动" : "NSFW 互动需先确定角色性别"}</b>{interactionActions.adult.map((action) => <button type="button" key={action} onClick={(event) => { insertInteraction(action); event.currentTarget.closest("details")?.removeAttribute("open"); }}>@互动：{action}</button>)}</section>}</div></details>
-              <button className="initiative-inline" disabled={generating} onClick={() => void sendMessage("", "primary", round, true)}>✦ 让 {characterName} 先说</button>
-              <details className="composer-menu composer-add-menu"><summary aria-label="更多对话功能"><span className="visually-hidden">更多</span><b aria-hidden="true">＋</b></summary><div><button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showFlow(); }}>会话流程与执行详情</button><button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); showContext(); }}>RAG 引用 <b>{retrieval.length}</b></button><button onClick={exportSession}>导出当前会话</button><button className={`adult-entry${adultMode ? " active" : ""}`} aria-label="NSFW" aria-pressed={adultMode} onClick={toggleAdultMode}>NSFW <span>{adultMode ? "已开启" : "已关闭"}</span></button>{adultMode && <label className="r18-style-menu-label"><span>成人模式风格</span><select className="r18-style-select" value={r18StyleId} aria-label="R18 风格包" onChange={(event) => { const next = event.target.value; setR18StyleId(next); localStorage.setItem(R18_STYLE_STORAGE_KEY, next); }}><option value="high_intensity">高强度推进</option><option value="immersive_narrative">叙事沉浸</option><option value="dialogue_led">台词主导</option></select></label>}<button className="composer-clear-action" onClick={() => void clearCurrent()}>清空当前上下文</button></div></details>
-            </div>
-            <button className="send" onClick={() => generating ? void cancelRun() : void sendMessage()} disabled={!generating && !input.trim()} aria-label={generating ? "停止生成" : "发送消息"}>{generating ? "■" : "↑"}</button>
-          </div>
-        </div>
-        <div className="composer-meta"><span>Enter 发送 · Shift+Enter 换行 · Esc 打断</span><span>{adultMode ? "NSFW 已开启" : `表达：${presentationMode === "auto" ? `自动判断（当前${resolvedPresentationMode === "scene" ? "场景" : "对话"}）` : presentationMode === "scene" ? "场景" : "对话"}`}</span></div>
-      </section>
+      <Composer
+        generating={generating}
+        characterName={characterName}
+        input={input}
+        onInput={setInput}
+        onSend={() => { void sendMessage(); }}
+        onCancel={() => { void cancelRun(); }}
+        onOpenVoice={openVoiceEntry}
+        asrReady={asrReady}
+        hasPayload={composerHasPayload}
+        replyTarget={replyTarget}
+        onClearReply={() => setReplyTarget(null)}
+        regenerationDraft={Boolean(regenerationDraft)}
+        onCancelRegeneration={cancelRegenerationDraft}
+        onSendRegeneration={sendRegenerationDraft}
+        pendingInteractions={pendingInteractions}
+        onRemoveInteraction={(id) => setPendingInteractions((items) => items.filter((candidate) => candidate.id !== id))}
+        pendingAttachments={pendingAttachments}
+        onRemoveAttachment={(attachment) => { setPendingAttachments((items) => items.filter((candidate) => candidate.attachment_id !== attachment.attachment_id)); notify(`已移除附件 ${attachment.name}`); }}
+        onAttachmentFiles={handleAttachmentFiles}
+        interactionOpen={interactionOpen}
+        interactionBranch={interactionBranch}
+        onInteractionOpen={setInteractionOpen}
+        onInteractionBranch={setInteractionBranch}
+        interactionTargets={interactionTargets}
+        onAddInteraction={addInteraction}
+        customInteraction={customInteraction}
+        onCustomInteraction={setCustomInteraction}
+        round={round}
+        onInitiative={() => { void sendMessage("", "primary", round, true); }}
+        sceneTitle={conversationScene?.scene?.title || ""}
+        onOpenScenes={() => navigate("scenes")}
+        onShowFlow={showFlow}
+        onShowContext={showContext}
+        retrievalCount={retrieval.length}
+        onExportSession={exportSession}
+        adultMode={adultMode}
+        onToggleAdultMode={toggleAdultMode}
+        r18StyleId={r18StyleId}
+        onR18StyleId={(next) => { setR18StyleId(next); localStorage.setItem(R18_STYLE_STORAGE_KEY, next); }}
+        model={str(settings?.llm.model)}
+        modelBaseUrl={llmBaseUrl}
+        modelToolLabel={toolCapability.label}
+        modelsLoading={modelsLoading}
+        availableModels={availableModels}
+        onLoadModels={() => { void loadAvailableModels(); }}
+        onChooseModel={(model) => { void chooseModel(model); }}
+        onClearCurrent={() => { void clearCurrent(); }}
+      />
     </main>
 
-    <Inspector open={inspectorOpen} tab={inspectorTab} onTab={setInspectorTab} onClose={() => setInspectorOpen(false)} events={events} retrieval={retrieval} runId={inspectionRunId} />
-    {modal === "settings" && settings && <SettingsDialog value={settings} avatars={avatars} initialTab={settingsInitialTab} onClose={closeModal} onDirty={setModalDirty} onOpenProfile={(role) => { setProfileEditorRole(role); setModalDirty(false); setModal("profile"); }} onOpenMemory={() => { setModalDirty(false); setModal("memory"); }} onOpenKnowledge={() => { setModalDirty(false); setModal("knowledge"); }} onOpenDiagnostics={() => { setModalDirty(false); setModal("diagnostics"); }} onSaved={(next, nextAvatars) => { setSettings(next); setAvatars(nextAvatars); setModalDirty(false); setModal(null); }} onSettingsChange={setSettings} onAvatarsChange={setAvatars} notify={notify} />}
+    <ExecutionInspector open={inspectorOpen} tab={inspectorTab} onTab={setInspectorTab} onClose={() => setInspectorOpen(false)} events={events} retrieval={retrieval} runId={inspectionRunId} />
+    {modal === "settings" && settings && <SettingsWorkspace value={settings} avatars={avatars} initialTab={settingsInitialTab} onClose={closeModal} onDirty={setModalDirty} onOpenProfile={(role) => { setProfileEditorRole(role); setModalDirty(false); setModal("profile"); }} onOpenMemory={() => { setModalDirty(false); setModal("memory"); }} onOpenKnowledge={() => { setModalDirty(false); setModal("knowledge"); }} onOpenDiagnostics={() => { setModalDirty(false); setModal("diagnostics"); }} onSaved={(next, nextAvatars) => { setSettings(next); setAvatars(nextAvatars); setModalDirty(false); setModal(null); }} onSettingsChange={setSettings} onAvatarsChange={setAvatars} notify={notify} />}
     {modal === "knowledge" && <KnowledgeDialog onClose={closeModal} onDirty={setModalDirty} notify={notify} />}
     {modal === "memory" && <MemoryDialog characterId={activeCharacterId} onClose={closeModal} onDirty={setModalDirty} notify={notify} />}
     {modal === "profile" && <ProfileDialog characterId={activeCharacterId} initialName={profileEditorRole} onClose={closeModal} onDirty={setModalDirty} onOpenConnection={() => openSettings("model")} onSaved={() => void loadCharacters()} notify={notify} />}
@@ -3370,111 +3306,6 @@ function App() {
     <CharacterPicker open={characterPickerOpen} characters={pickerCharacters} onClose={() => setCharacterPickerOpen(false)} onChoose={(character) => void (characterPickerIntent === "new" ? startNewSessionForCharacter(character) : resumeCharacterSession(character))} onDraw={() => { setCharacterPickerOpen(false); navigate("draw"); }} />
     {nsfwConfirmationOpen && <NsfwAdultConfirmation seconds={nsfwConfirmationSeconds} onCancel={() => setNsfwConfirmationOpen(false)} onConfirm={confirmAdultMode} />}
     {toast && <div className="toast" role="status">{toast}</div>}
-  </div>;
-}
-
-const MessageList = memo(function MessageList({ messages, avatars, userName, characterName, onProfile, onCopy, onSpeak, onRegenerate, onInitiative, onDelete, onConfigure }: {
-  messages: Message[]; avatars: AvatarConfig; userName: string; characterName: string;
-  onProfile: (role: Role) => void; onCopy: (text: string) => void; onSpeak: (text: string, voiceCue?: string) => void;
-  onRegenerate: (text: string, round: number) => void; onInitiative: (round: number) => void; onDelete: (messageId?: string) => void; onConfigure: () => void;
-}) {
-  return <div className="message-list">{messages.map((message, index) => {
-    const label = message.role === "user" ? userName : characterName;
-    const initiativeLabel = message.initiative_trigger === "continuous_companionship" ? "· 连续陪伴" : message.kind === "initiative_response" ? "· 主动回应" : "";
-    return <article className={`message ${message.role} ${message.status || "complete"}`} key={message.message_id || `${message.round}-${message.role}-${index}`}><PortraitAvatar role={message.role} avatars={avatars} label={label} onClick={() => onProfile(message.role)} /><div className="message-content"><div className="message-head"><strong>{message.status === "error" ? "Mindspace" : label}</strong><span>第 {message.round} 轮 {initiativeLabel}{message.status === "streaming" && "· 正在生成"}{message.status === "cancelled" && "· 已打断"}{message.status === "interrupted" && "· 回答在此处中断"}{message.status === "error" && "· 连接失败"}</span></div>{message.tool_execution && <ToolCard tool={message.tool_execution} />}<div className="message-text">{richText(message.content || (message.status === "streaming" ? "" : "…"))}{message.status === "streaming" && <i className="stream-caret" />}</div>{message.status === "error" ? <div className="message-actions error-actions"><button className="primary" onClick={onConfigure}>立即配置 API</button><button onClick={() => { const user = messages.find((item) => item.role === "user" && item.round === message.round); if (user) onRegenerate(user.content, message.round); }}>重新尝试</button></div> : message.role === "assistant" && message.status !== "streaming" && <div className="message-actions"><button onClick={() => onCopy(message.content)}>复制</button><button onClick={() => onSpeak(message.content, message.voice_cue)}>朗读</button><button onClick={() => { if (message.kind === "initiative_response") { onInitiative(message.round); return; } const user = messages.find((item) => item.role === "user" && item.round === message.round); if (user) onRegenerate(user.content, message.round); }}>重新生成</button><button onClick={() => onDelete(message.message_id)}>删除回复</button></div>}</div></article>;
-  })}</div>;
-});
-
-const PROMPT_LAYER_LABELS: Record<string, string> = {
-  system_and_current_character_profile: "角色与系统规则",
-  system_data_contract: "数据契约",
-  global_user_and_character_runtime: "权威档案与运行状态",
-  conversation_summary: "压缩连续性包",
-  retrieval_context: "RAG 召回输入",
-  conversation_history: "近期原始历史",
-  turn_control: "本轮时间与控制",
-  current_user: "当前用户输入",
-  roleplay_post_history: "最终角色校准",
-};
-
-function Inspector({ open, tab, onTab, onClose, events, retrieval, runId }: { open: boolean; tab: InspectorTab; onTab: (tab: InspectorTab) => void; onClose: () => void; events: InspectorEvent[]; retrieval: Record<string, unknown>[]; runId: string }) {
-  const [prompt, setPrompt] = useState<PromptInspection | null>(null);
-  const [promptError, setPromptError] = useState("");
-  const loadPrompt = useCallback(async (reveal = false) => {
-    if (!runId) return;
-    setPromptError("");
-    try {
-      setPrompt(await request<PromptInspection>(`/api/v1/runs/${encodeURIComponent(runId)}/prompt-inspection${reveal ? "?reveal=true" : ""}`));
-    } catch (error) {
-      setPromptError((error as Error).message);
-    }
-  }, [runId]);
-  useEffect(() => {
-    if (open && tab === "prompt") void loadPrompt(true);
-  }, [loadPrompt, open, tab]);
-  const compactCount = prompt?.layers.filter((layer) => layer.layer === "conversation_summary").length || 0;
-  const historyCount = prompt?.layers.filter((layer) => layer.layer === "conversation_history").length || 0;
-  return <aside className={`inspector ${open ? "open" : ""}`} hidden={!open} aria-hidden={!open}>
-    <header><div><span className="eyebrow">LIVE TRACE</span><h2>执行详情</h2><small>节点、RAG 与实际发送给模型的完整输入</small></div><button onClick={onClose} aria-label="关闭执行详情">×</button></header>
-    <div className="inspector-tabs">
-      <button className={tab === "flow" ? "active" : ""} onClick={() => onTab("flow")}>编排流程</button>
-      <button className={tab === "context" ? "active" : ""} onClick={() => onTab("context")}>RAG 引用 <b>{retrieval.length}</b></button>
-      <button className={tab === "prompt" ? "active" : ""} onClick={() => onTab("prompt")}>模型实际输入{prompt ? <b>{prompt.message_count}</b> : null}</button>
-    </div>
-    {tab === "flow" ? <div className="trace-list">{events.length ? events.map((item, index) => <TraceItem item={item} key={`${item.event}-${index}`} />) : <div className="empty-mini">发送消息后，这里会实时显示检索、生成、校验和写回节点。</div>}</div> : tab === "context" ? <div className="context-list"><div className="context-scope-note"><strong>这里只统计 RAG 候选</strong><span>压缩连续性包、最近原始对话、角色档案和本轮控制位于“模型实际输入”，不计入这里的 {retrieval.length} 条。</span></div>{retrieval.length ? retrieval.map((item, index) => <article key={str(item.chunk_id || index)}><header><span>{str(item.source || "召回内容")}</span><b>{num(item.weighted_score || item.score).toFixed(3)}</b></header><p>{str(item.text)}</p><small>{str(asRecord(item.metadata).source || item.session_id || "")}</small></article>) : <div className="empty-mini">本轮没有 RAG 引用；这不代表模型没有收到压缩上下文或近期对话。</div>}</div> : <div className="prompt-inspection">{!runId ? <div className="empty-mini">发送消息后可检查该轮实际模型输入。</div> : promptError ? <div className="empty-mini">{promptError}</div> : !prompt ? <div className="empty-mini">正在读取实际模型输入…</div> : <><header className="prompt-inspection-head"><div><strong>实际发送 {prompt.message_count} 层 · {prompt.total_chars} 字符 · 约 {prompt.estimated_tokens} tokens</strong><small>Run {prompt.run_id}<br />SHA-256 {prompt.sha256}</small></div><button onClick={() => void loadPrompt(!prompt.revealed)}>{prompt.revealed ? "恢复脱敏" : "临时显示完整内容"}</button></header><div className="prompt-metrics"><span>压缩包 <b>{compactCount}</b></span><span>原始历史 <b>{historyCount}</b></span><span>RAG 层 <b>{prompt.layers.filter((layer) => layer.layer === "retrieval_context").length}</b></span><span>当前输入 <b>{prompt.layers.filter((layer) => layer.layer === "current_user").length}</b></span></div><p className="prompt-order-note">以下顺序就是发送给模型的顺序。字符数统计原始内容；脱敏只影响当前界面显示。</p>{prompt.layers.map((layer) => { const compressed = layer.layer === "conversation_summary"; return <details className={compressed ? "compressed-layer" : ""} open={compressed} key={`${layer.index}-${layer.layer}`}><summary><b><i>{String(layer.index + 1).padStart(2, "0")}</i>{PROMPT_LAYER_LABELS[layer.layer] || layer.layer}{compressed ? <em>已参与</em> : null}</b><span>{layer.role} · {layer.chars} 字</span></summary><pre>{layer.content}</pre></details>; })}</>}</div>}
-  </aside>;
-}
-
-function safeWebUrl(value: unknown) {
-  const url = str(value).trim();
-  return /^https?:\/\//i.test(url) ? url : "";
-}
-
-function TraceItem({ item }: { item: InspectorEvent }) {
-  const data = asRecord(item.data);
-  const isTool = item.event.startsWith("tool:") || item.event.startsWith("tool.");
-  return <div className={`trace-item ${item.state || "done"}`}><i /><span><strong>{item.label}</strong><small>{formatTime(item.timestamp)}</small>{item.data != null && <details className="trace-details"><summary>{isTool ? "展开工具状态" : "展开节点数据"}</summary>{isTool ? <ToolTraceData data={data} /> : <pre>{JSON.stringify(item.data, null, 2)}</pre>}</details>}</span></div>;
-}
-
-function ToolCard({ tool }: { tool: import("./types").ToolExecution }) {
-  const statusLabel = { requested: "已请求", reviewing: "审查中", running: "执行中", success: "已完成", denied: "已拒绝", failed: "失败" }[tool.status];
-  return <details className={`tool-card ${tool.status}`}><summary><span><b>{tool.tool === "web" ? "联网" : tool.tool === "memory" ? "记忆" : "任务"}</b><em>L{tool.level}</em></span><small>{statusLabel} · {num(tool.elapsed_ms)} ms · {num(tool.source_count)} 项</small></summary><ToolTraceData data={tool as unknown as Record<string, unknown>} /></details>;
-}
-
-function ToolTraceData({ data }: { data: Record<string, unknown> }) {
-  const payload = asRecord(data.data);
-  const sources = Array.isArray(payload.sources) ? payload.sources.map(asRecord) : [];
-  return <div className="tool-trace"><p><b>参数</b><span>{str(data.parameter_summary) || "无"}</span></p><p><b>状态</b><span>{str(data.status || (bool(data.allowed) ? "approved" : "reviewed"))}</span></p>{str(data.error || data.reason) && <p className="tool-error"><b>说明</b><span>{str(data.error || data.reason)}</span></p>}{sources.length > 0 && <details><summary>联网来源（{sources.length}）</summary>{sources.map((source, index) => { const url = safeWebUrl(source.url); return <article key={`${url}-${index}`}><strong>{str(source.title || source.source)}</strong>{str(source.content) && <p>{str(source.content)}</p>}{url && <a href={url} target="_blank" rel="noreferrer">打开来源</a>}</article>; })}</details>}{!sources.length && Object.keys(payload).length > 0 && <pre>{JSON.stringify(payload, null, 2)}</pre>}</div>;
-}
-
-function WebTraceData({ data }: { data: Record<string, unknown> }) {
-  const args = asRecord(data.arguments);
-  const output = asRecord(data.output);
-  const coverage = asRecord(output.coverage);
-  const query = str(output.query || output.related_query || args.query);
-  const requestedUrl = safeWebUrl(output.requested_url || args.url);
-  const items = Array.isArray(output.items) ? output.items.map(asRecord) : [];
-  const documents = Array.isArray(output.documents) ? output.documents.map(asRecord) : [];
-  const errors = Array.isArray(output.page_errors) ? output.page_errors.map(asRecord) : [];
-  return <div className="web-trace">
-    <div className="web-trace-meta">
-      {query && <p><b>查询词</b><span>{query}</span></p>}
-      {requestedUrl && <p><b>指定网页</b><a href={requestedUrl} target="_blank" rel="noreferrer">{requestedUrl}</a></p>}
-      {str(output.engine) && <p><b>搜索引擎</b><span>{str(output.engine)}</span></p>}
-      {Object.keys(coverage).length > 0 && <p><b>覆盖范围</b><span>命中 {num(coverage.search_result_count)} 条，打开原文 {num(coverage.opened_page_count)} 页，来源域名 {num(coverage.source_domain_count)} 个</span></p>}
-      {bool(data.included_in_main_prompt) && <p><b>使用方式</b><span>以下已打开原文与检索结果已送入本轮主模型；搜索摘要仅用于发现来源</span></p>}
-      {str(data.error) && <p className="web-error"><b>错误</b><span>{str(data.error)}</span></p>}
-    </div>
-    {items.length > 0 && <section><h4>搜索命中（{items.length}）</h4>{items.map((entry, index) => {
-      const url = safeWebUrl(entry.url);
-      return <article className="web-result" key={`${url}-${index}`}><strong>{str(entry.title || entry.source || `结果 ${index + 1}`)}</strong>{str(entry.summary) && <p>{str(entry.summary)}</p>}<small>{str(entry.source)}{str(entry.published_at) ? ` · ${str(entry.published_at)}` : ""}</small>{url && <a href={url} target="_blank" rel="noreferrer">打开来源</a>}</article>;
-    })}</section>}
-    {documents.length > 0 && <section><h4>已打开原文（{documents.length}）</h4>{documents.map((document, index) => {
-      const url = safeWebUrl(document.url);
-      return <details className="web-document" key={`${url}-${index}`}><summary>{str(document.title || document.source || `原文 ${index + 1}`)} <small>{str(document.status)}</small></summary>{url && <a href={url} target="_blank" rel="noreferrer">{url}</a>}<pre>{str(document.content || document.error || "未提取到正文")}</pre></details>;
-    })}</section>}
-    {errors.length > 0 && <section><h4>未能打开的页面（{errors.length}）</h4>{errors.map((error, index) => <p className="web-error" key={index}>{str(error.url)}：{str(error.error)}</p>)}</section>}
-    {!query && !requestedUrl && !items.length && !documents.length && !str(data.error) && <pre>{JSON.stringify(data, null, 2)}</pre>}
   </div>;
 }
 
@@ -3500,407 +3331,6 @@ function VoiceEntryDialog({ mode, scene, busy, error, onModeChange, onSceneChang
       <p className="voice-entry-boundary">{mode === "face_to_face" ? "场景只用于理解当下语境；AI 只说自然口语，不朗读括号、动作、神态或第一人称动作播报。" : "AI 只会知道当前正在实时语音通话，不会额外描述共同所处的物理场景。"}</p>
     </div>
   </Modal>;
-}
-
-function Modal({ title, kicker, onClose, children, footer, compact = false, className = "", dismissOnBackdrop = false }: { title: string; kicker: string; onClose: () => void; children: ReactNode; footer?: ReactNode; compact?: boolean; className?: string; dismissOnBackdrop?: boolean }) {
-  const displayTitle = title === "记忆中心" ? "记忆" : title;
-  const displayKicker = kicker === "MEMORY CENTER" ? "MEMORY" : kicker;
-  return <div className="modal-backdrop" onMouseDown={(event) => {
-    if (event.target !== event.currentTarget) return;
-    if (dismissOnBackdrop) onClose();
-    else event.preventDefault();
-  }}><section className={`modal-card ${compact ? "compact" : ""} ${className}`.trim()} role="dialog" aria-modal="true" aria-label={displayTitle}><header><div><span className="eyebrow">{displayKicker}</span><h2>{displayTitle}</h2></div><button onClick={onClose} aria-label={`关闭${displayTitle}`}>×</button></header><div className="modal-body">{children}</div>{footer && <footer>{footer}</footer>}</section></div>;
-}
-
-function Field({ label, value, type = "text", onChange, min, max, step, placeholder }: { label: string; value: unknown; type?: string; onChange: (value: unknown) => void; min?: number; max?: number; step?: number; placeholder?: string }) {
-  if (type === "checkbox") return <label className="toggle-field"><span>{label}</span><input type="checkbox" checked={bool(value)} onChange={(event) => onChange(event.target.checked)} /><i /></label>;
-  if (type === "textarea") return <label className="field wide"><span>{label}</span><textarea value={str(value)} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} rows={4} /></label>;
-  return <label className="field"><span>{label}</span><input type={type} value={str(value)} placeholder={placeholder} min={min} max={max} step={step} onChange={(event) => onChange(type === "number" ? Number(event.target.value) : event.target.value)} /></label>;
-}
-
-function SelectField({ label, value, options, onChange, disabled = false }: { label: string; value: unknown; options: [string, string][]; onChange: (value: string) => void; disabled?: boolean }) {
-  return <label className="field"><span>{label}</span><select value={str(value)} disabled={disabled} onChange={(event) => onChange(event.target.value)}>{options.map(([id, name]) => <option value={id} key={id}>{name}</option>)}</select></label>;
-}
-
-function AvatarEditor({ role, entry, onChange, onUpload, busy }: { role: Role; entry: AvatarEntry; onChange: (entry: AvatarEntry) => void; onUpload: (file: File) => void; busy: boolean }) {
-  const label = role === "assistant" ? "AI 头像" : "用户头像";
-  return <article className="avatar-editor-card"><div className="avatar-editor-head"><div className="avatar-preview portrait-avatar" style={avatarStyle(entry)}><img src={entry.src} alt={`${label}预览`} /></div><div><strong>{label}</strong><small>{role === "assistant" ? "聊天与语音页面中的角色形象" : "聊天消息中的用户形象"}</small></div></div><div className="avatar-editor-actions"><label className="secondary upload-button">{busy ? "上传中…" : "上传图片"}<input hidden disabled={busy} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => { const file = event.target.files?.[0]; if (file) onUpload(file); event.currentTarget.value = ""; }} /></label><button className="secondary" onClick={() => onChange(DEFAULT_AVATARS[role])}>恢复默认</button></div><div className="avatar-controls"><SelectField label="头像比例" value={entry.aspect} options={[["2 / 3", "2:3 竖屏"], ["3 / 4", "3:4 竖屏"], ["4 / 5", "4:5 竖屏"], ["9 / 16", "9:16 长屏"], ["1 / 1", "1:1 方形"]]} onChange={(value) => onChange({ ...entry, aspect: value as AvatarEntry["aspect"] })} /><label>缩放 <b>{entry.scale.toFixed(2)}x</b><input type="range" min="0.6" max="3" step="0.01" value={entry.scale} onChange={(event) => onChange({ ...entry, scale: Number(event.target.value) })} /></label><label>横移 <b>{entry.x}%</b><input type="range" min="-80" max="80" value={entry.x} onChange={(event) => onChange({ ...entry, x: Number(event.target.value) })} /></label><label>纵移 <b>{entry.y}%</b><input type="range" min="-80" max="80" value={entry.y} onChange={(event) => onChange({ ...entry, y: Number(event.target.value) })} /></label></div></article>;
-}
-
-function SettingsDialog({ value, avatars, initialTab = "model", onClose, onDirty, onOpenProfile, onOpenMemory, onOpenKnowledge, onOpenDiagnostics, onSaved, onSettingsChange, onAvatarsChange, notify }: { value: ProductSettings; avatars: AvatarConfig; initialTab?: string; onClose: () => void; onDirty: (dirty: boolean) => void; onOpenProfile: (role: Role) => void; onOpenMemory: () => void; onOpenKnowledge: () => void; onOpenDiagnostics: () => void; onSaved: (value: ProductSettings, avatars: AvatarConfig) => void; onSettingsChange: (value: ProductSettings) => void; onAvatarsChange: (value: AvatarConfig) => void; notify: (message: string) => void }) {
-  const normalizedValue: ProductSettings = {
-    ...structuredClone(value),
-    audio: {
-      asr_listening_energy_threshold_db: -50,
-      asr_listening_min_speech_ms: 120,
-      asr_barge_in_energy_threshold_db: -38,
-      asr_barge_in_min_speech_ms: 300,
-      asr_candidate_release_ms: 280,
-      asr_adaptive_noise_enabled: false,
-      asr_noise_calibration_ms: 1500,
-      asr_listening_noise_margin_db: 10,
-      asr_barge_in_noise_margin_db: 16,
-      asr_utterance_merge_ms: 1100,
-      asr_deferred_during_playback: true,
-      asr_hotwords_enabled: true,
-      asr_dynamic_endpointing: true,
-      asr_final_refinement_enabled: true,
-      ...structuredClone(value.audio),
-    },
-    interaction: {
-      idle_continuation_enabled: false,
-      text_idle_seconds: 180,
-      voice_idle_seconds: 30,
-      unlimited_reply_enabled: false,
-      unlimited_reply_interval_seconds: 10,
-      unlimited_reply_max_rounds: 10,
-      ...structuredClone(value.interaction || {}),
-    },
-    capabilities: {
-      master_enabled: true,
-      local_knowledge_enabled: true,
-      web_search_enabled: false,
-      realtime_topics_enabled: false,
-      topic_expansion_enabled: true,
-      proactive_hotspots_enabled: false,
-      show_sources_enabled: true,
-      web_timeout_seconds: 12,
-      max_web_results: 10,
-      max_web_pages: 6,
-      max_web_content_chars: 12000,
-      ...structuredClone(value.capabilities || {}),
-    },
-  };
-  const [draft, setDraft] = useState<ProductSettings>(normalizedValue);
-  const [avatarDraft, setAvatarDraft] = useState<AvatarConfig>(structuredClone(avatars));
-  const [tab, setTab] = useState(initialTab);
-  const [audioBusy, setAudioBusy] = useState("");
-  const [audioStatus, setAudioStatus] = useState(bool(value.audio.tts_reference_configured) ? `已配置参考音频：${str(value.audio.tts_reference_name)}` : "尚未上传参考音频");
-  const [providerBusy, setProviderBusy] = useState(false);
-  const [providerStatus, setProviderStatus] = useState("切换链路后立即保存，无需再点击底部保存按钮");
-  const [gptVoices, setGptVoices] = useState<{ active_voice: string; items: Array<{ id: string; label: string; family: string; installed: boolean; selected: boolean }> }>({ active_voice: "v4-changli", items: [] });
-  const [qwenVoices, setQwenVoices] = useState<{ active_voice: string; items: Array<{ id: string; label: string; installed: boolean; selected: boolean }> }>({ active_voice: "serena", items: [] });
-  const [avatarBusy, setAvatarBusy] = useState<Role | "">("");
-  const [llmApiKey, setLlmApiKey] = useState("");
-  const [ttsApiKey, setTtsApiKey] = useState("");
-  const [vocabulary, setVocabulary] = useState<ASRVocabularySnapshot | null>(null);
-  const [vocabularyBusy, setVocabularyBusy] = useState(false);
-  const [vocabularyQuery, setVocabularyQuery] = useState("");
-  const [vocabularyTerm, setVocabularyTerm] = useState("");
-  const [vocabularyAliases, setVocabularyAliases] = useState("");
-  const [vocabularyPriority, setVocabularyPriority] = useState<ASRVocabularyEntry["priority"]>("high");
-  const [vocabularyTest, setVocabularyTest] = useState("");
-  const [vocabularyTestResult, setVocabularyTestResult] = useState("");
-  const initial = useRef(JSON.stringify({ value: normalizedValue, avatars }));
-  const update = (group: keyof ProductSettings, key: string, next: unknown) => setDraft((current) => ({ ...current, [group]: { ...(current[group] as Record<string, unknown>), [key]: next } }));
-  const dirty = Boolean(llmApiKey || ttsApiKey) || JSON.stringify({ value: draft, avatars: avatarDraft }) !== initial.current;
-  const externalAudioSelection = JSON.stringify({
-    provider: value.audio.tts_provider,
-    gpt: value.audio.tts_gpt_sovits_voice,
-    qwen: value.audio.tts_qwen3_vllm_voice,
-    auto: value.audio.auto_tts,
-  });
-  useEffect(() => { onDirty(dirty); return () => onDirty(false); }, [dirty, onDirty]);
-  useEffect(() => {
-    if (providerBusy) return;
-    const externalAudio = {
-      tts_provider: value.audio.tts_provider,
-      tts_gpt_sovits_voice: value.audio.tts_gpt_sovits_voice,
-      tts_qwen3_vllm_voice: value.audio.tts_qwen3_vllm_voice,
-      auto_tts: value.audio.auto_tts,
-    };
-    setDraft((current) => ({ ...current, audio: { ...current.audio, ...externalAudio } }));
-    const baseline = JSON.parse(initial.current) as { value: ProductSettings; avatars: AvatarConfig };
-    baseline.value = { ...baseline.value, audio: { ...baseline.value.audio, ...externalAudio } };
-    initial.current = JSON.stringify(baseline);
-  }, [externalAudioSelection, providerBusy, value.audio]);
-  useEffect(() => {
-    request<{ active_voice: string; items: Array<{ id: string; label: string; family: string; installed: boolean; selected: boolean }> }>("/api/v1/audio/tts/voices")
-      .then(setGptVoices)
-      .catch(() => undefined);
-    request<{ active_voice: string; items: Array<{ id: string; label: string; installed: boolean; selected: boolean }> }>("/api/v1/audio/tts/qwen3/voices")
-      .then(setQwenVoices)
-      .catch(() => undefined);
-    request<ASRVocabularySnapshot>("/api/v1/audio/asr/vocabulary")
-      .then(setVocabulary)
-      .catch(() => undefined);
-  }, []);
-
-  const saveManualVocabulary = async (entries: ASRVocabularyEntry[]) => {
-    setVocabularyBusy(true);
-    try {
-      const result = await request<ASRVocabularySnapshot>("/api/v1/audio/asr/vocabulary", {
-        method: "PUT",
-        body: JSON.stringify({ entries: entries.map((item) => ({
-          id: item.id, term: item.term, aliases: item.aliases, priority: item.priority,
-          scope: item.scope, category: item.category, source_field: item.source_field,
-          enabled: item.enabled, hit_count: item.hit_count, updated_at: item.updated_at,
-        })) }),
-      });
-      setVocabulary(result);
-      notify("识别词表已更新，下一段语音立即生效");
-    } catch (error) {
-      notify((error as Error).message);
-    } finally {
-      setVocabularyBusy(false);
-    }
-  };
-  const addVocabularyEntry = async () => {
-    const term = vocabularyTerm.trim();
-    if (!term) { notify("请填写标准写法"); return; }
-    const manual = (vocabulary?.entries || []).filter((item) => item.source === "manual");
-    if (manual.some((item) => item.term.toLowerCase() === term.toLowerCase())) { notify("这个标准词已经存在"); return; }
-    const entry: ASRVocabularyEntry = {
-      id: uid(), term, aliases: vocabularyAliases.split(/[，,\n]/).map((item) => item.trim()).filter(Boolean),
-      priority: vocabularyPriority, weight: vocabularyPriority === "critical" ? 100 : vocabularyPriority === "high" ? 90 : vocabularyPriority === "medium" ? 65 : 30,
-      scope: "global", category: "个人词表", source: "manual", source_field: "", enabled: true,
-      hit_count: 0, updated_at: new Date().toISOString(), read_only: false,
-    };
-    await saveManualVocabulary([...manual, entry]);
-    setVocabularyTerm(""); setVocabularyAliases("");
-  };
-  const testVocabulary = async () => {
-    if (!vocabularyTest.trim()) return;
-    setVocabularyBusy(true);
-    try {
-      const result = await request<{ corrected_text: string; matches: Array<{ from: string; to: string }> }>("/api/v1/audio/asr/vocabulary/test", { method: "POST", body: JSON.stringify({ text: vocabularyTest }) });
-      setVocabularyTestResult(result.matches.length ? `${result.corrected_text}（${result.matches.map((item) => `${item.from}→${item.to}`).join("、")}）` : `${result.corrected_text}（未命中明确映射）`);
-    } catch (error) { notify((error as Error).message); } finally { setVocabularyBusy(false); }
-  };
-
-  const persistSettings = async () => {
-    const payload = structuredClone(draft);
-    payload.llm.mode = "openai";
-    if (llmApiKey.trim()) payload.llm.api_key = llmApiKey.trim();
-    if (ttsApiKey.trim()) payload.audio.tts_siliconflow_api_key = ttsApiKey.trim();
-    const result = await request<{ settings: ProductSettings }>("/api/v1/settings", { method: "PUT", body: JSON.stringify(payload) });
-    setDraft(result.settings); setLlmApiKey(""); setTtsApiKey(""); onSettingsChange(result.settings); return result.settings;
-  };
-  const switchTtsProvider = async (next: string) => {
-    const provider = ["browser", "cosyvoice", "gpt-sovits", "qwen3-vllm", "siliconflow"].includes(next) ? next : "browser";
-    const previous = str(draft.audio.tts_provider || "qwen3-vllm");
-    const previousAutoTts = bool(draft.audio.auto_tts);
-    if (provider === previous || providerBusy) return;
-    setDraft((current) => ({ ...current, audio: { ...current.audio, tts_provider: provider, auto_tts: provider !== "browser" } }));
-    setProviderBusy(true);
-    setProviderStatus(provider === "browser" ? "正在关闭 TTS…" : provider === "cosyvoice" ? "正在切换到本地 CosyVoice…" : provider === "gpt-sovits" ? "正在切换到独立 GPT-SoVITS…" : provider === "qwen3-vllm" ? "正在切换到 Qwen3 实时语音…" : "正在切换到 SiliconFlow API…");
-    try {
-      const result = await request<{ settings: ProductSettings }>("/api/v1/settings", { method: "PUT", body: JSON.stringify({ audio: { tts_provider: provider, auto_tts: provider !== "browser" } }) });
-      const confirmed = str(result.settings.audio.tts_provider);
-      setDraft((current) => ({ ...current, audio: { ...current.audio, tts_provider: confirmed } }));
-      const baseline = JSON.parse(initial.current) as { value: ProductSettings; avatars: AvatarConfig };
-      baseline.value = { ...baseline.value, audio: { ...baseline.value.audio, tts_provider: confirmed, auto_tts: confirmed !== "browser" } };
-      initial.current = JSON.stringify(baseline);
-      onSettingsChange(result.settings);
-      const label = confirmed === "browser" ? "关闭声音（仅文字）" : confirmed === "cosyvoice" ? "本地 CosyVoice" : confirmed === "gpt-sovits" ? "本地 GPT-SoVITS" : confirmed === "qwen3-vllm" ? "Qwen3 实时语音" : "SiliconFlow API";
-      setProviderStatus(`已切换并保存：${label}`);
-      notify(`TTS 链路已切换为${label}`);
-    } catch (error) {
-      setDraft((current) => ({ ...current, audio: { ...current.audio, tts_provider: previous, auto_tts: previousAutoTts } }));
-      setProviderStatus(`切换失败，已保持原链路：${(error as Error).message}`);
-      notify((error as Error).message);
-    } finally {
-      setProviderBusy(false);
-    }
-  };
-  const switchGptVoice = async (voiceId: string) => {
-    if (providerBusy) return;
-    const previous = str(draft.audio.tts_gpt_sovits_voice || "v4-changli");
-    setProviderBusy(true);
-    setDraft((current) => ({ ...current, audio: { ...current.audio, tts_provider: "gpt-sovits", tts_gpt_sovits_voice: voiceId } }));
-    setProviderStatus("正在切换 GPT-SoVITS 音色…");
-    try {
-      const result = await request<{ ok: boolean; pending_worker?: boolean; message?: string; settings: Record<string, unknown> }>("/api/v1/audio/tts/voice/select", { method: "POST", body: JSON.stringify({ voice_id: voiceId }) });
-      const next = { ...draft, audio: result.settings };
-      setDraft(next); onSettingsChange(next);
-      setGptVoices((current) => ({ ...current, active_voice: voiceId, items: current.items.map((item) => ({ ...item, selected: item.id === voiceId })) }));
-      const pendingMessage = result.message || "音色已保存，但 Worker 暂未完成切换";
-      setProviderStatus(result.pending_worker ? pendingMessage : "音色已切换并热加载");
-      notify(result.pending_worker ? pendingMessage : "GPT-SoVITS 音色切换完成");
-    } catch (error) {
-      setDraft((current) => ({ ...current, audio: { ...current.audio, tts_gpt_sovits_voice: previous } }));
-      setProviderStatus(`音色切换失败：${(error as Error).message}`); notify((error as Error).message);
-    } finally { setProviderBusy(false); }
-  };
-  const switchQwenVoice = async (voiceId: string) => {
-    if (providerBusy) return;
-    setProviderBusy(true);
-    try {
-      const result = await request<{ settings: ProductSettings }>("/api/v1/settings", {
-        method: "PUT",
-        body: JSON.stringify({ audio: { tts_provider: "qwen3-vllm", tts_qwen3_vllm_voice: voiceId, tts_qwen3_vllm_task_type: "CustomVoice" } }),
-      });
-      setDraft((current) => ({ ...current, audio: result.settings.audio }));
-      onSettingsChange(result.settings);
-      setQwenVoices((current) => ({ ...current, active_voice: voiceId, items: current.items.map((item) => ({ ...item, selected: item.id === voiceId })) }));
-      setProviderStatus("Qwen3 音色已保存；下一段语音立即生效");
-    } catch (error) {
-      setProviderStatus(`Qwen3 音色切换失败：${(error as Error).message}`);
-      notify((error as Error).message);
-    } finally { setProviderBusy(false); }
-  };
-  const save = async () => {
-    try {
-      const next = await persistSettings();
-      const avatarResult = await request<{ config: AvatarConfig }>("/api/v1/avatar/config", { method: "PUT", body: JSON.stringify(avatarDraft) });
-      notify("设置和头像已保存并立即生效"); onSaved(next, normalizeAvatarConfig(avatarResult.config));
-    } catch (error) { notify((error as Error).message); }
-  };
-  const uploadReference = async (file: File) => {
-    if (file.size > 20 * 1024 * 1024) { notify("参考音频不能超过 20 MiB"); return; }
-    setAudioBusy("upload"); setAudioStatus(`正在优化并上传 ${file.name}…`);
-    try {
-      let prepared = file;
-      try { prepared = await normalizeReferenceAudio(file); } catch { /* Server-side decoding remains available. */ }
-      const form = new FormData(); form.append("file", prepared); form.append("transcript", str(draft.audio.tts_reference_text));
-      const result = await request<{ reference: Record<string, unknown>; settings: Record<string, unknown> }>("/api/v1/audio/tts/reference", { method: "POST", body: form });
-      const uploaded = { ...draft, audio: result.settings }; setDraft(uploaded); onSettingsChange(uploaded);
-      setAudioBusy("recognize"); setAudioStatus("音频已保存，正在识别实际说话内容…");
-      try {
-        const recognized = await request<{ transcript: string; duration?: number; settings: Record<string, unknown> }>("/api/v1/audio/tts/reference/transcribe", { method: "POST" });
-        const next = { ...uploaded, audio: recognized.settings }; setDraft(next); onSettingsChange(next);
-        const duration = recognized.duration ? ` · ${recognized.duration.toFixed(1)} 秒` : "";
-        setAudioStatus(`识别完成${duration}，请核对下方文字`); notify("参考音频已上传并识别，请核对参考文本");
-      } catch (error) {
-        setAudioStatus(`音频已保存，但自动识别失败：${(error as Error).message}`); notify("音频已上传，请手动填写或重新识别参考文本");
-      }
-    } catch (error) { setAudioStatus((error as Error).message); notify((error as Error).message); } finally { setAudioBusy(""); }
-  };
-  const recognizeReference = async () => {
-    setAudioBusy("recognize"); setAudioStatus("正在识别参考音频中的实际文字…");
-    try {
-      const result = await request<{ transcript: string; duration?: number; settings: Record<string, unknown> }>("/api/v1/audio/tts/reference/transcribe", { method: "POST" });
-      const next = { ...draft, audio: result.settings }; setDraft(next); onSettingsChange(next);
-      const duration = result.duration ? ` · ${result.duration.toFixed(1)} 秒` : "";
-      setAudioStatus(`识别完成${duration}，请核对后保存`); notify("识别结果已填入参考文本");
-    } catch (error) { setAudioStatus((error as Error).message); notify((error as Error).message); } finally { setAudioBusy(""); }
-  };
-  const clearReference = async () => {
-    if (!(await styledConfirm({ title: "清除参考音频？", message: "当前参考音频和参考文本都会被清除。", confirmLabel: "清除参考", danger: true }))) return;
-    setAudioBusy("clear");
-    try {
-      const result = await request<{ settings: Record<string, unknown> }>("/api/v1/audio/tts/reference", { method: "DELETE" });
-      const next = { ...draft, audio: result.settings }; setDraft(next); onSettingsChange(next); setAudioStatus("尚未上传参考音频"); notify("参考音频已清除");
-    } catch (error) { notify((error as Error).message); } finally { setAudioBusy(""); }
-  };
-  const playTtsTest = async (next: ProductSettings) => {
-    const status = await request<Record<string, unknown>>("/api/v1/audio/status");
-    if (!bool(status.tts_ready)) throw new Error(str(status.tts_error || "TTS 服务尚未就绪"));
-    if (str(next.audio.tts_provider) === "cosyvoice" && !bool(next.audio.tts_reference_configured)) throw new Error("请先上传参考音频");
-    if (str(next.audio.tts_provider) === "siliconflow" && !bool(next.audio.tts_siliconflow_credentials_configured)) throw new Error("请先填写 SiliconFlow API 密钥");
-    const response = await fetch("/api/v1/audio/tts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: "这是 Mindspace 语音测试。", speed: num(next.audio.tts_speed, 1), request_id: uid() }) });
-    if (!response.ok) { const detail = await response.json().catch(() => ({})); throw new Error(str(detail.detail || "测试语音生成失败")); }
-    const blob = await response.blob();
-    if (!blob.size) throw new Error("TTS 接口未返回音频数据");
-    const url = URL.createObjectURL(blob); const audio = new Audio(url); audio.onended = () => URL.revokeObjectURL(url); await audio.play();
-  };
-  const testApiConnections = async () => {
-    setAudioBusy("api-check"); setAudioStatus("正在同步检查 LLM 与 TTS API…");
-    try {
-      const next = await persistSettings();
-      const llm = await request<Record<string, unknown>>("/api/v1/settings/test", { method: "POST" });
-      if (!bool(llm.ok)) throw new Error(`LLM 自检失败：${str(llm.error || "连接失败")}`);
-      await playTtsTest(next);
-      const llmDetail = "LLM API 正常";
-      const ttsDetail = str(next.audio.tts_provider) === "siliconflow" ? "云端 TTS API 正常" : "本地 TTS 正常";
-      setAudioStatus(`${ttsDetail}，测试音频已播放`); notify(`自检完成：${llmDetail}；${ttsDetail}`);
-    } catch (error) { setAudioStatus((error as Error).message); notify((error as Error).message); } finally { setAudioBusy(""); }
-  };
-  const testTts = async () => {
-    setAudioBusy("test"); setAudioStatus("正在检查语音服务并生成测试语音…");
-    try {
-      const next = await persistSettings();
-      await playTtsTest(next); setAudioStatus("测试语音生成并播放成功");
-    } catch (error) { setAudioStatus((error as Error).message); notify((error as Error).message); } finally { setAudioBusy(""); }
-  };
-  const ttsProvider = str(draft.audio.tts_provider || "qwen3-vllm");
-  const uploadAvatar = async (role: Role, file: File) => {
-    if (file.size > 5 * 1024 * 1024) { notify("头像不能超过 5 MiB"); return; }
-    setAvatarBusy(role);
-    try {
-      const form = new FormData(); form.append("file", file);
-      const result = await request<{ config: AvatarConfig }>(`/api/v1/avatar/upload/${role}`, { method: "POST", body: form });
-      const normalized = normalizeAvatarConfig(result.config); setAvatarDraft(normalized); onAvatarsChange(normalized); notify(`${role === "assistant" ? "AI" : "用户"}头像上传成功`);
-    } catch (error) { notify((error as Error).message); } finally { setAvatarBusy(""); }
-  };
-  const settingGroups = [
-    { id: "connection", label: "连接", tabs: [["model", "模型与 API"], ["capabilities", "自动能力"]] },
-    { id: "memory", label: "记忆", tabs: [["rag", "记忆与检索"]] },
-    { id: "voice", label: "声音", tabs: [["audio", "实时语音"], ["vocabulary", "识别词表"], ["rhythm", "陪伴频率"]] },
-    { id: "interface", label: "界面", tabs: [["avatar", "人物头像"], ["appearance", "显示偏好"]] },
-    { id: "advanced", label: "高级", tabs: [["protocol", "协议与诊断"]] },
-  ] as const;
-  const activeGroup = settingGroups.find((group) => group.tabs.some(([id]) => id === tab)) || settingGroups[0];
-  return <Modal title="设置中心" kicker="SETTINGS HUB" onClose={onClose} footer={<><button className="secondary" onClick={onClose}>取消</button><button className="primary" onClick={() => void save()}>保存设置</button></>}>
-    <div className="settings-layout settings-hub-layout">
-      <nav>{settingGroups.map((group) => <button key={group.id} className={activeGroup.id === group.id ? "active" : ""} onClick={() => setTab(group.tabs[0][0])}><span aria-hidden="true">{group.id === "connection" ? "⌁" : group.id === "memory" ? "◇" : group.id === "voice" ? "◉" : group.id === "interface" ? "▣" : "⌘"}</span>{group.label}</button>)}</nav>
-      <div className="settings-panel">
-        <div className="settings-subnav">
-          {activeGroup.tabs.map(([id, label]) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}>{label}</button>)}
-          {activeGroup.id === "memory" && <><button onClick={onOpenMemory}>记忆内容 ↗</button><button onClick={onOpenKnowledge}>知识库 ↗</button></>}
-          {activeGroup.id === "advanced" && <button onClick={onOpenDiagnostics}>系统诊断 ↗</button>}
-        </div>
-    {tab === "model" && <>
-      <h3>用户资料</h3>
-      <p className="notice">角色设定已收缩为 V2 角色卡；请在角色库编辑基础资料，在记忆中心维护偏好与任务。</p>
-      <div className="persona-config-actions"><button type="button" onClick={() => onOpenProfile("user")}>编辑用户资料</button></div>
-      <h3>语言模型 API</h3>
-      <p className={`notice ${bool(draft.llm.credentials_configured) ? "" : "warning"}`}>{bool(draft.llm.credentials_configured) ? "真实 LLM API 已启用；保存后立即用于下一轮对话。" : "尚未配置 LLM API 密钥。未配置时会阻止发送，不会生成演示回复。"}</p>
-      <div className="form-grid"><SelectField label="运行模式" value="openai" disabled options={[["openai", "真实 API（OpenAI 兼容）"]]} onChange={() => undefined} /><Field label="模型" value={draft.llm.model} onChange={(next) => update("llm", "model", next)} /><Field label="API 地址" value={draft.llm.base_url} onChange={(next) => update("llm", "base_url", next)} /><Field label="新 API 密钥（留空保持）" value={llmApiKey} type="password" placeholder={bool(draft.llm.credentials_configured) ? "已配置；输入新密钥可替换" : "输入 API 密钥"} onChange={(next) => setLlmApiKey(str(next))} /><Field label="温度" value={draft.llm.temperature} type="number" min={0} max={2} step={0.05} onChange={(next) => update("llm", "temperature", next)} /><Field label="最大 token" value={draft.llm.max_tokens} type="number" min={64} max={32768} onChange={(next) => update("llm", "max_tokens", next)} /></div>
-      <h3>语音合成 API</h3>
-      <p className="notice">上线版本默认使用云端流式 TTS，不随安装包分发本地 CosyVoice 模型；本地链路仍可在“实时语音”中切换。</p>
-      <div className="form-grid"><Field label="SiliconFlow API 地址" value={draft.audio.tts_siliconflow_base_url} onChange={(next) => update("audio", "tts_siliconflow_base_url", next)} /><Field label="新 TTS API 密钥（留空保持）" value={ttsApiKey} type="password" placeholder={bool(draft.audio.tts_siliconflow_credentials_configured) ? "已配置；输入新密钥可替换" : "输入 SiliconFlow API 密钥"} onChange={(next) => setTtsApiKey(str(next))} /><SelectField label="云端模型" value={draft.audio.tts_siliconflow_model} options={[["fnlp/MOSS-TTSD-v0.5", "MOSS-TTSD v0.5"], ["FunAudioLLM/CosyVoice2-0.5B", "CosyVoice2 0.5B"]]} onChange={(next) => setDraft((current) => ({ ...current, audio: { ...current.audio, tts_siliconflow_model: next, tts_siliconflow_voice: next === "fnlp/MOSS-TTSD-v0.5" ? "fnlp/MOSS-TTSD-v0.5:alex" : "FunAudioLLM/CosyVoice2-0.5B:alex" } }))} /><Field label="音色 ID" value={draft.audio.tts_siliconflow_voice} onChange={(next) => update("audio", "tts_siliconflow_voice", next)} /><SelectField label="PCM 采样率" value={draft.audio.tts_siliconflow_sample_rate} options={[["16000", "16 kHz"], ["24000", "24 kHz（推荐）"], ["32000", "32 kHz"], ["44100", "44.1 kHz"]]} onChange={(next) => update("audio", "tts_siliconflow_sample_rate", Number(next))} /><Field label="增益 dB" value={draft.audio.tts_siliconflow_gain} type="number" min={-10} max={10} step={0.5} onChange={(next) => update("audio", "tts_siliconflow_gain", next)} /></div>
-      <button className="inline-action" disabled={Boolean(audioBusy)} onClick={() => void testApiConnections()}>{audioBusy === "api-check" ? "正在自检…" : "自检 LLM + TTS API"}</button>
-      <h3>用户设定</h3><div className="form-grid"><Field label="用户称呼" value={draft.persona.user_name} onChange={(next) => update("persona", "user_name", next)} /><Field label="用户设定" value={draft.persona.user_persona} type="textarea" onChange={(next) => update("persona", "user_persona", next)} /><Field label="回复篇幅偏好（留空则自然发挥）" value={draft.persona.reply_length_preference} type="textarea" placeholder="例如：日常简洁，重要话题可以详细；或每次尽量控制在两段内" onChange={(next) => update("persona", "reply_length_preference", next)} /></div>
-    </>}
-    {tab === "avatar" && <><h3>人物头像</h3><p className="notice">上传图片并调整裁剪。聊天、人物卡和实时语音会立即使用同一份头像配置。</p><div className="avatar-settings-grid">{(["user", "assistant"] as Role[]).map((role) => <AvatarEditor key={role} role={role} entry={avatarDraft[role]} busy={avatarBusy === role} onUpload={(file) => void uploadAvatar(role, file)} onChange={(entry) => setAvatarDraft((current) => ({ ...current, [role]: entry }))} />)}</div></>}
-      {tab === "rhythm" && <><h3>时间感知</h3><p className="notice">文字与语音对话都会记录服务端 UTC 时间、当地时区以及与上次真实用户消息的时间差。时间只作为本轮运行事实，不会自行修改人物档案。</p><h3>连续陪伴</h3><div className="toggle-grid"><Field label="无限制回复" value={draft.interaction?.unlimited_reply_enabled} type="checkbox" onChange={(next) => update("interaction", "unlimited_reply_enabled", next)} /></div><div className="form-grid"><Field label="连续陪伴轮次上限" value={draft.interaction?.unlimited_reply_max_rounds} type="number" min={1} max={50} step={1} onChange={(next) => update("interaction", "unlimited_reply_max_rounds", next)} /></div><p className="notice">仅在实时语音中生效，衔接间隔固定为 10 秒。每次 TTS 完整朗读结束后，角色会自主规划并继续话题；默认你只想听，不会催促回复。你随时可以插话，插话会改变后续话题方向，但不会关闭连续陪伴或清零轮次。进度只显示在语音页面，到达上限后自动停止。</p><h3>沉默后主动续接</h3><div className="toggle-grid"><Field label="允许 AI 在沉默后自然续接" value={draft.interaction?.idle_continuation_enabled} type="checkbox" onChange={(next) => update("interaction", "idle_continuation_enabled", next)} /></div><div className="form-grid"><Field label="文字对话等待秒数" value={draft.interaction?.text_idle_seconds} type="number" min={10} max={3600} step={10} onChange={(next) => update("interaction", "text_idle_seconds", next)} /><Field label="语音通话等待秒数" value={draft.interaction?.voice_idle_seconds} type="number" min={5} max={600} step={5} onChange={(next) => update("interaction", "voice_idle_seconds", next)} /></div><p className="notice">普通主动续接每个静默阶段最多说一次；连续陪伴开启时，语音模式优先使用上面的多轮逻辑。</p></>}
-      {tab === "capabilities" && <>
-        <h3>只读自动能力</h3>
-        <p className="notice">总开关开启后，AI 可自行调用你允许的读取能力，不再逐次弹窗确认。一次查询、必要的补充模型调用和最终回答始终合并为同一轮回复。</p>
-        <div className="toggle-grid"><Field label="允许只读自动能力" value={draft.capabilities?.master_enabled} type="checkbox" onChange={(next) => update("capabilities", "master_enabled", next)} /><Field label="自动查询本地知识" value={draft.capabilities?.local_knowledge_enabled} type="checkbox" onChange={(next) => update("capabilities", "local_knowledge_enabled", next)} /><Field label="允许联网搜索" value={draft.capabilities?.web_search_enabled} type="checkbox" onChange={(next) => update("capabilities", "web_search_enabled", next)} /><Field label="允许实时热点" value={draft.capabilities?.realtime_topics_enabled} type="checkbox" onChange={(next) => update("capabilities", "realtime_topics_enabled", next)} /><Field label="自然扩展相关话题" value={draft.capabilities?.topic_expansion_enabled} type="checkbox" onChange={(next) => update("capabilities", "topic_expansion_enabled", next)} /><Field label="沉默续接可参考热点" value={draft.capabilities?.proactive_hotspots_enabled} type="checkbox" onChange={(next) => update("capabilities", "proactive_hotspots_enabled", next)} /><Field label="回答中展示网页来源" value={draft.capabilities?.show_sources_enabled} type="checkbox" onChange={(next) => update("capabilities", "show_sources_enabled", next)} /></div>
-        <h3>联网边界</h3><div className="form-grid"><Field label="联网超时秒数" value={draft.capabilities?.web_timeout_seconds} type="number" min={2} max={30} step={1} onChange={(next) => update("capabilities", "web_timeout_seconds", next)} /><Field label="搜索结果上限" value={draft.capabilities?.max_web_results} type="number" min={1} max={20} step={1} onChange={(next) => update("capabilities", "max_web_results", next)} /><Field label="打开原文上限" value={draft.capabilities?.max_web_pages} type="number" min={0} max={10} step={1} onChange={(next) => update("capabilities", "max_web_pages", next)} /><Field label="每页正文字符" value={draft.capabilities?.max_web_content_chars} type="number" min={2000} max={30000} step={1000} onChange={(next) => update("capabilities", "max_web_content_chars", next)} /></div>
-        <p className="notice warning">该权限仅允许现有知识检索和公开网页 GET 读取。AI 无权读取本机配置、硬件、进程或服务健康状态，也不能执行命令、修改文件、上传资料、登录网站、发送消息、结束进程或读取密钥。网页内容不能修改人物 JSON，也不能作为用户偏好证据。</p>
-      </>}
-    {tab === "rag" && <><h3>检索开关</h3><div className="toggle-grid"><Field label="启用 RAG" value={draft.retrieval.rag_enabled} type="checkbox" onChange={(next) => update("retrieval", "rag_enabled", next)} /><Field label="知识库召回" value={draft.retrieval.knowledge_enabled} type="checkbox" onChange={(next) => update("retrieval", "knowledge_enabled", next)} /><Field label="会话记忆召回" value={draft.retrieval.chat_enabled} type="checkbox" onChange={(next) => update("retrieval", "chat_enabled", next)} /><Field label="JSON 字段记忆" value={draft.retrieval.structured_memory_enabled} type="checkbox" onChange={(next) => update("retrieval", "structured_memory_enabled", next)} /><Field label="BM25+ 词法召回" value={draft.retrieval.bm25_enabled} type="checkbox" onChange={(next) => update("retrieval", "bm25_enabled", next)} /><Field label="向量召回" value={draft.retrieval.vector_enabled} type="checkbox" onChange={(next) => update("retrieval", "vector_enabled", next)} /><Field label="本地精排（需模型）" value={draft.retrieval.reranker_enabled} type="checkbox" onChange={(next) => update("retrieval", "reranker_enabled", next)} /><Field label="公平曝光保护" value={draft.retrieval.fairness_enabled} type="checkbox" onChange={(next) => update("retrieval", "fairness_enabled", next)} /><Field label="时间衰减" value={draft.retrieval.temporal_enabled} type="checkbox" onChange={(next) => update("retrieval", "temporal_enabled", next)} /></div><h3>召回参数</h3><div className="form-grid"><Field label="知识库上限" value={draft.retrieval.knowledge_k} type="number" onChange={(next) => update("retrieval", "knowledge_k", next)} /><Field label="原始对话上限" value={draft.retrieval.chat_k} type="number" onChange={(next) => update("retrieval", "chat_k", next)} /><Field label="结构化历史上限" value={draft.retrieval.history_k} type="number" onChange={(next) => update("retrieval", "history_k", next)} /><Field label="相似度阈值" value={draft.retrieval.similarity_threshold} type="number" step={0.05} onChange={(next) => update("retrieval", "similarity_threshold", next)} /><Field label="RRF 常数" value={draft.retrieval.rrf_k} type="number" onChange={(next) => update("retrieval", "rrf_k", next)} /><Field label="候选放大倍数" value={draft.retrieval.candidate_multiplier} type="number" onChange={(next) => update("retrieval", "candidate_multiplier", next)} /><Field label="精排候选数" value={draft.retrieval.reranker_top_n} type="number" onChange={(next) => update("retrieval", "reranker_top_n", next)} /><Field label="轮次衰减" value={draft.retrieval.decay_rounds} type="number" onChange={(next) => update("retrieval", "decay_rounds", next)} /><Field label="低曝光保留比例" value={draft.retrieval.low_exposure_ratio} type="number" step={0.05} onChange={(next) => update("retrieval", "low_exposure_ratio", next)} /><Field label="同字段族上限" value={draft.retrieval.memory_family_limit} type="number" onChange={(next) => update("retrieval", "memory_family_limit", next)} /><Field label="饥饿保护轮次" value={draft.retrieval.starvation_rounds} type="number" onChange={(next) => update("retrieval", "starvation_rounds", next)} /></div><p className="notice">前15轮默认只构建索引，不自动召回；之后按知识库2、原始对话3、结构化历史3的来源上限编排，低于阈值时不强行凑满。</p><h3>知识分块</h3><div className="form-grid"><Field label="子块长度" value={draft.knowledge.child_size} type="number" onChange={(next) => update("knowledge", "child_size", next)} /><Field label="父块长度" value={draft.knowledge.parent_size} type="number" onChange={(next) => update("knowledge", "parent_size", next)} /><Field label="重叠字符" value={draft.knowledge.overlap} type="number" onChange={(next) => update("knowledge", "overlap", next)} /></div></>}
-    {tab === "protocol" && <><h3>生成与 JSON 写回</h3><div className="form-grid"><Field label="协议模式" value={draft.protocol.mode} onChange={(next) => update("protocol", "mode", next)} /><Field label="角色审计模型（留空复用主模型）" value={draft.llm.role_audit_model} onChange={(next) => update("llm", "role_audit_model", next)} /></div><div className="toggle-grid"><Field label="自动结构修复" value={draft.protocol.auto_repair} type="checkbox" onChange={(next) => update("protocol", "auto_repair", next)} /><Field label="显示写回诊断" value={draft.protocol.diagnostics} type="checkbox" onChange={(next) => update("protocol", "diagnostics", next)} /><Field label="复杂角色异步审计" value={draft.llm.role_audit_enabled} type="checkbox" onChange={(next) => update("llm", "role_audit_enabled", next)} /></div><p className="notice">回复立即流式展示；JSON 每轮最多写入三个经过路径、证据和 revision 校验的叶子 Patch。复杂角色审计只在本轮完成后运行，不能替换已显示或已朗读的内容，严重偏移只影响下一轮。</p></>}
-    {tab === "audio" && <>
-      <h3>语音合成</h3>
-      <div className="form-grid"><SelectField label="TTS 链路" value={draft.audio.tts_provider} disabled={providerBusy} options={[["browser", "关闭声音（仅文字）"], ["gpt-sovits", "GPT-SoVITS 二次元声线"], ["cosyvoice", "本地 CosyVoice 声音克隆"], ["qwen3-vllm", "Qwen3 高质量活人感"], ["siliconflow", "SiliconFlow 云端流式 TTS"]]} onChange={(next) => void switchTtsProvider(next)} /><Field label="速度" value={draft.audio.tts_speed} type="number" min={0.5} max={2} step={0.1} onChange={(next) => update("audio", "tts_speed", next)} /></div>
-      <p className={`notice ${providerStatus.startsWith("切换失败") ? "warning" : ""}`}>{providerStatus}</p>
-      {ttsProvider === "cosyvoice" && <><div className="form-grid"><Field label="CosyVoice Worker" value={draft.audio.tts_worker_url} onChange={(next) => update("audio", "tts_worker_url", next)} /><Field label="识别出的参考文本（请校对）" value={draft.audio.tts_reference_text} type="textarea" onChange={(next) => update("audio", "tts_reference_text", next)} placeholder="上传后自动识别；必须与参考音频实际说出的内容一致" /></div><p className="notice warning">本地 CosyVoice 是可选链路，上线安装包不包含其模型。参考文本必须与音频逐字匹配；实时语音只输出并朗读角色亲口说出的自然口语，不使用括号动作旁白。</p><div className="reference-panel"><div><strong>本地参考音频</strong><small>{audioStatus}</small></div><div><label className="secondary upload-button">{audioBusy === "upload" ? "上传中…" : bool(draft.audio.tts_reference_configured) ? "替换音频" : "选择并上传"}<input hidden disabled={Boolean(audioBusy)} type="file" accept=".wav,.mp3,.flac,.m4a,.ogg,audio/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadReference(file); event.currentTarget.value = ""; }} /></label><button className="secondary" disabled={Boolean(audioBusy) || !bool(draft.audio.tts_reference_configured)} onClick={() => void recognizeReference()}>{audioBusy === "recognize" ? "识别中…" : "识别音频文字"}</button><button className="secondary" disabled={Boolean(audioBusy) || !bool(draft.audio.tts_reference_configured)} onClick={() => void clearReference()}>清除</button></div></div></>}
-      {ttsProvider === "gpt-sovits" && <><div className="form-grid"><SelectField label="GPT-SoVITS 音色" value={draft.audio.tts_gpt_sovits_voice || gptVoices.active_voice} disabled={providerBusy} options={gptVoices.items.length ? gptVoices.items.map((voice) => [voice.id, `${voice.label}${voice.installed ? " · 已安装" : " · 需在启动器安装"}`] as [string, string]) : [["v4-changli", "V4-长离"], ["v4-yae-miko", "V4-八重神子"], ["v2proplus-kafka", "V2ProPlus-卡芙卡"]]} onChange={(next) => void switchGptVoice(next)} /><Field label="GPT-SoVITS Worker" value={draft.audio.tts_gpt_sovits_worker_url || "http://127.0.0.1:5055"} onChange={(next) => update("audio", "tts_gpt_sovits_worker_url", next)} /></div><p className="notice warning">音色模型与原 CosyVoice 完全分离，由启动器按需安装。V4 原生输出 48 kHz；卡芙卡实际为 V2ProPlus。第三方角色音色仅用于本地非商业验证，正式上线前必须取得对应权利方授权。</p></>}
-      {ttsProvider === "qwen3-vllm" && <><div className="form-grid"><SelectField label="Qwen3 音色" value={draft.audio.tts_qwen3_vllm_voice || qwenVoices.active_voice} disabled={providerBusy} options={qwenVoices.items.length ? qwenVoices.items.map((voice) => [voice.id, voice.label] as [string, string]) : [["serena", "Serena · 温柔成年女声（运行时未就绪）"]]} onChange={(next) => void switchQwenVoice(next)} /><Field label="Qwen3 服务地址" value={draft.audio.tts_qwen3_vllm_url || "http://127.0.0.1:8091"} onChange={(next) => update("audio", "tts_qwen3_vllm_url", next)} /><Field label="模型名" value={draft.audio.tts_qwen3_vllm_model || "mindspace-qwen3-tts"} onChange={(next) => update("audio", "tts_qwen3_vllm_model", next)} /></div><p className="notice">Qwen3 使用 CustomVoice 固定 Serena speaker、固定随机种子和整篇单次合成。正文完成并通过格式清理后立即提交，不等待落库收尾；语气指令只控制语速、笑声、换气和情绪，不重新描述或改变音色。</p></>}
-      {ttsProvider === "browser" && <p className="notice">当前关闭声音，只保留文字对话。启动器与应用内会显示相同状态，也不会加载本地 TTS 或占用额外显存。</p>}
-      {ttsProvider === "siliconflow" && <p className="notice">云端 API 参数已集中到“模型与角色”。此处只选择链路与播放速度；逐句流式播放、首句抢跑和插话打断与本地链路一致，实时语音只输出可直接朗读的自然口语。</p>}
-      <div className="row-actions"><button className="primary" disabled={Boolean(audioBusy)} onClick={() => void testTts()}>{audioBusy === "test" ? "生成中…" : "生成并试听 TTS"}</button></div>
-      <Field label="实时语音中自动朗读" value={draft.audio.auto_tts} type="checkbox" onChange={(next) => update("audio", "auto_tts", next)} />
-      <h3>实时识别与环境噪声</h3>
-      <div className="toggle-grid"><Field label="启用人物与 JSON 动态词表" value={draft.audio.asr_hotwords_enabled} type="checkbox" onChange={(next) => update("audio", "asr_hotwords_enabled", next)} /><Field label="含糊停顿动态断句" value={draft.audio.asr_dynamic_endpointing} type="checkbox" onChange={(next) => update("audio", "asr_dynamic_endpointing", next)} /><Field label="Nano 整句复核" value={draft.audio.asr_final_refinement_enabled} type="checkbox" onChange={(next) => update("audio", "asr_final_refinement_enabled", next)} /></div>
-      <div className="form-grid"><Field label="ASR 提供方" value={draft.audio.asr_provider} onChange={(next) => update("audio", "asr_provider", next)} /><Field label="ASR 模型" value={draft.audio.asr_model} onChange={(next) => update("audio", "asr_model", next)} /><Field label="静音断句毫秒" value={draft.audio.asr_silence_ms} type="number" min={250} max={3000} onChange={(next) => update("audio", "asr_silence_ms", next)} /><Field label="多段话合并窗口毫秒" value={draft.audio.asr_utterance_merge_ms} type="number" min={300} max={3000} step={50} onChange={(next) => update("audio", "asr_utterance_merge_ms", next)} /></div><p className="notice">语音入口不再等待环境噪声校准；浏览器只保留回声消除和自动增益，FunASR VAD 负责判断真实人声。Paraformer 保持实时字幕，Nano 仅在整句结束时低优先级复核。</p>
-      <h3>语音情绪感知 · 实验性</h3>
-      <div className="toggle-grid"><Field label="情绪侧链接口（暂时停用）" value={false} type="checkbox" onChange={() => undefined} /></div>
-      <p className="advanced-note">情绪分析在本轮回复完成后后台执行，不再等待或延迟当前回复；完成后的状态仅供下一轮语音调整语气。</p>
-      <p className="notice">当前版本不加载情绪模型，也不执行声学或文本情绪分析；仅保留后端接口，便于后续按需接入。</p>
-      <h3>AI 播放完：短回复优先</h3><div className="form-grid"><Field label="监听最低门槛 dBFS" value={draft.audio.asr_listening_energy_threshold_db} type="number" min={-60} max={-15} step={1} onChange={(next) => update("audio", "asr_listening_energy_threshold_db", next)} /><Field label="监听最短发声毫秒" value={draft.audio.asr_listening_min_speech_ms} type="number" min={60} max={1000} step={20} onChange={(next) => update("audio", "asr_listening_min_speech_ms", next)} /></div>
-      <h3>AI 播放中：三重确认后打断</h3><div className="form-grid"><Field label="插话最低门槛 dBFS" value={draft.audio.asr_barge_in_energy_threshold_db} type="number" min={-60} max={-15} step={1} onChange={(next) => update("audio", "asr_barge_in_energy_threshold_db", next)} /><Field label="插话最短发声毫秒" value={draft.audio.asr_barge_in_min_speech_ms} type="number" min={120} max={1500} step={20} onChange={(next) => update("audio", "asr_barge_in_min_speech_ms", next)} /><Field label="疑似声音释放毫秒" value={draft.audio.asr_candidate_release_ms} type="number" min={80} max={1000} step={20} onChange={(next) => update("audio", "asr_candidate_release_ms", next)} /></div>
-      <div className="toggle-grid"><Field label="未达到打断条件的有效文字稍后发送" value={draft.audio.asr_deferred_during_playback} type="checkbox" onChange={(next) => update("audio", "asr_deferred_during_playback", next)} /><Field label="合并结束后自动发送" value={draft.audio.asr_auto_send} type="checkbox" onChange={(next) => update("audio", "asr_auto_send", next)} /></div>
-      <p className="notice">候选噪声只降低播放音量；能量、FSMN-VAD 与有效识别共同确认后才打断。AI 尚未出声时，后续语音会合并进同一用户轮次；播放中未达到打断条件但识别出有效文字时，会在播放结束后统一发送。</p>
-    </>}
-    {tab === "vocabulary" && <>
-      <h3>新增个人词条</h3>
-      <p className="notice">词表只参与本地 ASR 解码与确定性纠偏，不进入 Prompt，也不会触发额外 LLM 调用。人物名称和专有名词使用高强化；三份 JSON 的有效字段会按 revision 自动生成轻度词条。</p>
-      <div className="form-grid"><Field label="标准写法" value={vocabularyTerm} onChange={(next) => setVocabularyTerm(str(next))} placeholder="例如：长离" /><Field label="常见误识别（逗号分隔）" value={vocabularyAliases} onChange={(next) => setVocabularyAliases(str(next))} placeholder="例如：长利，常离" /><SelectField label="强化等级" value={vocabularyPriority} options={[["critical", "最高 · 明确纠偏"], ["high", "高 · 人名/专名"], ["medium", "中 · 当前实体"], ["low", "轻 · 普通字段"]]} onChange={(next) => setVocabularyPriority(next as ASRVocabularyEntry["priority"])} /></div>
-      <div className="row-actions"><button className="primary" disabled={vocabularyBusy || !vocabularyTerm.trim()} onClick={() => void addVocabularyEntry()}>{vocabularyBusy ? "保存中…" : "新增并立即生效"}</button></div>
-      <h3>词表测试</h3><div className="vocabulary-test"><Field label="输入一段可能识别错误的文字" value={vocabularyTest} onChange={(next) => setVocabularyTest(str(next))} placeholder="例如：我想换成长利的声音" /><button className="secondary" disabled={vocabularyBusy || !vocabularyTest.trim()} onClick={() => void testVocabulary()}>测试纠偏</button></div>{vocabularyTestResult && <p className="notice">{vocabularyTestResult}</p>}
-      <h3>当前词表</h3>
-      <div className="vocabulary-summary"><span>个人 <b>{num(vocabulary?.counts.manual)}</b></span><span>JSON 自动 <b>{num(vocabulary?.counts.profile)}</b></span><span>系统 <b>{num(vocabulary?.counts.system)}</b></span><span>解码热词 <b>{vocabulary?.decoder_hotwords.length || 0}</b></span><small>revision {vocabulary?.revision || "读取中"}</small></div>
-      <label className="search-box vocabulary-search"><span>⌕</span><input value={vocabularyQuery} onChange={(event) => setVocabularyQuery(event.target.value)} placeholder="搜索标准词、别名、来源字段" /></label>
-      <div className="vocabulary-list">{(vocabulary?.entries || []).filter((item) => !vocabularyQuery.trim() || `${item.term} ${item.aliases.join(" ")} ${item.source_field} ${item.category}`.toLowerCase().includes(vocabularyQuery.trim().toLowerCase())).slice(0, 160).map((item) => <article key={item.id} className={!item.enabled ? "disabled" : ""}><div><strong>{item.term}</strong><span className={`priority ${item.priority}`}>{item.priority === "critical" ? "最高" : item.priority === "high" ? "高" : item.priority === "medium" ? "中" : "轻"}</span><small>{item.category} · {item.source === "manual" ? "个人" : item.source === "profile" ? "JSON 自动" : "系统"}</small>{item.aliases.length > 0 && <p>易错：{item.aliases.join("、")}</p>}{item.source_field && <p className="source-field">{item.source_field}</p>}</div>{item.source === "manual" ? <div className="vocabulary-actions"><button className="secondary" disabled={vocabularyBusy} onClick={() => void saveManualVocabulary((vocabulary?.entries || []).filter((entry) => entry.source === "manual").map((entry) => entry.id === item.id ? { ...entry, enabled: !entry.enabled } : entry))}>{item.enabled ? "停用" : "启用"}</button><button className="danger-text" disabled={vocabularyBusy} onClick={async () => { if (await styledConfirm({ title: `删除词条“${item.term}”？`, message: "删除后，该词不会再作为个人识别词参与语音解码。", confirmLabel: "删除词条", danger: true })) await saveManualVocabulary((vocabulary?.entries || []).filter((entry) => entry.source === "manual" && entry.id !== item.id)); }}>删除</button></div> : <span className="read-only-badge">自动</span>}</article>)}</div>
-      {(vocabulary?.entries.length || 0) > 160 && !vocabularyQuery && <p className="notice">自动词条较多，当前只展示前 160 条；使用搜索可定位其余词条。</p>}
-    </>}
-    {tab === "appearance" && <><h3>界面偏好</h3><div className="form-grid"><SelectField label="主题" value={draft.appearance.theme} options={[["mindscape", "Mindscape 暖色"], ["dark", "深色研究界面"]]} onChange={(next) => update("appearance", "theme", next)} /><SelectField label="界面密度" value={draft.appearance.density} options={[["chat", "舒适对话"], ["research", "紧凑研究"]]} onChange={(next) => update("appearance", "density", next)} /><SelectField label="字体大小" value={draft.appearance.font_scale ?? 1.3} options={[["1", "标准（100%）"], ["1.15", "较大（115%）"], ["1.3", "默认大字（130%）"], ["1.45", "更大（145%）"], ["1.6", "特大（160%）"]]} onChange={(next) => update("appearance", "font_scale", Number(next))} /><Field label="语言" value={draft.appearance.language} onChange={(next) => update("appearance", "language", next)} /></div><p className="notice">全屏或大屏窗口会在所选字号上自动再放大，缩回普通窗口后恢复；设置保存后立即生效。</p></>}
-  </div></div></Modal>;
 }
 
 function KnowledgeDialog({ onClose, onDirty, notify }: { onClose: () => void; onDirty: (dirty: boolean) => void; notify: (message: string) => void }) {

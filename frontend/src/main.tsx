@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles.css";
-import "./redesign.css";
+import "./redesign.overrides.css";
 
 class RootErrorBoundary extends React.Component<
   React.PropsWithChildren,

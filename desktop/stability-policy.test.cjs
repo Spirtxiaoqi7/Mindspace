@@ -4,6 +4,7 @@ const path = require("node:path");
 const test = require("node:test");
 
 const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
+const productWindows = fs.readFileSync(path.join(__dirname, "product-windows.cjs"), "utf8");
 
 test("hardware acceleration is disabled before Electron becomes ready", () => {
   const disabledAt = main.indexOf("app.disableHardwareAcceleration()");
@@ -22,8 +23,8 @@ test("desktop records and recovers renderer and GPU process failures", () => {
 });
 
 test("chat window has a bounded load timeout and background throttling", () => {
-  assert.match(main, /timeoutMs: 15_000/);
-  assert.match(main, /backgroundThrottling: true/);
-  assert.doesNotMatch(main, /backgroundThrottling: false/);
-  assert.match(main, /backdrop-filter: none !important/);
+  assert.match(productWindows, /timeoutMs: 15_000/);
+  assert.match(productWindows, /backgroundThrottling: true/);
+  assert.doesNotMatch(productWindows, /backgroundThrottling: false/);
+  assert.match(productWindows, /backdrop-filter: none !important/);
 });

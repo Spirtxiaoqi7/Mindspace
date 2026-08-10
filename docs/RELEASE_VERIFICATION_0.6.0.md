@@ -1,3 +1,5 @@
+> 文档状态：historical。仅保留历史证据，不得作为当前操作说明；当前权威见 `docs/INDEX.md`。
+
 # Mindspace 0.6.0 发布验证记录
 
 ## 发布范围

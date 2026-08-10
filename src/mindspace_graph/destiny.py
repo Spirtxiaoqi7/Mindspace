@@ -768,39 +768,46 @@ class DestinyService:
         value = self.database.get_document(self._key(journey_id))
         if not isinstance(value, dict):
             raise KeyError("destiny journey not found")
+        result = deepcopy(value)
+        if value.get("schema_version") != JOURNEY_SCHEMA_VERSION:
+            result["read_state"] = {
+                "state": "legacy_incomplete",
+                "can_continue": False,
+                "action": "restart",
+                "message": "旧版未完成旅程不能继续，请重新开始创建角色",
+            }
+            return result
+        if self._cards_are_invalid(value):
+            result["read_state"] = {
+                "state": "cards_invalid",
+                "can_continue": False,
+                "action": "regenerate_cards",
+                "message": "现有命签的直接标签无效，请点击继续生成命签",
+            }
+            return result
+        result["read_state"] = {
+            "state": "ready",
+            "can_continue": True,
+            "action": "",
+            "message": "旅程数据可继续使用",
+        }
+        return result
+
+    def _get_mutable(self, journey_id: str) -> dict[str, Any]:
+        value = self.database.get_document(self._key(journey_id))
+        if not isinstance(value, dict):
+            raise KeyError("destiny journey not found")
         if value.get("schema_version") != JOURNEY_SCHEMA_VERSION:
             raise ValueError("旧版未完成旅程不能继续，请重新开始创建角色")
-        if value.get("status") in {
+        return deepcopy(value)
+
+    def _cards_are_invalid(self, value: dict[str, Any]) -> bool:
+        return value.get("status") in {
             "cards_ready",
             "selections_ready",
             "review_ready",
             "synthesis_failed",
-        } and self._stored_cards_need_regeneration(value):
-            errors = list(value.get("errors") or [])
-            errors.append(
-                {
-                    "stage": "cards",
-                    "message": "现有命签的直接标签无效，请点击继续生成命签",
-                    "created_at": _now(),
-                }
-            )
-            return self._save(
-                value,
-                status="cards_failed",
-                cards_by_slot={},
-                card_batches=_empty_card_batches(),
-                selections={},
-                final_card=None,
-                errors=errors[-20:],
-                progress={
-                    "stage": "cards",
-                    "current": 0,
-                    "total": 96,
-                    "percent": 0,
-                    "message": "命签标签无效，请明确点击继续生成",
-                },
-            )
-        return deepcopy(value)
+        } and self._stored_cards_need_regeneration(value)
 
     def _save(self, journey: dict[str, Any], **updates: Any) -> dict[str, Any]:
         value = deepcopy(journey)
@@ -970,7 +977,8 @@ class DestinyService:
                         "description 不重复 appearance，后端会自动加入可移植的外表摘要。",
                         "intimate_features 只在成年角色且外表期待明确涉及成人身体特征时填写，否则留空。",
                         "personality 写可观察的性格与相处反应，不堆形容词。",
-                        "scenario 只写角色与用户的长期关系和常见互动背景，不写具体日期、早晚、刚醒、当前地点或正在发生的动作。",
+                        "scenario 只写角色与用户的长期关系和常见互动背景，"
+                        "不写具体日期、早晚、刚醒、当前地点或正在发生的动作。",
                         "first_mes 与 alternate_greetings 先回应对方，再自然延续；每条简短。",
                         "mes_example 写 1 到 2 轮短对话，体现称呼、关系和回应方式。",
                         "动作、旁白和镜头描写按角色与情境自然出现，不限制表达形式。",
@@ -1200,7 +1208,13 @@ class DestinyService:
                     or row.get("人物ID")
                     or default_source
                 )
-                slot_id = row.get("slot_id") or row.get("category_id") or row.get("category") or row.get("分类ID") or default_slot
+                slot_id = (
+                    row.get("slot_id")
+                    or row.get("category_id")
+                    or row.get("category")
+                    or row.get("分类ID")
+                    or default_slot
+                )
                 label = row.get("label") or row.get("feature") or row.get("tag") or row.get("标签")
                 summary = row.get("summary") or row.get("behavior") or row.get("表现")
                 willingness = row.get("interaction_willingness") or row.get("willingness") or row.get("互动意愿")
@@ -1238,7 +1252,7 @@ class DestinyService:
         return cards_by_slot
 
     async def generate_archetypes(self, journey_id: str, *, expected_revision: int | None = None) -> dict[str, Any]:
-        journey = self.get(journey_id)
+        journey = self._get_mutable(journey_id)
         self._require_revision(journey, expected_revision)
         if journey.get("status") not in {"seed_ready", "archetypes_failed"}:
             raise ValueError("当前旅程不能重新生成角色方向")
@@ -1293,16 +1307,17 @@ class DestinyService:
             raise
 
     async def generate_cards(self, journey_id: str, *, expected_revision: int | None = None) -> dict[str, Any]:
-        journey = self.get(journey_id)
+        journey = self._get_mutable(journey_id)
         self._require_revision(journey, expected_revision)
-        can_retry = journey.get("status") == "cards_failed" and journey.get("archetypes")
+        invalid_stored_cards = self._cards_are_invalid(journey)
+        can_retry = (journey.get("status") == "cards_failed" or invalid_stored_cards) and journey.get("archetypes")
         if journey.get("status") != "archetypes_ready" and not can_retry:
             raise ValueError("请先完成 8 个角色方向")
         people = list(journey.get("archetypes") or [])
         if len(people) != ARCHETYPE_COUNT:
             raise ValueError("角色方向不完整，不能拆分命签")
-        cards_by_slot = self._preserved_card_batches(journey)
-        batch_states = self._card_batch_states(journey)
+        cards_by_slot = {} if invalid_stored_cards else self._preserved_card_batches(journey)
+        batch_states = _empty_card_batches() if invalid_stored_cards else self._card_batch_states(journey)
         pending_batches = [
             (batch_id, slots)
             for batch_id, slots in _CARD_BATCHES
@@ -1439,7 +1454,7 @@ class DestinyService:
         raise RuntimeError(message) from first_error
 
     def select(self, journey_id: str, slot_id: str, payload: DestinySelectionRequest) -> dict[str, Any]:
-        journey = self.get(journey_id)
+        journey = self._get_mutable(journey_id)
         if slot_id not in _SLOT_BY_ID:
             raise KeyError("unknown destiny slot")
         if journey.get("status") not in {
@@ -1472,7 +1487,7 @@ class DestinyService:
         )
 
     def use_default_archetypes(self, journey_id: str, *, expected_revision: int | None = None) -> dict[str, Any]:
-        journey = self.get(journey_id)
+        journey = self._get_mutable(journey_id)
         self._require_revision(journey, expected_revision)
         if journey.get("status") not in {"seed_ready", "archetypes_failed"}:
             raise ValueError("当前旅程不能使用默认角色方向")
@@ -1503,7 +1518,7 @@ class DestinyService:
         )
 
     def use_default_cards(self, journey_id: str, *, expected_revision: int | None = None) -> dict[str, Any]:
-        journey = self.get(journey_id)
+        journey = self._get_mutable(journey_id)
         self._require_revision(journey, expected_revision)
         can_retry = journey.get("status") == "cards_failed" and journey.get("archetypes")
         if journey.get("status") != "archetypes_ready" and not can_retry:
@@ -1553,7 +1568,7 @@ class DestinyService:
         )
 
     def unselect(self, journey_id: str, slot_id: str, *, expected_revision: int | None = None) -> dict[str, Any]:
-        journey = self.get(journey_id)
+        journey = self._get_mutable(journey_id)
         if journey.get("status") == "committed" or journey.get("character_id"):
             raise ValueError("已收入角色库的旅程不能回退")
         if journey.get("status") not in {
@@ -1587,7 +1602,7 @@ class DestinyService:
         )
 
     def rewind_archetypes(self, journey_id: str, *, expected_revision: int | None = None) -> dict[str, Any]:
-        journey = self.get(journey_id)
+        journey = self._get_mutable(journey_id)
         if journey.get("status") == "committed" or journey.get("character_id"):
             raise ValueError("已收入角色库的旅程不能回退")
         if journey.get("status") in _INTERRUPTED_STAGE_STATUS:
@@ -1669,7 +1684,7 @@ class DestinyService:
         return card
 
     async def synthesize(self, journey_id: str, *, expected_revision: int | None = None) -> dict[str, Any]:
-        journey = self.get(journey_id)
+        journey = self._get_mutable(journey_id)
         self._require_revision(journey, expected_revision)
         if set(journey.get("selections") or {}) != set(_SLOT_BY_ID):
             raise ValueError("必须完成十二项选择后才能合成 V2 角色卡")
@@ -1725,7 +1740,7 @@ class DestinyService:
             raise
 
     def clear_selections(self, journey_id: str, *, expected_revision: int | None = None) -> dict[str, Any]:
-        journey = self.get(journey_id)
+        journey = self._get_mutable(journey_id)
         if journey.get("status") not in {
             "cards_ready",
             "selections_ready",
@@ -1751,7 +1766,7 @@ class DestinyService:
         )
 
     def commit(self, journey_id: str, *, expected_revision: int | None = None) -> dict[str, Any]:
-        journey = self.get(journey_id)
+        journey = self._get_mutable(journey_id)
         self._require_revision(journey, expected_revision)
         if journey.get("character_id"):
             return self.characters.get(str(journey["character_id"]))

@@ -1,3 +1,5 @@
+> 文档状态：prototype。内容尚未成为当前产品承诺；当前权威见 `docs/INDEX.md`。
+
 # 零环境运行时
 
 Mindspace 0.7.4 支持 Windows 10/11 x64 当前用户安装。Launcher 不查询或调用系统 Python、

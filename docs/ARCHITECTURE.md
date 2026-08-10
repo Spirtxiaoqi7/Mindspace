@@ -1,3 +1,5 @@
+> 文档状态：historical。架构快照仅供追溯，不得作为当前操作说明；当前权威见 `docs/INDEX.md`。
+
 # Mindspace 只读拆解与 LangGraph 映射
 
 ## 1. 项目实际边界

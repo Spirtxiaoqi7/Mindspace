@@ -1144,6 +1144,70 @@ class ContextLedger:
             row = db.execute("SELECT * FROM turn_commits WHERE request_id=?", (request_id,)).fetchone()
         return dict(row) if row is not None else None
 
+    def replace_round(self, session_id: str, round_num: int) -> dict[str, Any]:
+        """Withdraw one committed round and invalidate every derived context view."""
+
+        with self._connect() as db:
+            if not db.in_transaction:
+                db.execute("BEGIN IMMEDIATE")
+            commits = db.execute(
+                "SELECT * FROM turn_commits WHERE session_id=? AND round_num=? ORDER BY created_at",
+                (session_id, round_num),
+            ).fetchall()
+            assistant_ids = [str(row["assistant_message_id"]) for row in commits]
+            removed_events = 0
+            for row in commits:
+                cursor = db.execute(
+                    "DELETE FROM context_events WHERE session_id=? AND sequence BETWEEN ? AND ?",
+                    (session_id, int(row["first_sequence"]), int(row["last_sequence"])),
+                )
+                removed_events += int(cursor.rowcount)
+            db.execute("DELETE FROM turn_commits WHERE session_id=? AND round_num=?", (session_id, round_num))
+            db.execute("DELETE FROM model_usage WHERE session_id=? AND round_num=?", (session_id, round_num))
+            db.execute("DELETE FROM role_audits WHERE session_id=? AND round_num=?", (session_id, round_num))
+            db.execute("DELETE FROM role_audit_jobs WHERE session_id=? AND round_num=?", (session_id, round_num))
+            db.execute(
+                "DELETE FROM context_outbox WHERE session_id=? AND processed_at IS NULL",
+                (session_id,),
+            )
+            session = db.execute("SELECT * FROM context_sessions WHERE session_id=?", (session_id,)).fetchone()
+            if session is not None and session["active_epoch_id"] is not None:
+                rewrite_version = int(session["rewrite_version"]) + 1
+                epoch_id = int(session["active_epoch_id"])
+                db.execute(
+                    "UPDATE context_sessions SET rewrite_version=?, active_summary_epoch_id=NULL, updated_at=? "
+                    "WHERE session_id=?",
+                    (rewrite_version, _now(), session_id),
+                )
+                db.execute(
+                    "UPDATE context_epochs SET rewrite_version=?, profile_revisions_json='__rewrite_required__' "
+                    "WHERE epoch_id=?",
+                    (rewrite_version, epoch_id),
+                )
+                db.execute(
+                    "UPDATE compaction_jobs SET status='stale', lease_until=NULL, updated_at=? "
+                    "WHERE session_id=? AND status IN ('queued', 'running')",
+                    (_now(), session_id),
+                )
+                self._insert_event(
+                    db,
+                    session_id=session_id,
+                    epoch_id=epoch_id,
+                    kind="deletion_correction",
+                    role="user",
+                    content="【服务端历史失效通知】该轮旧回复已被重新生成，不得继续作为真实历史使用。",
+                    metadata={
+                        "reason": "round_regenerated",
+                        "round": round_num,
+                        "assistant_message_ids": assistant_ids,
+                    },
+                )
+            return {
+                "commits": len(commits),
+                "events": removed_events,
+                "assistant_message_ids": assistant_ids,
+            }
+
     def take_compaction_evaluations(self, limit: int = 32) -> list[str]:
         with self._connect() as db:
             if not db.in_transaction:

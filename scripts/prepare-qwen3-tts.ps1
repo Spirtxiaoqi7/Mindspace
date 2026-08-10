@@ -2,6 +2,9 @@
 param()
 
 $ErrorActionPreference = "Stop"
+$ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+. (Join-Path $PSScriptRoot 'service-ports.ps1')
+$DefaultQwenPort = (Get-MindspaceServicePorts -ProjectRoot $ProjectRoot).qwen
 
 function Write-Stage([string]$Name) { Write-Output "QWEN3_STAGE=$Name" }
 
@@ -93,6 +96,7 @@ $engineText = [regex]::Replace(
   '(?m)^MODEL=.+$',
   "MODEL=$linuxModelPath"
 )
+$engineText = $engineText.Replace([string]$DefaultQwenPort, '${MINDSPACE_QWEN3_PORT}')
 $engineText = $engineText -replace "`r?`n", "`n"
 [System.IO.File]::WriteAllText(
   $enginePath,
@@ -113,12 +117,13 @@ $wrapper = @'
 set -euo pipefail
 source_launcher='__SOURCE_LAUNCHER__'
 runtime_root='__RUNTIME_ROOT__'
+qwen_port="${MINDSPACE_QWEN3_PORT:?MINDSPACE_QWEN3_PORT is required}"
 pid_path="$runtime_root/qwen3-vllm.pid"
 lock_path="$runtime_root/qwen3-vllm.lock"
 exec 9>"$lock_path"
 # A Launcher restart while vLLM is still compiling must never start a second
 # engine on the same GPU. A second wrapper waits for the owner instead of
-# competing for port 8091 or resetting the model-load state.
+# competing for the registered Qwen port or resetting the model-load state.
 if ! flock -n 9; then
   echo 'Qwen3 supervisor already owns this runtime; waiting for it to exit.'
   flock 9
@@ -137,7 +142,7 @@ trap cleanup EXIT INT TERM
 server_pid=$!
 printf '%s\n' "$server_pid" > "$pid_path"
 for _ in $(seq 1 600); do
-  if curl --fail --silent --show-error http://127.0.0.1:8091/health >/dev/null 2>&1; then
+  if curl --fail --silent --show-error "http://127.0.0.1:$qwen_port/health" >/dev/null 2>&1; then
     break
   fi
   if ! kill -0 "$server_pid" 2>/dev/null; then
@@ -146,7 +151,7 @@ for _ in $(seq 1 600); do
   fi
   sleep 1
 done
-if ! curl --fail --silent --show-error http://127.0.0.1:8091/health >/dev/null 2>&1; then
+if ! curl --fail --silent --show-error "http://127.0.0.1:$qwen_port/health" >/dev/null 2>&1; then
   echo 'Qwen3 health endpoint did not become ready' >&2
   exit 1
 fi
@@ -154,7 +159,7 @@ echo 'Qwen3 warm-up started'
 curl --fail --silent --show-error --max-time 180 \
   -H 'Content-Type: application/json' \
   -d '{"model":"mindspace-qwen3-tts","input":"嗯……我在。","voice":"serena","instructions":"语速舒缓，像熟悉伴侣近距离聊天，句间自然换气。","response_format":"pcm","stream":false,"task_type":"CustomVoice","language":"Chinese","non_streaming_mode":true,"max_new_tokens":128}' \
-  http://127.0.0.1:8091/v1/audio/speech >/dev/null
+  "http://127.0.0.1:$qwen_port/v1/audio/speech" >/dev/null
 date -u +%FT%TZ > "$runtime_root/warmup.ready"
 echo 'Qwen3 warm-up completed'
 set +e

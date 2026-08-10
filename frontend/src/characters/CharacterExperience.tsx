@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { request } from "./api";
-import type { CharacterCardV2, CharacterRecord, CharacterSummary } from "./types";
+import { request } from "../api";
+import type { CharacterCardV2, CharacterRecord, CharacterSummary } from "../types";
 
 export type AppView = "modes" | "draw" | "characters" | "chat" | "scenes";
 

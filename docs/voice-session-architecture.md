@@ -1,3 +1,5 @@
+> 文档状态：prototype。内容尚未成为当前产品承诺；当前权威见 `docs/INDEX.md`。
+
 # 语音会话架构（0.5.39）
 
 Mindspace 的桌面语音链路由一个 `VoiceIntent` 约束：`intent_id`、`generation` 和

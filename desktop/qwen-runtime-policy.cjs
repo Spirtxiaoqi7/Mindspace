@@ -32,7 +32,7 @@ function evaluateQwenRuntimePreflight(input = {}) {
     };
   }
   if (input.portConflict) {
-    return { eligible: false, code: "QWEN_PORT_CONFLICT", message: "端口 8091 已被非 Qwen3 服务占用；请先释放端口后再启用。" };
+    return { eligible: false, code: "QWEN_PORT_CONFLICT", message: `端口 ${input.port || "Qwen"} 已被非 Qwen3 服务占用；Mindspace 不会终止未知进程。` };
   }
   return {
     eligible: true,

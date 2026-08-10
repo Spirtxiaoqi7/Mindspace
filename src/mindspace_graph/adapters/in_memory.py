@@ -145,6 +145,9 @@ class InMemorySessionRepository:
                     "kind": "initiative_signal" if request.initiative else "message",
                     "initiative_trigger": request.initiative_trigger,
                     "retrieval_class": ("initiative_signal" if request.initiative else "user_dialogue"),
+                    "reply_to_message_id": request.reply_to_message_id,
+                    "interactions": [item.model_dump(mode="json") for item in request.interactions],
+                    "attachments": [item.model_dump(mode="json", exclude={"content"}) for item in request.attachments],
                 },
                 {
                     "message_id": assistant_message_id,
@@ -158,7 +161,7 @@ class InMemorySessionRepository:
                     "role_quality": role_quality["quality"],
                     "role_quality_reasons": role_quality["reasons"],
                     "role_quality_correction": role_quality["correction"],
-                    "tool_execution": deepcopy(tool_execution or {}),
+                    "tool_execution": deepcopy(tool_execution) if tool_execution else None,
                 },
             ]
         )

@@ -25,6 +25,9 @@ $wheel = Get-ChildItem -LiteralPath $DistRoot -Filter '*.whl' |
     Select-Object -First 1
 Copy-Item -LiteralPath $wheel.FullName -Destination $BundleRoot
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'portable-start.ps1') -Destination $BundleRoot
+New-Item -ItemType Directory -Path (Join-Path $BundleRoot 'scripts'), (Join-Path $BundleRoot 'config') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'service-ports.ps1') -Destination (Join-Path $BundleRoot 'scripts\service-ports.ps1')
+Copy-Item -LiteralPath (Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..')).Path 'config\service-ports.json') -Destination (Join-Path $BundleRoot 'config\service-ports.json')
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'config\.env.example') -Destination (Join-Path $BundleRoot '.env.example')
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'README.md') -Destination $BundleRoot
 

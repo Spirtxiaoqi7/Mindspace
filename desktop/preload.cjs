@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld("launcher", {
   component: (action, id = "") => ipcRenderer.invoke("launcher:component", { action, id }),
   voice: (action, id = "") => ipcRenderer.invoke("launcher:voice", { action, id }),
   onboarding: (action, payload = {}) => ipcRenderer.invoke("launcher:onboarding", { action, payload }),
+  saveSettings: (payload = {}) => ipcRenderer.invoke("launcher:settings-save", payload),
+  getSettings: () => ipcRenderer.invoke("launcher:settings-get"),
   diagnostics: () => ipcRenderer.invoke("runtime:diagnostics"),
   runtime: (action, id = "") => {
     const channel = {

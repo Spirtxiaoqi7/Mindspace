@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 import time
-from collections import deque
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -27,6 +25,11 @@ from mindspace_graph.capabilities import ReadOnlyCapabilityService
 from mindspace_graph.characters import CharacterRepository
 from mindspace_graph.compaction import ContextCompactionService
 from mindspace_graph.context_ledger import ContextLedger
+from mindspace_graph.conversation_runs import (
+    BufferedStreamRun,
+    ConversationRunRepository,
+    StreamEnvelopeFactory,
+)
 from mindspace_graph.emotion_disabled import DisabledEmotionCoordinator
 from mindspace_graph.entity_registry import EntityRegistry
 from mindspace_graph.graph import build_graph
@@ -65,52 +68,11 @@ NODE_LABELS = {
     "inject_result": "注入工具结果",
     "generate_final": "生成最终回复",
     "parse_protocol": "解析协议",
-    "repair_protocol": "修复输出协议",
     "validate_role": "校验角色一致性",
-    "repair_role": "修复角色回复",
     "validate_json_update": "校验 JSON 小幅更新",
     "persist_turn": "保存本轮对话",
     "finalize_error": "整理错误",
 }
-
-
-@dataclass(slots=True)
-class StreamEnvelopeFactory:
-    run_id: str
-    session_id: str
-    round: int
-    sequence: int = 0
-
-    def sse(self, event: str, data: dict[str, Any] | None = None) -> str:
-        self.sequence += 1
-        payload = {
-            "version": "1.0",
-            "event": event,
-            "seq": self.sequence,
-            "run_id": self.run_id,
-            "session_id": self.session_id,
-            "round": self.round,
-            "timestamp": datetime.now(UTC).isoformat(),
-            "data": data or {},
-        }
-        return f"id: {self.sequence}\nevent: {event}\ndata: {json.dumps(payload, ensure_ascii=False, default=str)}\n\n"
-
-
-class BufferedStreamRun:
-    """A turn-owned event log that survives individual HTTP subscribers."""
-
-    def __init__(self, request_id: str, request: ChatRequest) -> None:
-        self.request_id = request_id
-        self.request = request
-        self.events: deque[tuple[int, str]] = deque(maxlen=8192)
-        self.condition = asyncio.Condition()
-        self.completed = False
-        self.terminal_event = ""
-        self.updated_at = time.monotonic()
-        self.task: asyncio.Task[None] | None = None
-        self.partial_text = ""
-        self.last_checkpoint_at = time.monotonic()
-        self.last_checkpoint_size = 0
 
 
 @dataclass(slots=True)
@@ -175,15 +137,12 @@ class ConversationService:
             dependencies=self.dependencies,
             api_provider=self._memory_writeback_api,
         )
-        self._stream_runs: dict[str, BufferedStreamRun] = {}
-        self._stream_runs_lock = asyncio.Lock()
+        self._run_repository = ConversationRunRepository(dependencies.database)
+        # Compatibility views retained for existing diagnostics and tests.
+        self._stream_runs = self._run_repository.active_runs
+        self._stream_runs_lock = self._run_repository.lock
         self._retrieval_ready: set[tuple[str, str]] = set()
         self._retrieval_warmups: dict[tuple[str, str], asyncio.Task[None]] = {}
-        if self.dependencies.database is not None:
-            # Any row still marked running belongs to a prior process. Preserve
-            # its checkpoint and close it as interrupted; never replay the graph.
-            self.dependencies.database.recover_interrupted_runs()
-            self.dependencies.database.prune_conversation_runs(retention_hours=24)
 
     def _role_audit_api(self) -> ApiConfig:
         return ApiConfig(
@@ -249,8 +208,16 @@ class ConversationService:
             request_user_name=request_user_name,
         )
 
-    def _server_request(self, request: ChatRequest) -> ChatRequest:
+    def _server_request(
+        self,
+        request: ChatRequest,
+        session_snapshot: list[dict[str, Any]] | None = None,
+    ) -> ChatRequest:
         """用服务端模型地址/密钥/模型名覆盖客户端值，只保留本轮采样参数。"""
+
+        history = list(session_snapshot) if session_snapshot is not None else self.dependencies.sessions.load_all(
+            request.session_id
+        )
 
         characters = self.dependencies.characters
         if characters is None:
@@ -279,6 +246,16 @@ class ConversationService:
             session_role_state = current_role_state
         user_identity = profiles.user_profile.get("identity", {})
         ai_identity = profiles.ai_profile.get("identity", {})
+        reply_context = ""
+        if request.reply_to_message_id:
+            for item in reversed(history):
+                if str(item.get("message_id") or "") != request.reply_to_message_id or item.get("hidden"):
+                    continue
+                role_label = "用户" if item.get("role") == "user" else str(ai_identity.get("name") or "角色")
+                content = str(item.get("content") or "").strip()
+                if content:
+                    reply_context = f"{role_label}：{content[:1800]}"
+                break
         characters.touch(character_id)
         activity_context = None
         if request.activity_session_id:
@@ -301,9 +278,9 @@ class ConversationService:
             model=self.settings.llm_model,
             temperature=effective_roleplay_temperature(
                 request,
-                self.dependencies.sessions.load_all(request.session_id),
+                history,
             ),
-            max_tokens=effective_roleplay_max_tokens(request, self.dependencies.sessions.load_all(request.session_id)),
+            max_tokens=effective_roleplay_max_tokens(request, history),
         )
         retrieval_key = (request.session_id, character_id)
         explicit_recall = bool(_EXPLICIT_RECALL.search(request.message))
@@ -340,6 +317,7 @@ class ConversationService:
                 "system_prompt": str(character.get("system_prompt") or ""),
                 "activity_context": activity_context,
                 "scene_context": scene_context,
+                "reply_context": reply_context,
                 "retrieval": retrieval,
             }
         )
@@ -408,25 +386,15 @@ class ConversationService:
         )
 
     async def invoke(self, request: ChatRequest, request_id: str | None = None) -> ChatResponse:
+        """Run or join the same durable execution used by the SSE endpoint."""
+
         request_id = request_id or uuid4().hex
-        self.cancellation.start(request_id)
-        response: ChatResponse | None = None
-        await self.memory_writeback.flush_session(request.session_id)
-        server_request = self._server_request(request)
-        try:
-            result = await self.graph.ainvoke(
-                {"request": server_request, "request_id": request_id},
-                config={"recursion_limit": 20},
-            )
-            response = result["response"]
-            if response.status == "success":
-                self._kick_retrieval_warmup(server_request)
-                self.memory_writeback.kick(server_request, response)
-        finally:
-            self.cancellation.finish(request_id)
-            self.compaction.kick()
-            self.role_audit.kick()
-        return response
+        run = await self._ensure_stream_run(request, request_id)
+        if run.task is not None:
+            await asyncio.shield(run.task)
+        if run.response is not None:
+            return run.response
+        raise RuntimeError(run.error or f"durable run ended without a response: {run.terminal_event or 'unknown'}")
 
     async def stream(
         self,
@@ -450,155 +418,25 @@ class ConversationService:
         return resolved_request_id
 
     async def resume_stream(self, request_id: str, *, after_sequence: int = 0) -> AsyncIterator[str]:
-        async with self._stream_runs_lock:
-            run = self._stream_runs.get(request_id)
-        if run is None:
-            database = self.dependencies.database
-            if database is None or database.get_conversation_run(request_id) is None:
-                raise KeyError(request_id)
-            for payload in database.conversation_run_events(request_id, after_sequence):
-                yield payload
-            return
-        async for event in self._subscribe_stream(run, after_sequence):
+        async for event in self._run_repository.resume(request_id, after_sequence=after_sequence):
             yield event
 
     async def stream_status(self, request_id: str) -> dict[str, Any] | None:
-        async with self._stream_runs_lock:
-            run = self._stream_runs.get(request_id)
-        if run is None:
-            database = self.dependencies.database
-            record = database.get_conversation_run(request_id) if database is not None else None
-            if record is None:
-                return None
-            return {
-                "run_id": request_id,
-                "completed": record["status"] != "running",
-                "status": record["status"],
-                "terminal_event": record["terminal_event"],
-                "latest_seq": record["latest_seq"],
-                "partial_text": record["partial_text"],
-                "session_id": record["session_id"],
-                "round": record["round_num"],
-            }
-        return {
-            "run_id": request_id,
-            "completed": run.completed,
-            "terminal_event": run.terminal_event,
-            "latest_seq": run.events[-1][0] if run.events else 0,
-        }
+        return await self._run_repository.status(request_id)
 
     async def _ensure_stream_run(self, request: ChatRequest, request_id: str) -> BufferedStreamRun:
         """创建或复用运行，并拒绝 request_id 被绑定到另一轮。"""
 
-        async with self._stream_runs_lock:
-            request_digest = self._request_digest(request)
-            now = time.monotonic()
-            expired = [
-                key for key, value in self._stream_runs.items() if value.completed and now - value.updated_at > 600
-            ]
-            for key in expired:
-                self._stream_runs.pop(key, None)
-            existing = self._stream_runs.get(request_id)
-            if existing is not None:
-                if (
-                    existing.request.session_id != request.session_id
-                    or existing.request.round != request.round
-                    or self._request_digest(existing.request) != request_digest
-                ):
-                    raise ValueError("request id is already bound to a different request")
-                return existing
-            if self.dependencies.database is not None:
-                durable = self.dependencies.database.create_conversation_run(
-                    run_id=request_id,
-                    session_id=request.session_id,
-                    round_num=request.round,
-                    request_digest=request_digest,
-                )
-                if str(durable.get("status")) != "running":
-                    raise ValueError("request id belongs to a completed durable run")
-            run = BufferedStreamRun(request_id, request)
-            self._stream_runs[request_id] = run
-            run.task = asyncio.create_task(self._produce_stream(run), name=f"mindspace-run-{request_id[:12]}")
-            return run
-
-    @staticmethod
-    def _request_digest(request: ChatRequest) -> str:
-        """Bind one request id to the complete normalized client turn."""
-
-        return request.idempotency_digest()
+        return await self._run_repository.ensure(request, request_id, self._produce_stream)
 
     async def _publish_stream(self, run: BufferedStreamRun, sequence: int, payload: str, *, terminal: str = "") -> None:
-        event_name = ""
-        event_data: dict[str, Any] = {}
-        for line in payload.splitlines():
-            if line.startswith("event:"):
-                event_name = line.partition(":")[2].strip()
-            elif line.startswith("data:"):
-                try:
-                    decoded = json.loads(line.partition(":")[2].strip())
-                    raw_data = decoded.get("data") if isinstance(decoded, dict) else {}
-                    event_data = raw_data if isinstance(raw_data, dict) else {}
-                except json.JSONDecodeError:
-                    event_data = {}
-        async with run.condition:
-            run.events.append((sequence, payload))
-            run.updated_at = time.monotonic()
-            if event_name == "response.delta":
-                run.partial_text += str(event_data.get("delta") or "")
-            elif event_name == "response.replace":
-                run.partial_text = str(event_data.get("content") or "")
-            if terminal:
-                run.completed = True
-                run.terminal_event = terminal
-            run.condition.notify_all()
-        database = self.dependencies.database
-        if database is None:
-            return
-        now = time.monotonic()
-        checkpoint_due = (
-            now - run.last_checkpoint_at >= 0.5
-            or len(run.partial_text) - run.last_checkpoint_size >= 1024
-            or bool(terminal)
-        )
-        if checkpoint_due:
-            database.checkpoint_conversation_run(run.request_id, run.partial_text, sequence)
-            run.last_checkpoint_at = now
-            run.last_checkpoint_size = len(run.partial_text)
-        # Token deltas are represented by the coalesced partial checkpoint.
-        # Milestones remain individually replayable and are capped by SQLite.
-        if event_name != "response.delta":
-            database.append_conversation_run_event(
-                run_id=run.request_id,
-                sequence=sequence,
-                event=event_name or "graph.event",
-                payload=payload,
-                terminal=bool(terminal),
-            )
+        await self._run_repository.publish(run, sequence, payload, terminal=terminal)
 
     async def _subscribe_stream(self, run: BufferedStreamRun, after_sequence: int) -> AsyncIterator[str]:
         """从 after_sequence 后重放，再跟随新事件直到终态。"""
 
-        cursor = max(0, int(after_sequence))
-        while True:
-            heartbeat = False
-            async with run.condition:
-                available = [item for item in run.events if item[0] > cursor]
-                completed = run.completed
-                if not available and not completed:
-                    try:
-                        await asyncio.wait_for(run.condition.wait(), timeout=15.0)
-                    except TimeoutError:
-                        heartbeat = True
-                    available = [item for item in run.events if item[0] > cursor]
-                    completed = run.completed
-            if heartbeat and not available:
-                yield ": heartbeat\n\n"
-                continue
-            for sequence, payload in available:
-                cursor = max(cursor, sequence)
-                yield payload
-            if completed and not [item for item in run.events if item[0] > cursor]:
-                return
+        async for event in self._run_repository.subscribe(run, after_sequence):
+            yield event
 
     async def _produce_stream(self, run: BufferedStreamRun) -> None:
         """只启动一次 LangGraph，把 tasks/updates/custom 统一封装成有序 SSE。"""
@@ -624,9 +462,14 @@ class ConversationService:
             # run.error event instead of leaving subscribers after run.accepted
             # with a permanently running durable record.
             await self.memory_writeback.flush_session(request.session_id)
-            server_request = self._server_request(request)
+            session_snapshot = self.dependencies.sessions.load_all(request.session_id)
+            server_request = self._server_request(request, session_snapshot)
             async for part in self.graph.astream(
-                {"request": server_request, "request_id": request_id},
+                {
+                    "request": server_request,
+                    "request_id": request_id,
+                    "session_snapshot": session_snapshot,
+                },
                 config={"recursion_limit": 20},
                 stream_mode=["tasks", "updates", "custom"],
                 version="v2",
@@ -656,12 +499,15 @@ class ConversationService:
                         if isinstance(values, dict) and isinstance(values.get("response"), ChatResponse):
                             final = values["response"]
             if final is None:
+                run.error = "missing final response"
                 payload = events.sse("run.error", {"error": "missing final response"})
                 await self._publish_stream(run, events.sequence, payload, terminal="run.error")
             elif final.status == "error":
+                run.response = final
                 payload = events.sse("run.error", {"response": final.model_dump(mode="json")})
                 await self._publish_stream(run, events.sequence, payload, terminal="run.error")
             else:
+                run.response = final
                 self.cancellation.finish(request_id)
                 run_finished = True
                 self._kick_retrieval_warmup(server_request)
@@ -671,6 +517,7 @@ class ConversationService:
                 payload = events.sse("run.completed", {"response": final.model_dump(mode="json")})
                 await self._publish_stream(run, events.sequence, payload, terminal="run.completed")
         except GenerationCancelled:
+            run.error = "generation cancelled"
             payload = events.sse("run.cancelled", {"cancelled": True})
             await self._publish_stream(run, events.sequence, payload, terminal="run.cancelled")
         except asyncio.CancelledError:
@@ -681,10 +528,21 @@ class ConversationService:
                 {"partial_text": run.partial_text, "reason": "core_shutdown"},
             )
             await self._publish_stream(run, events.sequence, payload, terminal="run.interrupted")
+            run.error = "core shutdown interrupted the run"
             raise
         except Exception as exc:  # noqa: BLE001 - converted to a stable API event
+            run.error = str(exc)
             self.dependencies.audit.record("stream_failed", {"request_id": request_id, "error": str(exc)})
-            payload = events.sse("run.error", {"error": str(exc)})
+            payload = events.sse(
+                "run.error",
+                {
+                    "error": str(exc),
+                    "model": {
+                        "provider_attempts": run.provider_attempts,
+                        "total_http_attempts": len(run.provider_attempts),
+                    },
+                },
+            )
             await self._publish_stream(run, events.sequence, payload, terminal="run.error")
         finally:
             if not run_finished:

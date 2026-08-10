@@ -79,7 +79,8 @@ class ToolInstruction(BaseModel):
         if self.tool != "task":
             return " ".join(self.parameter.split())[:160]
         command = self.command or {}
-        return f"{command.get('op', '')}: {command.get('title') or command.get('id') or command.get('query') or ''}"[:160]
+        detail = command.get("title") or command.get("id") or command.get("query") or ""
+        return f"{command.get('op', '')}: {detail}"[:160]
 
     @property
     def command_hash(self) -> str:
@@ -170,7 +171,13 @@ def failed_result(instruction: ToolInstruction, status: Literal["failed", "denie
     )
 
 
-def execute_memory_tool(instruction: ToolInstruction, *, request: ChatRequest, state: dict[str, Any], deps: Any) -> ToolExecutionResult:
+def execute_memory_tool(
+    instruction: ToolInstruction,
+    *,
+    request: ChatRequest,
+    state: dict[str, Any],
+    deps: Any,
+) -> ToolExecutionResult:
     started = time.perf_counter()
     query = instruction.parameter
     items: list[dict[str, Any]] = []

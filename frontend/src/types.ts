@@ -1,5 +1,23 @@
 export type Role = "user" | "assistant";
 
+export interface InteractionTag {
+  id: string;
+  category: "daily" | "touch" | "kiss" | "custom";
+  level: number;
+  action: string;
+  target?: string;
+  sensitivity: "normal" | "intimate";
+}
+
+export interface ChatAttachment {
+  attachment_id: string;
+  name: string;
+  media_type: string;
+  size: number;
+  content?: string;
+  content_missing?: boolean;
+}
+
 export interface Message {
   message_id?: string;
   role: Role;
@@ -13,7 +31,11 @@ export interface Message {
   voice_cue?: string;
   hidden?: boolean;
   presentation_mode?: PresentationModeResolved;
-  tool_execution?: ToolExecution;
+  tool_execution?: ToolExecution | null;
+  reply_to_message_id?: string;
+  interactions?: InteractionTag[];
+  attachments?: ChatAttachment[];
+  request_snapshot?: ChatTurnRequest;
 }
 
 export interface ToolExecution {
@@ -22,13 +44,14 @@ export interface ToolExecution {
   level: 2 | 3;
   status: "requested" | "reviewing" | "running" | "success" | "failed" | "denied";
   parameter_summary: string;
+  started_at?: string;
+  completed_at?: string;
   elapsed_ms: number;
   source_count: number;
   data?: Record<string, unknown>;
   error?: string;
   receipt?: Record<string, unknown>;
 }
-export type PresentationModePreference = "auto" | "dialogue" | "scene";
 export type PresentationModeResolved = "dialogue" | "scene";
 
 export type InitiativeTrigger = "none" | "manual" | "idle_continuation" | "continuous_companionship";
@@ -135,17 +158,261 @@ export interface StreamEnvelope<T = Record<string, unknown>> {
   data: T;
 }
 
+export interface LlmSettings {
+  mode: string;
+  base_url: string;
+  model: string;
+  credentials_configured?: boolean;
+  api_key?: string;
+  temperature: number;
+  max_tokens: number;
+  role_audit_enabled?: boolean;
+  role_audit_model?: string;
+}
+
+export interface PersonaSettings {
+  user_name: string;
+  user_persona: string;
+  character_name: string;
+  system_prompt: string;
+  reply_length_preference: string;
+}
+
+export interface RetrievalSettings {
+  rag_enabled: boolean;
+  knowledge_enabled: boolean;
+  chat_enabled: boolean;
+  structured_memory_enabled: boolean;
+  temporal_enabled: boolean;
+  knowledge_k: number;
+  chat_k: number;
+  history_k: number;
+  similarity_threshold: number;
+  decay_rounds: number;
+  decay_hours: number;
+  fairness_enabled: boolean;
+  low_exposure_ratio: number;
+  memory_family_limit: number;
+  starvation_rounds: number;
+  starvation_boost: number;
+  bm25_enabled: boolean;
+  vector_enabled: boolean;
+  rrf_k: number;
+  candidate_multiplier: number;
+  max_total_boost: number;
+  reranker_enabled: boolean;
+  reranker_top_n: number;
+  boosts?: object;
+}
+
+export interface KnowledgeSettings {
+  parent_size: number;
+  child_size: number;
+  overlap: number;
+}
+
+export interface ProtocolSettings {
+  mode: string;
+  auto_repair: boolean;
+  diagnostics: boolean;
+}
+
+export interface AudioSettings {
+  asr_provider: string;
+  asr_model: string;
+  asr_endpoint: string;
+  asr_silence_ms: number;
+  asr_utterance_merge_ms: number;
+  asr_listening_energy_threshold_db: number;
+  asr_listening_min_speech_ms: number;
+  asr_barge_in_energy_threshold_db: number;
+  asr_barge_in_min_speech_ms: number;
+  asr_candidate_release_ms: number;
+  asr_adaptive_noise_enabled?: boolean;
+  asr_noise_calibration_ms?: number;
+  asr_listening_noise_margin_db?: number;
+  asr_barge_in_noise_margin_db?: number;
+  asr_deferred_during_playback: boolean;
+  asr_hotwords_enabled: boolean;
+  asr_dynamic_endpointing: boolean;
+  asr_final_refinement_enabled: boolean;
+  asr_auto_send?: boolean;
+  asr_barge_in_cooldown_ms?: number;
+  asr_duplicate_text_window_ms?: number;
+  asr_false_candidate_backoff_ms?: number;
+  tts_provider: string;
+  tts_speed: number;
+  auto_tts: boolean;
+  tts_worker_url?: string;
+  tts_reference_configured?: boolean;
+  tts_reference_name?: string;
+  tts_reference_text?: string;
+  tts_gpt_sovits_voice?: string;
+  tts_gpt_sovits_worker_url?: string;
+  tts_qwen3_vllm_voice?: string;
+  tts_qwen3_vllm_url?: string;
+  tts_qwen3_vllm_model?: string;
+  tts_siliconflow_base_url?: string;
+  tts_siliconflow_api_key?: string;
+  tts_siliconflow_credentials_configured?: boolean;
+  tts_siliconflow_model?: string;
+  tts_siliconflow_voice?: string;
+  tts_siliconflow_sample_rate?: number;
+  tts_siliconflow_gain?: number;
+}
+
+export interface InteractionSettings {
+  voice_entry_mode?: VoiceInteractionMode;
+  face_to_face_scene?: string;
+  idle_continuation_enabled: boolean;
+  text_idle_seconds: number;
+  voice_idle_seconds: number;
+  unlimited_reply_enabled: boolean;
+  unlimited_reply_interval_seconds?: number;
+  unlimited_reply_max_rounds: number;
+}
+
+export interface CapabilitySettings {
+  master_enabled: boolean;
+  local_knowledge_enabled: boolean;
+  web_search_enabled: boolean;
+  realtime_topics_enabled: boolean;
+  topic_expansion_enabled: boolean;
+  proactive_hotspots_enabled: boolean;
+  show_sources_enabled: boolean;
+  web_timeout_seconds: number;
+  max_web_results: number;
+  max_web_pages: number;
+  max_web_content_chars: number;
+}
+
+export interface AppearanceSettings {
+  theme: string;
+  density: string;
+  font_scale: number;
+  language: string;
+}
+
 export interface ProductSettings {
   schema_version: string;
-  llm: Record<string, unknown>;
-  persona: Record<string, unknown>;
-  retrieval: Record<string, unknown>;
-  knowledge: Record<string, unknown>;
-  protocol: Record<string, unknown>;
-  audio: Record<string, unknown>;
-  interaction?: Record<string, unknown>;
-  capabilities?: Record<string, unknown>;
-  appearance: Record<string, unknown>;
+  llm: Partial<LlmSettings>;
+  persona: Partial<PersonaSettings>;
+  retrieval: Partial<RetrievalSettings>;
+  knowledge: Partial<KnowledgeSettings>;
+  protocol: Partial<ProtocolSettings>;
+  audio: Partial<AudioSettings>;
+  interaction?: Partial<InteractionSettings>;
+  capabilities?: Partial<CapabilitySettings>;
+  appearance: Partial<AppearanceSettings>;
+}
+
+export interface ProviderHttpAttempt {
+  attempt: number;
+  request_kind: string;
+  status: "success" | "http_error" | "transport_error" | "empty" | "error";
+  elapsed_ms: number;
+  http_status: number | null;
+  compatibility_variant: string;
+  retry_reason: string;
+  error: string;
+}
+
+export interface ModelCallRecord {
+  kind: string;
+  status: "success" | "degraded" | "denied" | "skipped";
+  elapsed_ms: number;
+  error: string;
+}
+
+export interface ModelDiagnostics {
+  call_summary: ModelCallRecord[];
+  total_calls: number;
+  provider_attempts: ProviderHttpAttempt[];
+  total_http_attempts: number;
+}
+
+export interface AudioStatus {
+  asr_ready: boolean;
+  tts_ready?: boolean;
+  asr_error?: string;
+  tts_error?: string;
+  asr_detail?: {
+    native_capture?: {
+      available?: boolean;
+      ready?: boolean;
+      state?: string;
+      error?: string;
+      error_code?: string;
+    };
+  };
+}
+
+export interface ChatRetrievalRequest {
+  rag_enabled: boolean;
+  knowledge_enabled: boolean;
+  chat_enabled: boolean;
+  structured_memory_enabled: boolean;
+  temporal_enabled: boolean;
+  knowledge_k: number;
+  chat_k: number;
+  history_k: number;
+  similarity_threshold: number;
+  decay_rounds: number;
+  decay_hours: number;
+  fairness_enabled: boolean;
+  low_exposure_ratio: number;
+  memory_family_limit: number;
+  starvation_rounds: number;
+  starvation_boost: number;
+  bm25_enabled: boolean;
+  vector_enabled: boolean;
+  rrf_k: number;
+  candidate_multiplier: number;
+  max_total_boost: number;
+  reranker_enabled: boolean;
+  reranker_top_n: number;
+  boosts: object;
+}
+
+export interface ChatTurnRequest {
+  message: string;
+  session_id: string;
+  character_id: string;
+  reply_to_message_id: string;
+  interactions: InteractionTag[];
+  attachments: ChatAttachment[];
+  activity_session_id: string;
+  session_mode: "draw" | "custom";
+  round: number;
+  mode: "primary" | "regenerate";
+  interaction_mode: "voice" | "text";
+  presentation_mode: "auto";
+  adult_mode: boolean;
+  r18_style_id: string;
+  initiative: boolean;
+  initiative_trigger: InitiativeTrigger;
+  initiative_sequence: number;
+  initiative_sequence_limit: number;
+  client_sent_at: string;
+  client_timezone: string;
+  client_utc_offset_minutes: number;
+  voice_delivery: VoiceDeliveryState | null;
+  voice_context: VoiceInteractionContext | null;
+  input_evidence: {
+    asr: {
+      quality: "uncertain";
+      confirmed_text: string;
+      uncertain_segments: Array<{ text: string; reason: string }>;
+      decision_reasons: string[];
+    };
+  } | null;
+  user_name: string;
+  user_persona: string;
+  reply_length_preference: string;
+  character_name: string;
+  system_prompt: string;
+  api: { temperature: number; max_tokens: number };
+  retrieval: ChatRetrievalRequest;
 }
 
 export interface KnowledgeItem {

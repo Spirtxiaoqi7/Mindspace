@@ -147,8 +147,38 @@ class ScenePromptContext(BaseModel):
     eligible_for_json_evidence: Literal[False] = False
 
 
+class ChatInteraction(BaseModel):
+    id: str = Field(min_length=1, max_length=120)
+    category: Literal["daily", "touch", "kiss", "custom"]
+    level: int = Field(default=0, ge=0, le=99)
+    action: str = Field(min_length=1, max_length=40)
+    target: str = Field(default="", max_length=40)
+    sensitivity: Literal["normal", "intimate"] = "normal"
+
+    @field_validator("id", "action", "target")
+    @classmethod
+    def trim_interaction_text(cls, value: str) -> str:
+        return value.strip()
+
+
+class ChatAttachment(BaseModel):
+    attachment_id: str = Field(min_length=1, max_length=120)
+    name: str = Field(min_length=1, max_length=240)
+    media_type: str = Field(default="text/plain", min_length=1, max_length=120)
+    size: int = Field(default=0, ge=0, le=1_048_576)
+    content: str = Field(default="", max_length=20_000)
+
+    @field_validator("attachment_id", "name", "media_type")
+    @classmethod
+    def trim_attachment_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("attachment fields must not be blank")
+        return value
+
+
 class ChatRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=10_000)
+    message: str = Field(default="", max_length=10_000)
     session_id: str = Field(default_factory=lambda: str(uuid4()))
     character_id: str = Field(default="", max_length=64)
     session_mode: Literal["draw", "custom"] = "custom"
@@ -178,6 +208,10 @@ class ChatRequest(BaseModel):
     # inject an arbitrary scene sentence into the model input.
     scene_context: ScenePromptContext | None = None
     input_evidence: InputEvidence | None = None
+    reply_to_message_id: str = Field(default="", max_length=64)
+    reply_context: str = Field(default="", max_length=2_000)
+    interactions: list[ChatInteraction] = Field(default_factory=list, max_length=12)
+    attachments: list[ChatAttachment] = Field(default_factory=list, max_length=5)
     user_name: str = "用户"
     user_persona: str = ""
     reply_length_preference: str = Field(default="", max_length=300)
@@ -189,10 +223,17 @@ class ChatRequest(BaseModel):
     @field_validator("message")
     @classmethod
     def trim_message(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("message must not be blank")
-        return value
+        return value.strip()
+
+    @model_validator(mode="after")
+    def validate_turn_payload(self) -> ChatRequest:
+        if not self.initiative and not self.message and not self.interactions and not self.attachments:
+            raise ValueError("message, interaction, or attachment is required")
+        if not self.adult_mode and any(item.sensitivity == "intimate" for item in self.interactions):
+            raise ValueError("intimate interactions require adult_mode")
+        if sum(len(item.content) for item in self.attachments) > 40_000:
+            raise ValueError("attachment text exceeds the per-turn limit")
+        return self
 
     def idempotency_digest(self) -> str:
         """Hash every client-controlled field that can change one turn's behavior.
@@ -207,6 +248,7 @@ class ChatRequest(BaseModel):
             "server_received_at",
             "activity_context",
             "scene_context",
+            "reply_context",
             "user_name",
             "user_persona",
             "reply_length_preference",
@@ -318,6 +360,8 @@ class ModelUsage(BaseModel):
     completion_tokens: int = Field(default=0, ge=0)
     total_tokens: int = Field(default=0, ge=0)
     cache_source: str = "unreported"
+    requested_max_tokens: int = Field(default=0, ge=0)
+    finish_reason: str = ""
 
 
 class ModelCallRecord(BaseModel):
@@ -333,9 +377,24 @@ class ModelCallRecord(BaseModel):
     error: str = Field(default="", max_length=500)
 
 
+class ProviderHttpAttempt(BaseModel):
+    """One real HTTP request issued to an LLM provider."""
+
+    attempt: int = Field(ge=1)
+    request_kind: str = Field(min_length=1, max_length=64)
+    status: Literal["success", "http_error", "transport_error", "empty", "error"]
+    elapsed_ms: float = Field(default=0, ge=0)
+    http_status: int | None = Field(default=None, ge=100, le=599)
+    compatibility_variant: str = Field(default="", max_length=80)
+    retry_reason: str = Field(default="", max_length=160)
+    error: str = Field(default="", max_length=500)
+
+
 class ModelDiagnostics(BaseModel):
     call_summary: list[ModelCallRecord] = Field(default_factory=list)
     total_calls: int = Field(default=0, ge=0, le=5)
+    provider_attempts: list[ProviderHttpAttempt] = Field(default_factory=list)
+    total_http_attempts: int = Field(default=0, ge=0)
 
 
 class RoleAuditResult(BaseModel):
@@ -383,7 +442,7 @@ class ChatResponse(BaseModel):
     presentation_mode: Literal["dialogue", "scene"] = "dialogue"
     writeback_applied: bool = False
     retrieval_counts: dict[str, int] = Field(default_factory=dict)
-    tool_execution: dict[str, Any] = Field(default_factory=dict)
+    tool_execution: dict[str, Any] | None = None
     errors: list[str] = Field(default_factory=list)
     trace: list[str] = Field(default_factory=list)
     llm_call_count: int = 0

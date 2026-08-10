@@ -1,3 +1,5 @@
+> 文档状态：prototype。内容尚未成为当前产品承诺；当前权威见 `docs/INDEX.md`。
+
 # `.mindspace-card` 角色卡包格式
 
 卡包是 ZIP 容器，扩展名固定为 `.mindspace-card`：

@@ -8,7 +8,6 @@ from typing import Annotated, Any
 from typing_extensions import TypedDict
 
 from mindspace_graph.emotion import EmotionState, TextEmotionState
-from mindspace_graph.tool_chain import ToolExecutionResult, ToolInstruction
 from mindspace_graph.models import (
     ChatRequest,
     ChatResponse,
@@ -18,10 +17,12 @@ from mindspace_graph.models import (
     ModelUsage,
     ProfileBundle,
     ProtocolOutput,
+    ProviderHttpAttempt,
     RetrievedChunk,
     RoleValidation,
 )
 from mindspace_graph.profile_bootstrap import ProfileBootstrap
+from mindspace_graph.tool_chain import ToolExecutionResult, ToolInstruction
 
 
 class TurnState(TypedDict, total=False):
@@ -49,6 +50,8 @@ class TurnState(TypedDict, total=False):
     context_estimated_tokens: int
     context_emergency_truncated: bool
     model_usage: list[ModelUsage]
+    provider_attempts: list[ProviderHttpAttempt]
+    session_snapshot: list[dict[str, Any]]
     llm_call_count: int
     llm_call_counts: dict[str, int]
     model_call_summary: list[dict[str, Any]]

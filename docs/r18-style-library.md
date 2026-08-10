@@ -1,3 +1,5 @@
+> 文档状态：prototype。内容尚未成为当前产品承诺；当前权威见 `docs/INDEX.md`。
+
 # R18 style library and Director
 
 Mindspace provides an optional product-level R18 mode.  It is deliberately

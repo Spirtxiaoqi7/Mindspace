@@ -1,23 +1,20 @@
 [CmdletBinding()]
 param(
-    [switch]$Execute
+    [switch]$Execute,
+    [string]$CurrentRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path,
+    [string[]]$AdditionalTargets = @()
 )
 
 $ErrorActionPreference = "Stop"
 
-$currentRoot = [System.IO.Path]::GetFullPath("A:\RAG\langgarph-rag").TrimEnd("\")
+$currentRoot = [System.IO.Path]::GetFullPath($CurrentRoot).TrimEnd("\")
 $currentRelease = Join-Path $currentRoot "dist-mindspace-app"
-$currentUserData = [System.IO.Path]::GetFullPath("C:\Users\Administrator\AppData\Roaming\mindspace-desktop").TrimEnd("\")
+$currentUserData = [System.IO.Path]::GetFullPath((Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'mindspace-desktop')).TrimEnd("\")
 
 $targets = @(
-    "A:\Mindscape",
-    "A:\Mindscape-app",
-    "A:\Mindspace-release-resources",
-    "C:\Users\Administrator\AppData\Local\Mindspace",
-    "C:\Users\Administrator\AppData\Local\Mindspace-app",
-    "C:\Users\Administrator\AppData\Roaming\mindspace-launcher",
-    "C:\Users\Administrator\Desktop\Mindspace Launcher.lnk",
-    "C:\Users\Administrator\Desktop\Mindspace.lnk",
+    $AdditionalTargets,
+    (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Mindspace'),
+    (Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'mindspace-launcher'),
     (Join-Path $currentRoot "dist-launcher"),
     (Join-Path $currentRoot "dist-launcher-prototype"),
     (Join-Path $currentRoot "dist-application"),
@@ -74,7 +71,7 @@ $records = foreach ($target in $targets) {
 }
 
 if ($Execute) {
-    $shortcutPath = "C:\Users\Administrator\Desktop\Mindspace.lnk"
+    $shortcutPath = Join-Path ([Environment]::GetFolderPath('Desktop')) 'Mindspace.lnk'
     $targetExe = Join-Path $currentRelease "win-unpacked\Mindspace.exe"
     if (-not (Test-Path -LiteralPath $targetExe)) {
         throw "当前版本可执行文件不存在：$targetExe"

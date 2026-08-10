@@ -16,18 +16,8 @@ from mindspace_graph.models import (
     JsonWriteReceipt,
     ModelDiagnostics,
     ProtocolOutput,
+    ProviderHttpAttempt,
     RoleValidation,
-)
-from mindspace_graph.policies import rank_with_temporal_decay
-from mindspace_graph.ports import Dependencies
-from mindspace_graph.profile_bootstrap import evaluate_profile_bootstrap
-from mindspace_graph.prompting import build_prompt, resolve_initiative_request
-from mindspace_graph.protocol import IncrementalResponseParser, ProtocolParser
-from mindspace_graph.roleplay import (
-    allow_raw_chat_retrieval,
-    normalize_presentation_response,
-    normalize_voice_response,
-    resolve_presentation_mode,
 )
 from mindspace_graph.native_tools import (
     native_call_to_instruction,
@@ -35,7 +25,18 @@ from mindspace_graph.native_tools import (
     native_tool_definitions,
     supports_native_tools,
 )
+from mindspace_graph.policies import rank_with_temporal_decay
+from mindspace_graph.ports import Dependencies
+from mindspace_graph.profile_bootstrap import evaluate_profile_bootstrap
+from mindspace_graph.prompting import build_prompt, resolve_initiative_request
+from mindspace_graph.protocol import IncrementalResponseParser, ProtocolParser
 from mindspace_graph.r18_director import explicit_r18_requested
+from mindspace_graph.roleplay import (
+    allow_raw_chat_retrieval,
+    normalize_presentation_response,
+    normalize_voice_response,
+    resolve_presentation_mode,
+)
 from mindspace_graph.state import TurnState
 from mindspace_graph.tool_chain import (
     FINAL_AFTER_TOOL_PROTOCOL,
@@ -177,9 +178,12 @@ class NodeFactory:
 
     @staticmethod
     def _model_diagnostics(state: TurnState) -> ModelDiagnostics:
+        attempts = state.get("provider_attempts", [])
         return ModelDiagnostics(
             call_summary=state.get("model_call_summary", []),
             total_calls=state.get("llm_call_count", 0),
+            provider_attempts=attempts,
+            total_http_attempts=len(attempts),
         )
 
     def _check_cancelled(self, state: TurnState) -> None:
@@ -198,6 +202,7 @@ class NodeFactory:
             "llm_call_count": 0,
             "llm_call_counts": {},
             "model_call_summary": [],
+            "provider_attempts": [],
             "trace": ["validate_request"],
         }
 
@@ -209,7 +214,7 @@ class NodeFactory:
         profiles = self.deps.profiles.load_bundle(request.character_id)
         request = resolve_initiative_request(request, profiles)
         deletion_events = self.deps.sessions.load_pending_deletions(request.session_id)
-        recent_history = self.deps.sessions.load_all(request.session_id)
+        recent_history = list(state.get("session_snapshot") or self.deps.sessions.load_all(request.session_id))
         if request.mode == "regenerate":
             recent_history = [item for item in recent_history if int(item.get("round", 0)) != request.round]
             if self.deps.context is not None:
@@ -384,7 +389,16 @@ class NodeFactory:
         instruction = state["tool_instruction"]
         service = self.deps.capabilities
         error = ""
-        if instruction.tool == "web" and (service is None or not service.enabled("web_search_enabled")):
+        # The legacy switch controls autonomous/background web use. A web hint is
+        # produced only when the current user turn itself asks for, or clearly
+        # requires, current external information; that explicit L3 request is a
+        # one-turn authorization and must not be silently rejected by stale
+        # desktop settings carried forward from the pre-0.8.2 capability model.
+        user_authorized_web = instruction.tool == "web" and state.get("tool_hint") == "web"
+        if instruction.tool == "web" and (
+            service is None
+            or (not service.enabled("web_search_enabled") and not user_authorized_web)
+        ):
             error = "web tool is disabled"
         elif instruction.tool == "memory" and (service is None or not service.enabled("local_knowledge_enabled")):
             error = "memory tool is disabled"
@@ -441,6 +455,10 @@ class NodeFactory:
             "task_review_allowed": allowed,
             "task_review_reason": reason,
             "model_usage": usages,
+            "provider_attempts": [
+                *state.get("provider_attempts", []),
+                *self._take_provider_attempts(writer),
+            ],
             "trace": ["review_task"],
         }
         if not allowed:
@@ -541,20 +559,31 @@ class NodeFactory:
         if not self._call_allowed(state, "final_generation"):
             raise RuntimeError("final generation model call budget exhausted")
         request = state["request"]
+        # The first call may intentionally cap a short user message at 200
+        # tokens. Once a tool has returned multiple sources, that short-turn
+        # cap is no longer an appropriate answer budget.
+        final_api = request.api.model_copy(
+            update={"max_tokens": max(int(request.api.max_tokens), 1200)}
+        )
         started = time.perf_counter()
         extractor = IncrementalResponseParser()
         chunks: list[str] = []
-        for token in self.deps.llm.stream(state["prompt_messages"], request.api):
-            self._check_cancelled(state)
-            chunks.append(token)
-            for delta in extractor.feed(token):
-                normalized = normalize_voice_response(delta, request)
-                if normalized:
-                    writer({"event": "response.delta", "data": {"delta": normalized}})
+        attempts: list[ProviderHttpAttempt] = []
+        try:
+            for token in self.deps.llm.stream(state["prompt_messages"], final_api):
+                self._check_cancelled(state)
+                chunks.append(token)
+                for delta in extractor.feed(token):
+                    normalized = normalize_voice_response(delta, request)
+                    if normalized:
+                        writer({"event": "response.delta", "data": {"delta": normalized}})
+        finally:
+            attempts = self._take_provider_attempts(writer)
         usage = self._take_model_usage(writer)
         return {
             "raw_candidate": "".join(chunks),
             "model_usage": [*state.get("model_usage", []), *([usage] if usage else [])],
+            "provider_attempts": [*state.get("provider_attempts", []), *attempts],
             **self._record_call(state, "final_generation", started),
             "trace": ["generate_final"],
         }
@@ -637,24 +666,28 @@ class NodeFactory:
             )
         else:
             token_stream = self.deps.llm.stream(state["prompt_messages"], request.api)
-        for token in token_stream:
-            self._check_cancelled(state)
-            chunks.append(token)
-            if not defer_visible_response:
-                for delta in extractor.feed(token):
-                    deltas = voice_cue_stream.feed(delta)
-                    if emit_voice_cue and voice_cue_stream.resolved and not voice_cue_sent:
-                        writer(
-                            {
-                                "event": "response.voice_cue",
-                                "data": {"cue": voice_cue_stream.cue},
-                            }
-                        )
-                        voice_cue_sent = True
-                    for spoken_delta in deltas:
-                        normalized = normalize_voice_response(spoken_delta, request)
-                        if normalized:
-                            writer({"event": "response.delta", "data": {"delta": normalized}})
+        attempts: list[ProviderHttpAttempt] = []
+        try:
+            for token in token_stream:
+                self._check_cancelled(state)
+                chunks.append(token)
+                if not defer_visible_response:
+                    for delta in extractor.feed(token):
+                        deltas = voice_cue_stream.feed(delta)
+                        if emit_voice_cue and voice_cue_stream.resolved and not voice_cue_sent:
+                            writer(
+                                {
+                                    "event": "response.voice_cue",
+                                    "data": {"cue": voice_cue_stream.cue},
+                                }
+                            )
+                            voice_cue_sent = True
+                        for spoken_delta in deltas:
+                            normalized = normalize_voice_response(spoken_delta, request)
+                            if normalized:
+                                writer({"event": "response.delta", "data": {"delta": normalized}})
+        finally:
+            attempts = self._take_provider_attempts(writer)
         if not defer_visible_response:
             for delta in voice_cue_stream.flush():
                 if emit_voice_cue and not voice_cue_sent:
@@ -690,6 +723,7 @@ class NodeFactory:
             **({"native_tool_call": native_call} if native_call else {}),
             **({"tool_instruction": instruction} if instruction else {}),
             "model_usage": [*state.get("model_usage", []), *([usage] if usage else [])],
+            "provider_attempts": [*state.get("provider_attempts", []), *attempts],
             **self._record_call(state, "generation", started),
             "trace": ["generate_candidate"],
         }
@@ -700,6 +734,16 @@ class NodeFactory:
         if usage is not None:
             writer({"event": "model.usage", "data": usage.model_dump(mode="json")})
         return usage
+
+    def _take_provider_attempts(self, writer: StreamWriter) -> list[ProviderHttpAttempt]:
+        take_attempts = getattr(self.deps.llm, "take_provider_attempts", None)
+        raw_attempts = take_attempts() if callable(take_attempts) else []
+        attempts = [ProviderHttpAttempt.model_validate(item) for item in (raw_attempts or [])]
+        for attempt in attempts:
+            payload = attempt.model_dump(mode="json")
+            writer({"event": "model.attempt", "data": payload})
+            self.deps.audit.record("model_attempt", payload)
+        return attempts
 
     def parse_protocol(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
         """在完整输出结束后解析协议，并对虚构的能力执行声明做确定性兜底。"""
@@ -964,6 +1008,11 @@ class NodeFactory:
                 validation.normalized_plan,
                 request=request,
             )
+        if request.mode == "regenerate":
+            if self.deps.memory is not None:
+                self.deps.memory.forget_session(request.session_id, request.round)
+            if self.deps.context is not None:
+                self.deps.context.replace_round(request.session_id, request.round)
         persisted = self.deps.sessions.persist_turn(
             request,
             protocol.response,
@@ -1067,7 +1116,7 @@ class NodeFactory:
                 "chat": sum(item.source == "chat" for item in state.get("ranked_context", [])),
                 "history": sum(item.source == "memory" for item in state.get("ranked_context", [])),
             },
-            tool_execution=(state["tool_result"].model_dump(mode="json") if state.get("tool_result") else {}),
+            tool_execution=(state["tool_result"].model_dump(mode="json") if state.get("tool_result") else None),
             errors=validation.errors,
             trace=[*state.get("trace", []), "persist_turn"],
             llm_call_count=state.get("llm_call_count", 0),

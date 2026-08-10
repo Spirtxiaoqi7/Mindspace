@@ -55,6 +55,63 @@ def test_regenerate_replaces_round_without_storing_analysis(tmp_path):
     assert "analysis" not in messages[1]
 
 
+def test_session_projection_names_do_not_collide_and_legacy_files_still_load(tmp_path):
+    root = tmp_path / "sessions"
+    sessions = JsonSessionRepository(root)
+    noop = JsonWriteReceipt(turn_id="round_1")
+    for session_id, reply in (("a/b", "斜杠会话"), ("a:b", "冒号会话")):
+        sessions.persist_turn(
+            ChatRequest(message="测试", session_id=session_id, round=1),
+            reply,
+            replace_round=False,
+            write_receipt=noop,
+        )
+
+    assert sessions._path("a/b") != sessions._path("a:b")
+    assert sessions._path("a/b").is_file()
+    assert sessions._path("a:b").is_file()
+    assert sessions.load_session("a/b")["messages"][-1]["content"] == "斜杠会话"
+    assert sessions.load_session("a:b")["messages"][-1]["content"] == "冒号会话"
+
+    legacy_path = root / "legacy-compatible.json"
+    legacy_path.write_text(
+        json.dumps({"session_id": "legacy-compatible", "messages": []}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    assert sessions.load_session("legacy-compatible")["session_id"] == "legacy-compatible"
+
+    sessions.persist_turn(
+        ChatRequest(message="新投影消息", session_id="projection-upgrade", round=1),
+        "新投影回复",
+        replace_round=False,
+        write_receipt=noop,
+    )
+    (root / "projection-upgrade.json").write_text(
+        json.dumps(
+            {
+                "session_id": "projection-upgrade",
+                "title": "不应重复出现的旧投影",
+                "messages": [
+                    {
+                        "message_id": "legacy-user",
+                        "role": "user",
+                        "content": "旧投影消息",
+                        "round": 1,
+                        "timestamp": "2000-01-01T00:00:00+00:00",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    assert sum(item["session_id"] == "projection-upgrade" for item in sessions.list_sessions()) == 1
+    projection_chunks = [
+        item for item in sessions.list_chunks() if item["session_id"] == "projection-upgrade"
+    ]
+    assert [item["text"] for item in projection_chunks] == ["新投影消息"]
+
+
 def test_turn_persists_distinct_user_and_assistant_atomic_times(tmp_path):
     sessions = JsonSessionRepository(tmp_path / "sessions")
     received = datetime(2026, 7, 21, 14, 5, 6, 123456, tzinfo=UTC)

@@ -1,3 +1,5 @@
+> 文档状态：prototype。内容尚未成为当前产品承诺；当前权威见 `docs/INDEX.md`。
+
 # LLM Prompt 与 JSON 决策编排
 
 ## 消息层级

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, net, screen, session, shell, Tray } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, Menu, net, safeStorage, screen, session, shell, Tray } = require("electron");
 const { spawn, spawnSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -9,8 +9,6 @@ const originalProxyEnvironment = {
   HTTPS_PROXY: process.env.HTTPS_PROXY,
   ALL_PROXY: process.env.ALL_PROXY,
 };
-const { createUpdateManager } = require("./update-manager.cjs");
-const { createLauncherUpdater } = require("./launcher-updater.cjs");
 const { createComponentManager } = require("./component-manager.cjs");
 const { GPT_SOVITS_VOICES } = require("./gpt-sovits-catalog.cjs");
 const { createRuntimeManager } = require("./runtime-manager.cjs");
@@ -35,6 +33,12 @@ const {
 const { appPaths, ensureAppPaths, migrateLegacyLayout, reconcileLegacyModelPaths } = require("./app-paths.cjs");
 const { cleanupMigratedSource, inspectStorageAlignment, migrateStorage } = require("./storage-location.cjs");
 const { normalizeCompanionConfig, companionBoundsForDisplay } = require("./companion-policy.cjs");
+const { createSecretStore } = require("./secret-store.cjs");
+const { createServiceSupervisor } = require("./service-supervisor.cjs");
+const { createSettingsController } = require("./settings-controller.cjs");
+const { createProductWindows } = require("./product-windows.cjs");
+const { createUpdateController } = require("./update-controller.cjs");
+const { environmentForPorts, loadServicePorts, resolvePortConfigPath } = require("./service-ports.cjs");
 const {
   bundledArchive,
   bundledVersion,
@@ -62,18 +66,16 @@ function resolvePowerShell() {
   const located = spawnSync("where.exe", ["pwsh.exe"], { encoding: "utf8", windowsHide: true });
   return located.status === 0 ? located.stdout.split(/\r?\n/).find(Boolean) : "";
 }
+const portRegistry = loadServicePorts({
+  configPath: resolvePortConfigPath({ packaged: app.isPackaged, resourcesPath: process.resourcesPath, dirname: __dirname }),
+});
 const services = {
-  api: { port: 8765, health: "http://127.0.0.1:8765/api/v1/health", script: "start.ps1" },
-  asr: { port: 8766, health: "http://127.0.0.1:8766/health", script: "start-asr.ps1" },
-  tts: { port: 5055, health: "http://127.0.0.1:5055/health", script: "start-tts.ps1" },
-  qwenTts: { port: 8091, health: "http://127.0.0.1:8091/health", script: "start-qwen3-tts.ps1" },
+  api: { ...portRegistry.services.core, script: "start.ps1" },
+  asr: { ...portRegistry.services.asr, script: "start-asr.ps1" },
+  tts: { ...portRegistry.services.tts, script: "start-tts.ps1" },
+  qwenTts: { ...portRegistry.services.qwen, script: "start-qwen3-tts.ps1" },
 };
-const children = new Map();
-const starts = new Map();
-const startGenerations = new Map();
-const serviceLaunchTimes = new Map();
-const desiredServices = new Set();
-const serviceRecovery = new Map();
+
 const captureDashboardArg = process.argv.find((argument) => argument.startsWith("--capture-dashboard="));
 const captureArg = process.argv.find((argument) => argument.startsWith("--capture=")) || captureDashboardArg;
 const dashboardPreviewArg = process.argv.includes("--dashboard-preview");
@@ -85,10 +87,13 @@ let productWindow;
 let companionWindow;
 let tray;
 let quitting = false;
-let updateManager;
-let launcherUpdater;
 let componentManager;
 let runtimeManager;
+let credentialStore;
+let serviceSupervisor;
+let settingsController;
+let productWindows;
+let updateController;
 let layout;
 let storageMigration = { active: false, progress: 0, message: "", error: "" };
 let modelPathCheck = { checked: false, moved: [], conflicts: [] };
@@ -111,35 +116,7 @@ function recordStabilityEvent(kind, details = {}) {
   }
 }
 
-function showStabilityFallback(title, detail) {
-  launcherWindow?.show();
-  launcherWindow?.focus();
-  const options = {
-    type: "error",
-    title,
-    message: "聊天窗口已安全关闭，服务控制中心仍可使用",
-    detail,
-    buttons: ["知道了"],
-    noLink: true,
-  };
-  const task = launcherWindow && !launcherWindow.isDestroyed()
-    ? dialog.showMessageBox(launcherWindow, options)
-    : dialog.showMessageBox(options);
-  void task.catch(() => undefined);
-}
 
-function recoverProductWindow(kind, details = {}) {
-  recordStabilityEvent(kind, details);
-  const failedWindow = productWindow;
-  productWindow = undefined;
-  setImmediate(() => {
-    if (failedWindow && !failedWindow.isDestroyed()) failedWindow.destroy();
-    showStabilityFallback(
-      "Mindspace 聊天窗口已恢复",
-      "检测到界面渲染异常。Mindspace 已停止该窗口，避免异常继续影响桌面；重新进入聊天会创建干净窗口。",
-    );
-  });
-}
 let voiceBackgroundTask = null;
 let voiceBackgroundState = { state: "idle", currentId: "", currentName: "", message: "", error: "" };
 let voiceBackgroundGeneration = 0;
@@ -162,6 +139,32 @@ function readJson(file, fallback = null) {
 function currentLayout() {
   if (!layout) layout = ensureAppPaths(appPaths(app));
   return layout;
+}
+
+function serviceIdentityRoot() {
+  return path.join(currentLayout().state, "services");
+}
+
+function serviceIdentityFile(name) {
+  return path.join(serviceIdentityRoot(), `${name}.json`);
+}
+
+function writeServiceIdentity(name, child, executable, script) {
+  writeJsonAtomic(serviceIdentityFile(name), {
+    schema_version: "1.0.0",
+    service: name,
+    pid: child.pid,
+    port: services[name].port,
+    executable: path.resolve(executable),
+    script: path.resolve(script),
+    core_root: path.resolve(rootPath()),
+    started_at: new Date().toISOString(),
+    nonce: crypto.randomUUID(),
+  });
+}
+
+function clearServiceIdentity(name) {
+  fs.rmSync(serviceIdentityFile(name), { force: true });
 }
 
 function hintedRoot() {
@@ -198,30 +201,6 @@ function companionResourcePaths() {
   const modelRoot = path.join(__dirname, "assets", "companion-renderer", "Resources", "mindspace-companion-v24");
   const model = path.join(modelRoot, "mindspace-companion-v24.model3.json");
   return { renderer, modelRoot, model };
-}
-
-function companionResourceStatus() {
-  const resources = companionResourcePaths();
-  if (!fs.existsSync(resources.renderer)) return { ready: false, error: "缺少桌宠渲染入口" };
-  if (!fs.existsSync(resources.model)) return { ready: false, error: "缺少 Live2D model3.json" };
-  try {
-    const manifest = JSON.parse(fs.readFileSync(resources.model, "utf8"));
-    const references = [
-      manifest.FileReferences?.Moc,
-      manifest.FileReferences?.Physics,
-      manifest.FileReferences?.DisplayInfo,
-      ...(manifest.FileReferences?.Textures || []),
-    ].filter(Boolean);
-    for (const reference of references) {
-      const target = path.resolve(resources.modelRoot, String(reference));
-      if (!target.startsWith(`${resources.modelRoot}${path.sep}`) || !fs.existsSync(target)) {
-        return { ready: false, error: `桌宠资源缺失或越界：${reference}` };
-      }
-    }
-    return { ready: true, error: "" };
-  } catch (error) {
-    return { ready: false, error: `桌宠资源清单无效：${String(error.message || error)}` };
-  }
 }
 
 function companionSnapshot() {
@@ -451,12 +430,15 @@ async function refreshQwenRuntimePreflight() {
       }
     } catch { /* malformed external launcher is treated as not ready */ }
   }
+  const qwenHealth = await probe(services.qwenTts);
   const baseResult = evaluateQwenRuntimePreflight({
     system,
     wslAvailable: Boolean(wslExecutable),
     distroAvailable: installed.includes(distro),
     wslGpuAvailable,
     vramMiB,
+    port: services.qwenTts.port,
+    portConflict: !qwenHealth.online && await isTcpPortOccupied(services.qwenTts.port),
   });
     const value = baseResult.eligible && !modelSourceReady
     ? { eligible: false, code: "QWEN_MODEL_REQUIRED", message: "未发现完整的本地 Qwen3 模型与启动脚本；此安装包不会自动下载 WSL、vLLM 或大模型。" }
@@ -532,84 +514,11 @@ function createDiagnosticReport() {
   return folder;
 }
 
-async function probe(service) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 900);
-  try {
-    const response = await fetch(service.health, { signal: controller.signal });
-    // vLLM's /health deliberately returns a successful empty body. Health is
-    // determined by the HTTP status; structured JSON is optional diagnostics
-    // for Core and the local Python workers.
-    let detail = {};
-    if (response.ok) {
-      try { detail = await response.json(); } catch { /* empty health body */ }
-    }
-    return { online: response.ok, detail };
-  } catch (error) {
-    return { online: false, detail: { error: String(error.message || error) } };
-  } finally { clearTimeout(timeout); }
-}
 
-async function qwenSupervisorState() {
-  const pidPath = path.join(qwenRuntimeRoot(), "qwen3-vllm.pid");
-  const pid = String(readJson(pidPath, "") || fs.existsSync(pidPath) && fs.readFileSync(pidPath, "utf8") || "").trim();
-  if (!/^\d+$/.test(pid)) return { running: false, pid: "" };
-  const distro = process.env.MINDSPACE_QWEN3_WSL_DISTRO || "MindspaceVLLM";
-  const result = await runCommand("wsl.exe", ["--distribution", distro, "--", "bash", "-lc", 'kill -0 "$1" 2>/dev/null', "mindspace-qwen", pid], 2_000);
-  return { running: result.status === 0, pid };
-}
 
-function stopExternalQwenSupervisor() {
-  const pidPath = path.join(qwenRuntimeRoot(), "qwen3-vllm.pid");
-  let pid = "";
-  try { pid = fs.readFileSync(pidPath, "utf8").trim(); } catch {}
-  if (!/^\d+$/.test(pid)) return false;
-  const distro = process.env.MINDSPACE_QWEN3_WSL_DISTRO || "MindspaceVLLM";
-  const result = spawnSync("wsl.exe", ["--distribution", distro, "--", "bash", "-lc", 'kill -TERM "$1" 2>/dev/null', "mindspace-qwen", pid], { windowsHide: true });
-  return result.status === 0;
-}
 
-function recordServiceEvent(event, details = {}) {
-  try {
-    fs.mkdirSync(logRoot(), { recursive: true });
-    fs.appendFileSync(
-      path.join(logRoot(), "runtime-manager.jsonl"),
-      `${JSON.stringify({ at: new Date().toISOString(), event, ...details })}\n`,
-    );
-  } catch { /* diagnostics must never interrupt recovery */ }
-}
 
-function clearServiceRecovery(name) {
-  const recovery = serviceRecovery.get(name);
-  if (recovery?.timer) clearTimeout(recovery.timer);
-  serviceRecovery.delete(name);
-}
 
-function scheduleServiceRecovery(name, startedAt, exitCode, signal) {
-  if (quitting || !desiredServices.has(name)) return;
-  const previous = serviceRecovery.get(name) || { failures: 0, timer: null };
-  const uptimeMs = Math.max(0, Date.now() - startedAt);
-  const failures = uptimeMs >= 120_000 ? 1 : previous.failures + 1;
-  const delayMs = serviceRestartDelay(failures);
-  if (delayMs == null) {
-    desiredServices.delete(name);
-    serviceRecovery.set(name, { failures, timer: null });
-    recordServiceEvent("service.recovery_exhausted", { service: name, failures, uptime_ms: uptimeMs, exit_code: exitCode, signal });
-    return;
-  }
-  const timer = setTimeout(async () => {
-    const current = serviceRecovery.get(name);
-    if (!current || current.timer !== timer || quitting || !desiredServices.has(name)) return;
-    serviceRecovery.set(name, { ...current, timer: null });
-    recordServiceEvent("service.restart_attempt", { service: name, failure: failures });
-    const result = await startService(name, true);
-    if (!result.ok) {
-      recordServiceEvent("service.restart_failed", { service: name, failure: failures, error: result.error || "unknown" });
-    }
-  }, delayMs);
-  serviceRecovery.set(name, { failures, timer });
-  recordServiceEvent("service.restart_scheduled", { service: name, failure: failures, delay_ms: delayMs, uptime_ms: uptimeMs, exit_code: exitCode, signal });
-}
 
 function configuredTtsProvider(root) {
   try {
@@ -659,16 +568,22 @@ function readProductSettings() {
   return readJson(productSettingsFile(), {});
 }
 
-function writeProductSettingsPatch(patch) {
-  const current = readProductSettings();
-  const next = { ...current };
-  for (const [section, value] of Object.entries(patch || {})) {
-    next[section] = value && typeof value === "object" && !Array.isArray(value)
-      ? { ...(current[section] || {}), ...value }
-      : value;
+function initializeCredentialStore() {
+  credentialStore = createSecretStore({
+    file: path.join(currentLayout().state, "secrets", "product-secrets.json"),
+    safeStorage,
+  });
+  const migration = credentialStore.migrateProductConfig(productSettingsFile());
+  if (migration.migrated.length) recordStabilityEvent("credentials-migrated", { fields: migration.migrated });
+  const launcherConfig = readLauncherConfig();
+  if (Object.prototype.hasOwnProperty.call(launcherConfig, "llm")) {
+    const { llm: _obsoletePublicSettings, ...withoutLlm } = launcherConfig;
+    writeLauncherConfig(withoutLlm);
   }
-  writeJsonAtomic(productSettingsFile(), next);
-  return next;
+}
+
+function readCredential(name) {
+  try { return credentialStore?.get(name) || ""; } catch { return ""; }
 }
 
 function configuredLlm() {
@@ -676,11 +591,66 @@ function configuredLlm() {
   return {
     mode: String(settings?.llm?.mode || "openai"),
     base_url: String(settings?.llm?.base_url || LLM_PRESETS.deepseek.baseUrl),
-    api_key: String(settings?.llm?.api_key || ""),
+    api_key: String(readCredential("llm_api_key") || ""),
     model: String(settings?.llm?.model || LLM_PRESETS.deepseek.model),
   };
 }
 
+function activeSupervisor() {
+  if (!serviceSupervisor) throw new Error("服务监督器尚未初始化");
+  return serviceSupervisor;
+}
+function probe(service) { return activeSupervisor().probe(service); }
+function qwenSupervisorState() { return activeSupervisor().qwenSupervisorState(); }
+function stopExternalQwenSupervisor() { return activeSupervisor().stopExternalQwenSupervisor(); }
+function recordServiceEvent(event, details = {}) { return activeSupervisor().recordServiceEvent(event, details); }
+function startService(name, recoveryAttempt = false) { return activeSupervisor().startService(name, recoveryAttempt); }
+function scheduleStartupHealthRecheck(name, delayMs = 2000) { return activeSupervisor().scheduleStartupHealthRecheck(name, delayMs); }
+function serviceEnvironment(extra = {}) { return activeSupervisor().serviceEnvironment(extra); }
+function stopService(name) { return activeSupervisor().stopService(name); }
+function waitForServiceOffline(name, timeoutMs = 9_000) { return activeSupervisor().waitForServiceOffline(name, timeoutMs); }
+function stopServicesForUpdate() { return activeSupervisor().stopServicesForUpdate(() => allServices("stop")); }
+function waitForHealth(timeout) { return activeSupervisor().waitForHealth(timeout); }
+function isTcpPortOccupied(port, timeoutMs = 350) { return activeSupervisor().isTcpPortOccupied(port, timeoutMs); }
+function recoverProductWindow(kind, details = {}) { return productWindows?.recoverProductWindow(kind, details); }
+function createWindow() { return productWindows.createLauncherWindow(); }
+function openProductWindow() { return productWindows.openProductWindow(); }
+function openExternalSafely(rawUrl, parentWindow) { return productWindows.openExternalSafely(rawUrl, parentWindow); }
+
+function initializeServiceSupervisor() {
+  serviceSupervisor = createServiceSupervisor({
+    app, services, portRegistry, fetch: (...args) => net.fetch(...args), rootPath, currentLayout, runtimeDataRoot, modelRoot,
+    qwenRuntimeRoot, logRoot, resolvePowerShell, serviceIdentityRoot, writeServiceIdentity, clearServiceIdentity,
+    configuredTtsProvider, configuredTtsVoice, configuredLlm, readCredential, readJson,
+    runtimeSnapshot: () => runtimeManager, componentSnapshot: () => componentManager?.snapshot(), qwenRuntimePreflight,
+    evaluateHardwareAvailability, gptVoices: GPT_SOVITS_VOICES, environmentForPorts, serviceRestartDelay,
+    runCommand,
+    isQuitting: () => quitting,
+  });
+}
+function initializeSettingsController() {
+  settingsController = createSettingsController({
+    fetch: (...args) => net.fetch(...args), coreOrigin: services.api.origin, secretStore: credentialStore,
+    isAuthorizedSender: (sender) => productWindows?.isProductSender(sender),
+  });
+  settingsController.registerIpc(ipcMain);
+}
+function initializeProductWindows() {
+  productWindows = createProductWindows({
+    app, BrowserWindow, dialog, shell, services, dirname: __dirname, captureArg, captureDashboardArg,
+    dashboardPreviewArg, captureAnnouncement, softwareDesktopRendering, probe, productEntryState,
+    recordStabilityEvent, syncCompanionVisibility, isQuitting: () => quitting,
+    onLauncherChanged: (value) => { launcherWindow = value; }, onProductChanged: (value) => { productWindow = value; },
+  });
+}
+function initializeUpdateManager() {
+  updateController = createUpdateController({
+    app, dirname: __dirname, fetch: (...args) => net.fetch(...args), rootPath, resolvePowerShell, currentLayout,
+    readConfig: readLauncherConfig, writeConfig: writeLauncherConfig, stopServices: stopServicesForUpdate,
+    startServices: () => allServices("start"), waitForHealth,
+  });
+  updateController.registerIpc(ipcMain);
+}
 function configuredGptVoiceComponent() {
   const voiceId = configuredTtsVoice();
   return GPT_SOVITS_VOICES.find((voice) => voice.id === voiceId)?.componentId
@@ -721,17 +691,27 @@ function updateOnboardingConfig(patch) {
   return onboarding;
 }
 
+async function patchCoreSettings(patch) {
+  const response = await net.fetch(`${services.api.origin}/api/v1/settings`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(String(payload.detail || payload.error || `Core 设置失败（HTTP ${response.status}）`));
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
 async function syncProductSettings(patch) {
   let warning = "";
   try {
-    const response = await net.fetch("http://127.0.0.1:8765/api/v1/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    });
-    if (!response.ok) warning = `核心服务暂未同步（HTTP ${response.status}），下次启动自动生效`;
-  } catch {
-    warning = "核心服务未运行，配置已保存并会在下次启动生效";
+    await patchCoreSettings(patch);
+  } catch (error) {
+    warning = `核心服务未同步：${String(error.message || error)}`;
   }
   return warning;
 }
@@ -746,15 +726,14 @@ async function applyVoicePreference(preference) {
       auto_tts: true,
       ...(selected === "gpt-sovits" ? { tts_gpt_sovits_voice: configuredTtsVoice() } : {}),
     };
-  writeProductSettingsPatch({ audio });
   return syncProductSettings({ audio });
 }
 
 async function stopTtsProviderService(provider) {
   if (!isLocalTtsProvider(provider)) return;
   const serviceName = ttsServiceName(provider);
-  desiredServices.delete(serviceName);
-  if (children.has(serviceName)) {
+  serviceSupervisor.setDesired(serviceName, false);
+  if (serviceSupervisor.hasChild(serviceName)) {
     stopService(serviceName);
     await waitForServiceOffline(serviceName);
   } else if (serviceName === "qwenTts") {
@@ -784,8 +763,8 @@ async function selectVoiceProvider(preference, { startIfReady = true, requestDow
   const wasActive = Boolean(
     previousService
     && (
-      desiredServices.has(previousService)
-      || children.has(previousService)
+      serviceSupervisor.hasDesired(previousService)
+      || serviceSupervisor.hasChild(previousService)
       || (await probe(services[previousService])).online
     )
   );
@@ -863,13 +842,13 @@ async function selectVoiceProvider(preference, { startIfReady = true, requestDow
   }
 
   const targetService = ttsServiceName(selected);
-  // GPT-SoVITS and CosyVoice share port 5055 but run different workers. A
+  // GPT-SoVITS and CosyVoice share the registered TTS port but run different workers. A
   // provider change on the same service name still requires a clean restart.
-  if (previousProvider !== selected && children.has(targetService)) {
+  if (previousProvider !== selected && serviceSupervisor.hasChild(targetService)) {
     stopService(targetService);
     await waitForServiceOffline(targetService);
   }
-  desiredServices.add(targetService);
+  serviceSupervisor.setDesired(targetService);
   const started = await ensureSelectedTtsService();
   return {
     ok: started.ok,
@@ -1041,14 +1020,14 @@ async function testLlmConfiguration(payload = {}) {
 async function saveLlmConfiguration(payload = {}) {
   const tested = await testLlmConfiguration(payload);
   const llm = tested.llm;
-  writeProductSettingsPatch({ llm });
-  const warning = await syncProductSettings({ llm });
+  const saved = await settingsController.save({ llm });
+  if (!saved.ok) throw new Error(saved.error || "设置保存失败");
   const current = onboardingSnapshot();
   updateOnboardingConfig({
     llmConfiguredAt: new Date().toISOString(),
     ...(current.baseReady ? { completedAt: new Date().toISOString() } : {}),
   });
-  return { ok: true, warning, onboarding: onboardingSnapshot() };
+  return { ok: true, warning: "", onboarding: onboardingSnapshot() };
 }
 
 function ttsVoiceSnapshot() {
@@ -1119,11 +1098,11 @@ async function snapshot() {
   // listens. A managed child is therefore a real intermediate state, not an
   // offline service. Keep the stable UI key `tts` while exposing that state.
   if (selectedTtsService === "qwenTts" && !ttsReport.online) {
-    const child = children.get("qwenTts");
+    const child = serviceSupervisor.child("qwenTts");
     const managed = Boolean(child && child.exitCode === null && !child.killed);
     const external = managed ? { running: false, pid: "" } : await qwenSupervisorState();
     if (managed || external.running) {
-      const startedAt = serviceLaunchTimes.get("qwenTts") || Date.now();
+      const startedAt = serviceSupervisor.launchTime("qwenTts") || Date.now();
       ttsReport = {
         ...ttsReport,
         starting: true,
@@ -1145,199 +1124,10 @@ async function snapshot() {
   };
 }
 
-async function launchService(name, generation) {
-  const root = rootPath();
-  const ps7 = resolvePowerShell();
-  const service = services[name];
-  const script = service && path.join(root, "scripts", service.script);
-  const hardwareId = name === "asr"
-    ? "asr"
-    : name === "qwenTts"
-      ? "qwen3-vllm-runtime"
-      : name === "tts"
-        ? configuredTtsProvider(root)
-        : "";
-  const hardware = evaluateHardwareAvailability(hardwareId, runtimeManager?.snapshot().system || {});
-  if (!hardware.eligible) return { ok: false, error: hardware.message };
-  if (app.isPackaged && !runtimeManager?.snapshot().ready) return { ok: false, error: "基础运行环境尚未完成，请先点击“一键初始化”" };
-  if (!ps7) return { ok: false, error: "应用私有 PowerShell 7 尚未安装" };
-  if (!service || !fs.existsSync(script)) return { ok: false, error: `缺少 ${service?.script || name}` };
-  const asrPython = app.isPackaged
-    ? path.join(currentLayout().venvs, "asr-cuda", "Scripts", "python.exe")
-    : path.join(root, ".venv-asr", "Scripts", "python.exe");
-  const asrReadyMarker = path.join(path.dirname(path.dirname(asrPython)), ".mindspace-asr-ready.json");
-  if (name === "asr" && (!fs.existsSync(asrPython) || !fs.existsSync(asrReadyMarker))) {
-    const partial = fs.existsSync(asrPython);
-    return { ok: false, error: partial
-      ? "上次 ASR CUDA 安装未完成；请点击“继续修复并启动”，已下载内容会被复用"
-      : "ASR CUDA 尚未安装；请点击“安装并启动”，基础文字功能不受影响" };
-  }
-  // prepare-asr.ps1 already performs the expensive CUDA/import verification
-  // before atomically writing the ready marker. Repeating that full import on
-  // every launch doubles cold-start work and can turn a transient CUDA delay
-  // into a false "runtime damaged" state. Start the worker directly here; its
-  // health endpoint and bounded recovery loop are the runtime authority.
-  if (name === "tts" && configuredTtsProvider(root) === "cosyvoice") {
-    const ttsCandidates = app.isPackaged
-      ? [path.join(currentLayout().venvs, "tts-cuda", "Scripts", "python.exe"), asrPython]
-      : [path.join(root, ".venv-tts", "Scripts", "python.exe"), asrPython];
-    const pythonReady = ttsCandidates.some((candidate) => fs.existsSync(candidate));
-    const ttsMarker = app.isPackaged
-      ? path.join(currentLayout().state, "components", "tts-runtime", "ready.json")
-      : path.join(root, "runtime", "components", "tts-runtime", "ready.json");
-    if (!pythonReady || !fs.existsSync(ttsMarker)) {
-      return { ok: false, error: "CosyVoice 运行时尚未安装，请先在组件区安装“CosyVoice 运行时”" };
-    }
-    if (!fs.existsSync(path.join(root, "vendor", "CosyVoice", "cosyvoice", "cli", "cosyvoice.py"))) {
-      return { ok: false, error: "CosyVoice 运行代码缺失，请先检查应用更新" };
-    }
-    const settings = readJson(path.join(runtimeDataRoot(), "config", "settings.json"), {});
-    const reference = String(settings?.audio?.tts_reference_audio || "");
-    if (!reference || !fs.existsSync(reference)) {
-      return { ok: false, error: "尚未上传有效的 TTS 参考音频，请先在声音设置中上传" };
-    }
-  }
-  if (name === "tts" && configuredTtsProvider(root) === "gpt-sovits") {
-    const voiceId = configuredTtsVoice();
-    const voice = GPT_SOVITS_VOICES.find((candidate) => candidate.id === voiceId);
-    const python = app.isPackaged
-      ? path.join(currentLayout().venvs, "gpt-sovits", "Scripts", "python.exe")
-      : path.join(root, ".venv-gpt-sovits", "Scripts", "python.exe");
-    const marker = app.isPackaged
-      ? path.join(currentLayout().venvs, "gpt-sovits", "ready.json")
-      : path.join(root, ".venv-gpt-sovits", "ready.json");
-    const worker = path.join(root, "vendor", "gpt_sovits_mindspace_worker.py");
-    const code = path.join(root, "vendor", "GPT-SoVITS", "GPT_SoVITS", "TTS_infer_pack", "TTS.py");
-    const selectedComponent = voice && componentManager?.snapshot().items.find((item) => item.id === voice.componentId);
-    if (!voice) return { ok: false, error: `未知 GPT-SoVITS 音色：${voiceId}` };
-    if (!fs.existsSync(python) || !fs.existsSync(marker)) return { ok: false, error: "GPT-SoVITS 运行时尚未安装，请先在音色区安装所选音色" };
-    if (!fs.existsSync(worker) || !fs.existsSync(code)) return { ok: false, error: "GPT-SoVITS 推理代码缺失，请先检查应用更新" };
-    if (!selectedComponent?.ready) return { ok: false, error: `${voice.label} 模型尚未完整下载` };
-  }
-  if (name === "qwenTts") {
-    const preflight = qwenRuntimePreflight();
-    if (!preflight.eligible) return { ok: false, error: preflight.message };
-    const component = componentManager?.snapshot().items.find((item) => item.id === "qwen3-vllm-runtime");
-    if (!component?.ready) return { ok: false, error: "Qwen3 实时语音运行时尚未安装，请先在组件区安装或修复" };
-  }
-  if (generation !== undefined && (startGenerations.get(name) || 0) !== generation) {
-    return { ok: false, cancelled: true, error: "启动已被停止操作取消" };
-  }
-  const logs = logRoot();
-  fs.mkdirSync(logs, { recursive: true });
-  const out = fs.openSync(path.join(logs, `${name}.launcher.log`), "a");
-  // Optional voice workers must not inherit the versioned application/core
-  // directory as their working directory. A live WSL/ASR bridge otherwise
-  // holds that directory open and prevents an atomic Launcher/Core update.
-  const serviceCwd = name === "qwenTts"
-    ? qwenRuntimeRoot()
-    : name === "api"
-      ? root
-      : currentLayout().home;
-  const child = spawn(ps7, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], {
-    cwd: serviceCwd, env: serviceEnvironment(), windowsHide: true, detached: false, stdio: ["ignore", out, out],
-  });
-  const startedAt = Date.now();
-  children.set(name, child);
-  serviceLaunchTimes.set(name, startedAt);
-  child.once("exit", (code, signal) => {
-    if (children.get(name) === child) {
-      children.delete(name);
-      serviceLaunchTimes.delete(name);
-    }
-    scheduleServiceRecovery(name, startedAt, code, signal);
-  });
-  return { ok: true, pid: child.pid };
-}
 
-async function startService(name, recoveryAttempt = false) {
-  if (!recoveryAttempt) clearServiceRecovery(name);
-  desiredServices.add(name);
-  if (starts.has(name)) return starts.get(name);
-  const running = children.get(name);
-  if (running && running.exitCode === null && !running.killed) {
-    return { ok: true, pid: running.pid, alreadyRunning: true };
-  }
-  const service = services[name];
-  if (!service) return { ok: false, error: `未知服务：${name}` };
-  const generation = startGenerations.get(name) || 0;
-  const task = (async () => {
-    const health = await probe(service);
-    if (health.online) return { ok: true, alreadyRunning: true, detail: health.detail };
-    if ((startGenerations.get(name) || 0) !== generation) {
-      return { ok: false, cancelled: true, error: "启动已被停止操作取消" };
-    }
-    return launchService(name, generation);
-  })();
-  starts.set(name, task);
-  try {
-    return await task;
-  } finally {
-    if (starts.get(name) === task) starts.delete(name);
-  }
-}
 
-function scheduleStartupHealthRecheck(name, delayMs = 2000) {
-  const timer = setTimeout(async () => {
-    if (quitting || !desiredServices.has(name)) return;
-    const report = await probe(services[name]);
-    if (report.online) return;
-    const child = children.get(name);
-    if (child && child.exitCode === null && !child.killed) return;
-    recordServiceEvent("service.startup_recheck", { service: name });
-    const result = await startService(name, true);
-    if (!result.ok) {
-      recordServiceEvent("service.startup_recheck_failed", {
-        service: name,
-        error: result.error || "unknown",
-      });
-    }
-  }, delayMs);
-  timer.unref?.();
-}
 
-function serviceEnvironment(extra = {}) {
-  const base = runtimeManager?.privateEnvironment() || process.env;
-  const coreMarker = readJson(path.join(currentLayout().state, "components", "core-venv.json"), {});
-  const ffmpegRoot = app.isPackaged ? path.join(currentLayout().tools, "ffmpeg", "8.1.2") : path.join(rootPath(), ".tools", "ffmpeg", "8.1.2");
-  return {
-    ...base,
-    MINDSPACE_HOME: currentLayout().home,
-    MINDSPACE_ENVIRONMENT: currentLayout().environment,
-    MINDSPACE_MODEL_ROOT: modelRoot(),
-    MINDSPACE_DATA_ROOT: runtimeDataRoot(),
-    MINDSPACE_RUNTIME_DIR: runtimeDataRoot(),
-    MINDSPACE_CORE_PYTHON: app.isPackaged ? String(coreMarker.executable || "") : path.join(rootPath(), ".venv", "Scripts", "python.exe"),
-    MINDSPACE_ASR_VENV: app.isPackaged ? path.join(currentLayout().venvs, "asr-cuda") : path.join(rootPath(), ".venv-asr"),
-    MINDSPACE_TTS_VENV: app.isPackaged ? path.join(currentLayout().venvs, "tts-cuda") : path.join(rootPath(), ".venv-tts"),
-    MINDSPACE_TTS_MARKER_ROOT: app.isPackaged ? path.join(currentLayout().state, "components", "tts-runtime") : path.join(rootPath(), "runtime", "components", "tts-runtime"),
-    MINDSPACE_GPT_SOVITS_VENV: app.isPackaged ? path.join(currentLayout().venvs, "gpt-sovits") : path.join(rootPath(), ".venv-gpt-sovits"),
-    MINDSPACE_GPT_SOVITS_CODE_ROOT: path.join(rootPath(), "vendor", "GPT-SoVITS"),
-    MINDSPACE_GPT_SOVITS_RUNTIME_ROOT: path.join(modelRoot(), "tts", "gpt-sovits", "runtime"),
-    MINDSPACE_QWEN3_WSL_DISTRO: base.MINDSPACE_QWEN3_WSL_DISTRO || "MindspaceVLLM",
-    MINDSPACE_QWEN3_RUNTIME_ROOT: path.join(currentLayout().home, "environment", "qwen3-vllm"),
-    MINDSPACE_FFMPEG: path.join(ffmpegRoot, "ffmpeg.exe"),
-    CUDA_MODULE_LOADING: base.CUDA_MODULE_LOADING || "LAZY",
-    PYTORCH_CUDA_ALLOC_CONF: base.PYTORCH_CUDA_ALLOC_CONF || "expandable_segments:True,max_split_size_mb:128",
-    PATH: `${ffmpegRoot}${path.delimiter}${base.PATH || base.Path || process.env.PATH || ""}`,
-    ...extra,
-  };
-}
 
-function stopService(name) {
-  desiredServices.delete(name);
-  clearServiceRecovery(name);
-  startGenerations.set(name, (startGenerations.get(name) || 0) + 1);
-  const child = children.get(name);
-  if (!child) {
-    if (name === "qwenTts" && stopExternalQwenSupervisor()) return { ok: true, external: true };
-    return { ok: false, error: "该服务不是由当前 Launcher 启动" };
-  }
-  spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
-  children.delete(name);
-  serviceLaunchTimes.delete(name);
-  return { ok: true };
-}
 
 async function allServices(action) {
   if (action === "start") {
@@ -1354,8 +1144,8 @@ async function allServices(action) {
       if (logicalName === "tts") {
         if (!isLocalTtsProvider(current.ttsProvider)) {
           for (const name of ["tts", "qwenTts"]) {
-            desiredServices.delete(name);
-            if (children.has(name)) stopService(name);
+            serviceSupervisor.setDesired(name, false);
+            if (serviceSupervisor.hasChild(name)) stopService(name);
           }
           continue;
         }
@@ -1380,7 +1170,7 @@ async function allServices(action) {
     return { ok: true, started, warnings };
   }
   if (action === "stop") {
-    desiredServices.clear();
+    serviceSupervisor.clearDesired();
     for (const name of new Set([...children.keys(), ttsServiceName()])) stopService(name);
     ttsTransition = { state: "idle", target: "", error: "", startedAt: "" };
     return { ok: true };
@@ -1388,14 +1178,6 @@ async function allServices(action) {
   return { ok: false, error: "未知批量操作" };
 }
 
-async function waitForServiceOffline(name, timeoutMs = 9_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (!(await probe(services[name])).online) return true;
-    await new Promise((resolve) => setTimeout(resolve, 300));
-  }
-  return false;
-}
 
 async function ensureSelectedTtsService() {
   if (ttsTransitionTask) return ttsTransitionTask;
@@ -1403,8 +1185,8 @@ async function ensureSelectedTtsService() {
   const inactive = target === "qwenTts" ? "tts" : "qwenTts";
   ttsTransitionTask = (async () => {
     ttsTransition = { state: "stopping", target, error: "", startedAt: new Date().toISOString() };
-    desiredServices.delete(inactive);
-    const inactiveChild = children.get(inactive);
+    serviceSupervisor.setDesired(inactive, false);
+    const inactiveChild = serviceSupervisor.child(inactive);
     if (inactiveChild) {
       stopService(inactive);
       if (!(await waitForServiceOffline(inactive))) {
@@ -1467,7 +1249,7 @@ async function reconcileSelectedTts() {
       }
 
       const selectedService = ttsServiceName(provider);
-      desiredServices.add(selectedService);
+      serviceSupervisor.setDesired(selectedService);
       const switched = await ensureSelectedTtsService();
       if (!switched.ok && !switched.cancelled) {
         recordServiceEvent("service.tts_provider_switch_failed", {
@@ -1484,8 +1266,8 @@ async function reconcileSelectedTts() {
     // started. Core startup alone never opts a GPU-heavy TTS into memory.
     if (!isLocalTtsProvider(provider)) return { ok: true, local: false };
     const selected = ttsServiceName(provider);
-    if (!desiredServices.has(selected)) return { ok: true, idle: true };
-    if (!children.has(selected)) {
+    if (!serviceSupervisor.hasDesired(selected)) return { ok: true, idle: true };
+    if (!serviceSupervisor.hasChild(selected)) {
       const health = await probe(services[selected]);
       if (health.online) return { ok: true, alreadyRunning: true };
     }
@@ -1511,30 +1293,7 @@ async function reconcileSelectedTts() {
   }
 }
 
-function stopServicesForUpdate() {
-  for (const name of desiredServices) clearServiceRecovery(name);
-  desiredServices.clear();
-  // Qwen runs inside WSL and may be shared with a diagnostic shell. Only stop
-  // the child this Launcher owns; the generic port cleanup intentionally does
-  // not kill an unrelated WSL process on 8091.
-  if (children.has("qwenTts")) stopService("qwenTts");
-  const ps7 = resolvePowerShell();
-  const script = path.join(rootPath(), "scripts", "stop-services.ps1");
-  if (!ps7 || !fs.existsSync(script)) return allServices("stop");
-  const result = spawnSync(ps7, ["-NoProfile", "-File", script], { cwd: rootPath(), encoding: "utf8", windowsHide: true, timeout: 30_000 });
-  children.clear();
-  if (result.status !== 0) throw new Error((result.stderr || result.stdout || "停止服务失败").trim());
-  return { ok: true };
-}
 
-async function waitForHealth(timeout) {
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    if ((await probe(services.api)).online) return true;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  return false;
-}
 
 async function startDefaultCore() {
   if (quitting || captureArg || !workspace.ready) return { ok: false, skipped: true };
@@ -1545,48 +1304,6 @@ async function startDefaultCore() {
   if (result.ok) scheduleStartupHealthRecheck("api", 2500);
   else recordServiceEvent("service.default_core_start_failed", { error: result.error || "unknown" });
   return result;
-}
-
-function initializeUpdateManager() {
-  let launcherConfig = readLauncherConfig();
-  if (!launcherConfig.updateDeviceId) {
-    launcherConfig = { ...launcherConfig, updateDeviceId: crypto.randomUUID() };
-    writeLauncherConfig(launcherConfig);
-  }
-  launcherUpdater = createLauncherUpdater({
-    packaged: app.isPackaged,
-    currentVersion: () => app.getVersion(),
-  });
-  updateManager = createUpdateManager({
-    app,
-    rootPath,
-    resolvePowerShell,
-    publicKeyPath: path.join(__dirname, "assets", "update-public-key.pem"),
-    fetch: (...arguments_) => net.fetch(...arguments_),
-    downloadRoot: path.join(currentLayout().downloads, "updates"),
-    deviceId: launcherConfig.updateDeviceId,
-    launcherUpdater,
-    bundledRoot: app.isPackaged
-      ? path.join(process.resourcesPath, "runtime", "bundled")
-      : path.join(__dirname, "bootstrap", "runtime-bundle"),
-    readConfig: readLauncherConfig,
-    writeConfig: writeLauncherConfig,
-    stopServicesForUpdate,
-    startServices: () => allServices("start"),
-    waitForHealth,
-  });
-  const checkConfiguredFeed = async () => {
-    try {
-      const current = updateManager.snapshot();
-      if (["checking", "downloading", "verifying", "installing"].includes(current.status)) return;
-      const next = await updateManager.check();
-      if (next.coreAvailable && !next.launcherAvailable && !next.downloaded && readLauncherConfig().autoDownloadUpdates !== false) {
-        await updateManager.download();
-      }
-    } catch {}
-  };
-  setTimeout(checkConfiguredFeed, 5_000).unref();
-  setInterval(checkConfiguredFeed, 6 * 60 * 60 * 1000).unref();
 }
 
 function installComponent(component, signal, onProgress) {
@@ -1941,10 +1658,6 @@ async function selectTtsVoice(id) {
   const component = componentManager?.snapshot().items.find((candidate) => candidate.id === voice.componentId);
   if (!component?.ready) throw new Error(`${voice.label} 尚未下载，请先点击“单独下载”`);
 
-  const file = path.join(runtimeDataRoot(), "config", "settings.json");
-  const settings = readJson(file, {});
-  settings.audio = { ...(settings.audio || {}), tts_provider: "gpt-sovits", tts_gpt_sovits_voice: voice.id };
-  writeJsonAtomic(file, settings);
   observedTtsProvider = "gpt-sovits";
   updateOnboardingConfig({
     voicePreference: "gpt-sovits",
@@ -1954,17 +1667,7 @@ async function selectTtsVoice(id) {
     voiceReadyAcknowledgedAt: new Date().toISOString(),
   });
 
-  let apiWarning = "";
-  try {
-    const response = await net.fetch("http://127.0.0.1:8765/api/v1/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ audio: { tts_provider: "gpt-sovits", tts_gpt_sovits_voice: voice.id } }),
-    });
-    if (!response.ok) apiWarning = `核心服务暂未同步（HTTP ${response.status}），下次启动自动生效`;
-  } catch {
-    apiWarning = "核心服务未运行，配置已保存并会在下次启动生效";
-  }
+  const apiWarning = await syncProductSettings({ audio: { tts_provider: "gpt-sovits", tts_gpt_sovits_voice: voice.id } });
 
   const started = await ensureSelectedTtsService();
   return { ok: started.ok, error: started.error, warning: apiWarning, ...ttsVoiceSnapshot() };
@@ -1980,12 +1683,15 @@ async function installTtsVoice(id) {
 }
 
 function runMaintenance(action) {
+  if (action === "integrity" && app.isPackaged) {
+    return { ok: false, error: "源码完整性校验仅能在权威开发源执行，已安装 runtime 不是开发源" };
+  }
   const root = rootPath();
   const ps7 = resolvePowerShell();
   if (!ps7) return { ok: false, error: "未找到 PowerShell 7，请先安装或设置 MINDSPACE_PWSH" };
   const commands = {
     verify: ["-File", path.join(root, "scripts", "runtime-verify.ps1")],
-    integrity: ["-File", path.join(root, "scripts", "verify-source-integrity.ps1")],
+    integrity: ["-File", path.join(root, "scripts", "verify-source-integrity.ps1"), "-SourceRoot", root],
     repair: ["-File", path.join(root, "scripts", "repair.ps1")],
     prepareAsr: ["-File", path.join(root, "scripts", "prepare-asr.ps1")],
   };
@@ -1997,175 +1703,11 @@ function runMaintenance(action) {
   return { ok: true, pid: child.pid, log: path.join(logs, `maintenance-${action}.log`) };
 }
 
-function createWindow() {
-  const win = new BrowserWindow({
-    width: 1180, height: 760, minWidth: 920, minHeight: 620,
-    show: !captureArg || Boolean(captureDashboardArg),
-    backgroundColor: "#0b0d11", titleBarStyle: "hidden", titleBarOverlay: { color: "#0b0d11", symbolColor: "#bbc4d0", height: 40 },
-    webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
-  });
-  launcherWindow = win;
-  win.loadFile(
-    path.join(__dirname, "dist", "index.html"),
-    captureAnnouncement
-      ? { query: { announcement: "history" } }
-      : captureDashboardArg || dashboardPreviewArg ? { query: { dashboard: "1" } } : undefined,
-  );
-  win.on("close", (event) => {
-    if (!quitting && !captureArg) {
-      event.preventDefault();
-      win.hide();
-    }
-  });
-  win.on("show", syncCompanionVisibility);
-  win.on("hide", syncCompanionVisibility);
-  win.on("closed", () => { launcherWindow = undefined; });
-  if (captureArg) {
-    win.webContents.once("did-finish-load", () => {
-      setTimeout(async () => {
-        const output = captureArg.slice((captureDashboardArg ? "--capture-dashboard=" : "--capture=").length);
-        const image = await win.webContents.capturePage();
-        fs.writeFileSync(output, image.toPNG());
-        app.quit();
-      }, Math.max(500, Math.min(30_000, Number(process.env.MINDSPACE_CAPTURE_DELAY_MS) || 1800)));
-    });
-  }
-}
 
-function isTrustedProductOrigin(value) {
-  try {
-    const origin = new URL(String(value || "")).origin;
-    return origin === "http://127.0.0.1:8765";
-  } catch {
-    return false;
-  }
-}
 
-function configureProductMediaPermissions(targetSession) {
-  targetSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin, details = {}) => {
-    const origin = details.securityOrigin || details.requestingUrl || requestingOrigin;
-    // Chromium may report an initial microphone check as `unknown` before the
-    // Windows endpoint has been enumerated. Reject explicit video, but do not
-    // deadlock a trusted loopback audio request on that transient value.
-    const audioOnly = !details.mediaType
-      || details.mediaType === "audio"
-      || details.mediaType === "unknown";
-    return permission === "media" && audioOnly && isTrustedProductOrigin(origin);
-  });
-  targetSession.setPermissionRequestHandler((_webContents, permission, callback, details = {}) => {
-    const origin = details.requestingUrl || details.securityOrigin || "";
-    const mediaTypes = Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
-    const audioOnly = mediaTypes.length === 0 || mediaTypes.every((mediaType) => mediaType === "audio");
-    callback(permission === "media" && audioOnly && isTrustedProductOrigin(origin));
-  });
-}
 
-async function openProductWindow() {
-  if (productWindow && !productWindow.isDestroyed()) {
-    productWindow.show();
-    productWindow.focus();
-    return { ok: true };
-  }
-  const api = await probe(services.api);
-  if (!api.online) {
-    launcherWindow?.show();
-    launcherWindow?.focus();
-    await dialog.showMessageBox(launcherWindow, {
-      type: "info",
-      title: "Mindspace 尚未启动",
-      message: "请先启动本地服务",
-      detail: "在服务控制中心点击“启动并进入”，应用会等待核心服务就绪后自动打开。",
-    });
-    return { ok: false, error: "Mindspace Core 尚未就绪" };
-  }
-  const asr = await probe(services.asr);
-  const entry = productEntryState({ coreOnline: api.online, asrOnline: asr.online });
-  if (entry.mode === "text-only") {
-    await dialog.showMessageBox(launcherWindow, {
-      type: "info",
-      title: "仅文字模式",
-      message: "本次启动不存在语音功能",
-      detail: "VAD/ASR 未启动。你仍可正常进入并使用文字对话；需要语音时可返回启动器，在“实时聆听”中安装并启动。",
-      buttons: ["继续进入"],
-      defaultId: 0,
-      noLink: true,
-    });
-  }
-  productWindow = new BrowserWindow({
-    width: 1480,
-    height: 920,
-    minWidth: 1040,
-    minHeight: 700,
-    show: false,
-    backgroundColor: "#f7efe4",
-    title: "Mindspace",
-    autoHideMenuBar: true,
-    icon: path.join(__dirname, "assets", "mindspace-icon.ico"),
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      backgroundThrottling: true,
-    },
-  });
-  const currentProductWindow = productWindow;
-  let productReady = false;
-  const loadTimeout = setTimeout(() => {
-    if (productReady || currentProductWindow.isDestroyed()) return;
-    recoverProductWindow("product-load-timeout", { timeoutMs: 15_000 });
-  }, 15_000);
-  loadTimeout.unref();
-  productWindow.setMenuBarVisibility(false);
-  // The product is served only by the loopback Core. Resolve microphone checks
-  // synchronously for that exact origin so Chromium never stalls a trusted
-  // audio request behind an implicit permission round-trip.
-  configureProductMediaPermissions(productWindow.webContents.session);
-  productWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
-    return { action: "deny" };
-  });
-  const productUrl = new URL("http://127.0.0.1:8765/");
-  productUrl.searchParams.set("desktop-build", `${app.getVersion()}-${Date.now()}`);
-  productWindow.loadURL(productUrl.toString());
-  productWindow.webContents.on("did-finish-load", () => {
-    if (!softwareDesktopRendering) return;
-    void currentProductWindow.webContents.insertCSS(`
-      * { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
-      .voice-background { filter: none !important; opacity: .35 !important; }
-    `).catch((error) => {
-      recordStabilityEvent("software-rendering-css-failed", {
-        error: String(error?.message || error),
-      });
-    });
-  });
-  productWindow.once("ready-to-show", () => {
-    productReady = true;
-    clearTimeout(loadTimeout);
-    productWindow.show();
-    launcherWindow?.hide();
-  });
-  productWindow.webContents.on(
-    "did-fail-load",
-    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      if (!isMainFrame || currentProductWindow.isDestroyed()) return;
-      recoverProductWindow("product-load-failed", {
-        errorCode,
-        errorDescription,
-        url: validatedURL,
-      });
-    },
-  );
-  productWindow.on("unresponsive", () => {
-    recordStabilityEvent("product-window-unresponsive");
-  });
-  productWindow.on("responsive", () => {
-    recordStabilityEvent("product-window-responsive");
-  });
-  productWindow.on("closed", () => {
-    clearTimeout(loadTimeout);
-    if (productWindow === currentProductWindow) productWindow = undefined;
-  });
-  return { ok: true };
-}
+
+
 
 function createTray() {
   tray = new Tray(path.join(__dirname, "assets", "mindspace-icon.ico"));
@@ -2223,23 +1765,13 @@ ipcMain.handle("launcher:open", async (_, kind) => {
   const targets = { logs: logRoot(), models: modelRoot(), root: currentLayout().home };
   const target = targets[kind];
   if (!target) return { ok: false };
-  if (target.startsWith("http")) await shell.openExternal(target); else await shell.openPath(target);
+  await shell.openPath(target);
   return { ok: true };
 });
 ipcMain.handle("launcher:external", async (_, rawUrl) => {
-  const target = new URL(String(rawUrl || ""));
-  const allowed = new Set([
-    "modelscope.cn",
-    "www.modelscope.cn",
-    "huggingface.co",
-    "platform.deepseek.com",
-    "api-docs.deepseek.com",
-    "cloud.siliconflow.cn",
-    "docs.siliconflow.cn",
-  ]);
-  if (target.protocol !== "https:" || !allowed.has(target.hostname)) throw new Error("只允许打开已核验的模型来源");
-  await shell.openExternal(target.toString());
-  return { ok: true };
+  const result = await openExternalSafely(rawUrl, launcherWindow);
+  if (!result.ok && !result.cancelled) throw new Error(result.error);
+  return result;
 });
 ipcMain.handle("launcher:maintenance", async (_, action) => {
   if (action === "repair") {
@@ -2279,18 +1811,6 @@ ipcMain.handle("launcher:shortcut", () => {
   const shortcut = path.join(app.getPath("desktop"), "Mindspace.lnk");
   const ok = shell.writeShortcutLink(shortcut, { target: process.execPath, cwd: path.dirname(process.execPath), description: "Mindspace 本地 AI 应用" });
   return { ok, path: shortcut };
-});
-ipcMain.handle("launcher:update", async (_, { action, updateUrl, channel } = {}) => {
-  if (!updateManager) throw new Error("更新管理器尚未就绪");
-  if (action === "snapshot") return updateManager.snapshot();
-  if (action === "configure") return updateManager.configure(updateUrl, channel);
-  if (action === "check") return updateManager.check();
-  if (action === "download") return updateManager.download();
-  if (action === "pause") return updateManager.pause();
-  if (action === "discard") return updateManager.discard();
-  if (action === "install") return updateManager.install();
-  if (action === "rollback") return updateManager.rollback();
-  throw new Error("未知更新操作");
 });
 ipcMain.handle("launcher:component", async (_, { action, id } = {}) => {
   if (!componentManager) throw new Error("组件下载器尚未就绪");
@@ -2461,6 +1981,10 @@ app.whenReady().then(async () => {
       version: "0.4.0",
     });
   }
+  initializeCredentialStore();
+  initializeServiceSupervisor();
+  initializeProductWindows();
+  initializeSettingsController();
   await synchronizeRuntimeProxy();
   await initializeWorkspace();
   initializeUpdateManager();

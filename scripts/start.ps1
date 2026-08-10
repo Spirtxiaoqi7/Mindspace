@@ -8,6 +8,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+. (Join-Path $PSScriptRoot 'service-ports.ps1')
+$ServicePorts = Get-MindspaceServicePorts -ProjectRoot $ProjectRoot
 Set-Location $ProjectRoot
 $env:PYTHONPATH = Join-Path $ProjectRoot 'src'
 
@@ -21,7 +23,7 @@ if (-not $env:MINDSPACE_HOME -and ($Sync -or -not (Test-Path -LiteralPath $Pytho
     & $UvExe sync --extra embeddings
 }
 
-$port = if ($env:MINDSPACE_PORT) { [int]$env:MINDSPACE_PORT } else { 8765 }
+$port = $ServicePorts.core
 $url = "http://127.0.0.1:$port/"
 
 if ($OpenBrowser) {

@@ -13,6 +13,17 @@ from mindspace_graph.capabilities import DEFAULT_CAPABILITY_SETTINGS
 from mindspace_graph.gpt_sovits import GPT_SOVITS_VOICES
 from mindspace_graph.settings import AppSettings
 
+_SECRET_FIELDS = (
+    ("llm", "api_key", "llm_api_key", "credentials"),
+    ("audio", "asr_api_key", "asr_api_key", "asr_credentials"),
+    (
+        "audio",
+        "tts_siliconflow_api_key",
+        "tts_siliconflow_api_key",
+        "tts_siliconflow_credentials",
+    ),
+)
+
 
 def _merge_known(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     merged = deepcopy(base)
@@ -26,19 +37,47 @@ def _merge_known(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
+def _extract_secret_fields(document: dict[str, Any]) -> dict[str, str]:
+    """Remove known secrets from a config document and return non-empty values."""
+
+    extracted: dict[str, str] = {}
+    for section, field, setting_name, _status_prefix in _SECRET_FIELDS:
+        values = document.get(section)
+        if not isinstance(values, dict) or field not in values:
+            continue
+        value = str(values.pop(field) or "").strip()
+        if value:
+            extracted[setting_name] = value
+    return extracted
+
+
 class ProductConfigStore:
     def __init__(self, path: Path, settings: AppSettings) -> None:
         self.path = path
         self.settings = settings
         self._lock = RLock()
+        self._runtime_secrets = {
+            setting_name: str(getattr(settings, setting_name, "") or "").strip()
+            for _section, _field, setting_name, _status_prefix in _SECRET_FIELDS
+        }
+        self._secret_sources = {
+            setting_name: ("runtime_environment" if value else "none")
+            for setting_name, value in self._runtime_secrets.items()
+        }
         self._config = self._defaults()
         if path.exists():
+            raw: Any = None
             loaded: dict[str, Any] | None = None
             try:
                 with path.open("r", encoding="utf-8") as handle:
                     raw = json.load(handle)
-                loaded = raw if isinstance(raw, dict) else None
+                loaded = deepcopy(raw) if isinstance(raw, dict) else None
                 if isinstance(loaded, dict):
+                    legacy_secrets = _extract_secret_fields(loaded)
+                    for setting_name, value in legacy_secrets.items():
+                        if not self._runtime_secrets[setting_name]:
+                            self._runtime_secrets[setting_name] = value
+                            self._secret_sources[setting_name] = "legacy_config"
                     self._config = _merge_known(self._config, loaded)
             except (OSError, json.JSONDecodeError):
                 pass
@@ -101,11 +140,16 @@ class ProductConfigStore:
             if self._config["audio"].get("asr_noise_gate_db") in {-45, -42}:
                 self._config["audio"]["asr_noise_gate_db"] = -55.0
             self._config["audio"]["asr_adaptive_noise_enabled"] = False
-            if loaded != self._config:
-                _atomic_json(path, self._config)
+            if raw != self._config:
+                self._persist_public()
         else:
-            _atomic_json(path, self._config)
+            self._persist_public()
         self._apply_live_settings()
+
+    def _persist_public(self) -> None:
+        persisted = deepcopy(self._config)
+        _extract_secret_fields(persisted)
+        _atomic_json(self.path, persisted)
 
     def _defaults(self) -> dict[str, Any]:
         return {
@@ -113,7 +157,6 @@ class ProductConfigStore:
             "llm": {
                 "mode": self.settings.llm_mode,
                 "base_url": self.settings.llm_base_url,
-                "api_key": self.settings.llm_api_key,
                 "model": self.settings.llm_model,
                 "temperature": 0.7,
                 "max_tokens": 2000,
@@ -182,7 +225,6 @@ class ProductConfigStore:
                 "tts_reference_audio": self.settings.tts_reference_audio,
                 "tts_reference_text": self.settings.tts_reference_text,
                 "tts_siliconflow_base_url": self.settings.tts_siliconflow_base_url,
-                "tts_siliconflow_api_key": self.settings.tts_siliconflow_api_key,
                 "tts_siliconflow_model": self.settings.tts_siliconflow_model,
                 "tts_siliconflow_voice": self.settings.tts_siliconflow_voice,
                 "tts_siliconflow_gain": self.settings.tts_siliconflow_gain,
@@ -198,7 +240,6 @@ class ProductConfigStore:
                 "auto_tts": self.settings.auto_tts,
                 "asr_provider": self.settings.asr_provider,
                 "asr_base_url": self.settings.asr_base_url,
-                "asr_api_key": self.settings.asr_api_key,
                 "asr_model": self.settings.asr_model,
                 "asr_auto_send": True,
                 "asr_silence_ms": 600,
@@ -260,7 +301,7 @@ class ProductConfigStore:
         audio = self._config["audio"]
         self.settings.llm_mode = str(llm["mode"])
         self.settings.llm_base_url = str(llm["base_url"])
-        self.settings.llm_api_key = str(llm["api_key"])
+        self.settings.llm_api_key = self._runtime_secrets["llm_api_key"]
         self.settings.llm_model = str(llm["model"])
         self.settings.llm_context_window = int(llm["context_window"])
         self.settings.context_compaction_enabled = bool(llm["compaction_enabled"])
@@ -278,7 +319,9 @@ class ProductConfigStore:
         self.settings.tts_reference_audio = str(audio["tts_reference_audio"])
         self.settings.tts_reference_text = str(audio["tts_reference_text"])
         self.settings.tts_siliconflow_base_url = str(audio["tts_siliconflow_base_url"])
-        self.settings.tts_siliconflow_api_key = str(audio["tts_siliconflow_api_key"])
+        self.settings.tts_siliconflow_api_key = self._runtime_secrets[
+            "tts_siliconflow_api_key"
+        ]
         self.settings.tts_siliconflow_model = str(audio["tts_siliconflow_model"])
         self.settings.tts_siliconflow_voice = str(audio["tts_siliconflow_voice"])
         self.settings.tts_siliconflow_gain = float(audio["tts_siliconflow_gain"])
@@ -293,7 +336,7 @@ class ProductConfigStore:
         self.settings.auto_tts = bool(audio["auto_tts"])
         self.settings.asr_provider = str(audio["asr_provider"])
         self.settings.asr_base_url = str(audio["asr_base_url"])
-        self.settings.asr_api_key = str(audio["asr_api_key"])
+        self.settings.asr_api_key = self._runtime_secrets["asr_api_key"]
         self.settings.asr_model = str(audio["asr_model"])
         self.settings.emotion_enabled = False
         self.settings.emotion_deadline_ms = int(audio["emotion_deadline_ms"])
@@ -302,25 +345,52 @@ class ProductConfigStore:
         with self._lock:
             value = deepcopy(self._config)
         if redact:
-            llm_key = str(value["llm"].get("api_key", ""))
-            asr_key = str(value["audio"].get("asr_api_key", ""))
-            tts_cloud_key = str(value["audio"].get("tts_siliconflow_api_key", ""))
-            value["llm"].pop("api_key", None)
-            value["llm"]["credentials_configured"] = bool(llm_key)
-            value["audio"].pop("asr_api_key", None)
-            value["audio"]["asr_credentials_configured"] = bool(asr_key)
-            value["audio"].pop("tts_siliconflow_api_key", None)
-            value["audio"]["tts_siliconflow_credentials_configured"] = bool(tts_cloud_key)
+            for section, _field, setting_name, status_prefix in _SECRET_FIELDS:
+                target = value[section]
+                target[f"{status_prefix}_configured"] = bool(
+                    self._runtime_secrets[setting_name]
+                )
+                target[f"{status_prefix}_source"] = self._secret_sources[setting_name]
+                target[f"{status_prefix}_persisted"] = False
+                target[f"{status_prefix}_persistence"] = "process_only"
             reference = str(value["audio"].pop("tts_reference_audio", "") or "")
             value["audio"]["tts_reference_configured"] = bool(reference)
             value["audio"]["tts_reference_name"] = Path(reference).name if reference else ""
         return value
 
     def checkpoint(self) -> dict[str, Any]:
-        """Return a private rollback snapshot for one in-process settings update."""
+        """Return the persisted public rollback state; it never contains secrets."""
 
         with self._lock:
             return deepcopy(self._config)
+
+    def runtime_secret_checkpoint(self) -> dict[str, dict[str, str]]:
+        """Return an in-memory-only secret rollback state for the current request."""
+
+        with self._lock:
+            return {
+                "values": deepcopy(self._runtime_secrets),
+                "sources": deepcopy(self._secret_sources),
+            }
+
+    def restore_runtime_secrets(self, snapshot: dict[str, dict[str, str]]) -> None:
+        if not isinstance(snapshot, dict):
+            raise ValueError("runtime secret rollback snapshot must be an object")
+        values = snapshot.get("values")
+        sources = snapshot.get("sources")
+        if not isinstance(values, dict) or not isinstance(sources, dict):
+            raise ValueError("runtime secret rollback snapshot is malformed")
+        expected = set(self._runtime_secrets)
+        if set(values) != expected or set(sources) != expected:
+            raise ValueError("runtime secret rollback snapshot fields are invalid")
+        with self._lock:
+            self._runtime_secrets = {
+                key: str(values[key] or "").strip() for key in expected
+            }
+            self._secret_sources = {
+                key: str(sources[key] or "none") for key in expected
+            }
+            self._apply_live_settings()
 
     def restore(self, snapshot: dict[str, Any]) -> None:
         """Restore configuration, disk state and live settings as one compensation step."""
@@ -329,13 +399,19 @@ class ProductConfigStore:
             raise ValueError("settings rollback snapshot must be an object")
         with self._lock:
             previous = deepcopy(self._config)
-            self._config = deepcopy(snapshot)
+            restored = deepcopy(snapshot)
+            _extract_secret_fields(restored)
+            self._config = _merge_known(self._defaults(), restored)
+            persisted = False
             try:
                 self._validate()
-                _atomic_json(self.path, self._config)
+                self._persist_public()
+                persisted = True
                 self._apply_live_settings()
             except Exception:
                 self._config = previous
+                if persisted:
+                    self._persist_public()
                 self._apply_live_settings()
                 raise
 
@@ -344,26 +420,45 @@ class ProductConfigStore:
             raise ValueError("settings patch must be an object")
         with self._lock:
             previous = deepcopy(self._config)
+            previous_secrets = deepcopy(self._runtime_secrets)
+            previous_sources = deepcopy(self._secret_sources)
             sanitized = deepcopy(patch)
-            llm_patch = sanitized.get("llm")
-            if isinstance(llm_patch, dict) and str(llm_patch.get("api_key", "")).strip():
-                llm_patch["mode"] = "openai"
-            if isinstance(llm_patch, dict) and not llm_patch.get("api_key"):
-                llm_patch.pop("api_key", None)
-            audio_patch = sanitized.get("audio")
-            if isinstance(audio_patch, dict) and not audio_patch.get("asr_api_key"):
-                audio_patch.pop("asr_api_key", None)
-            if isinstance(audio_patch, dict) and not audio_patch.get("tts_siliconflow_api_key"):
-                audio_patch.pop("tts_siliconflow_api_key", None)
+            secret_operations = sanitized.pop("secret_operations", {})
+            if not isinstance(secret_operations, dict):
+                raise ValueError("secret_operations must be an object")
+            known_secret_names = {item[2] for item in _SECRET_FIELDS}
+            unknown_operations = set(secret_operations) - known_secret_names
+            if unknown_operations:
+                raise ValueError(f"unsupported secret operations: {', '.join(sorted(unknown_operations))}")
+            for section, field, setting_name, _status_prefix in _SECRET_FIELDS:
+                operation = secret_operations.get(setting_name, "keep")
+                if operation not in {"keep", "clear"}:
+                    raise ValueError(f"invalid secret operation for {setting_name}")
+                values = sanitized.get(section)
+                if isinstance(values, dict) and field in values:
+                    runtime_value = str(values.pop(field) or "").strip()
+                    if runtime_value:
+                        self._runtime_secrets[setting_name] = runtime_value
+                        self._secret_sources[setting_name] = "runtime_patch"
+                        if setting_name == "llm_api_key":
+                            values["mode"] = "openai"
+                if operation == "clear":
+                    self._runtime_secrets[setting_name] = ""
+                    self._secret_sources[setting_name] = "runtime_patch_clear"
             self._config = _merge_known(self._config, sanitized)
+            persisted = False
             try:
                 self._validate()
-                _atomic_json(self.path, self._config)
+                self._persist_public()
+                persisted = True
                 self._apply_live_settings()
             except Exception as primary_error:
                 self._config = previous
+                self._runtime_secrets = previous_secrets
+                self._secret_sources = previous_sources
                 try:
-                    _atomic_json(self.path, previous)
+                    if persisted:
+                        self._persist_public()
                     self._apply_live_settings()
                 except Exception as rollback_error:
                     raise RuntimeError(

@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, expect, it, vi } from "vitest";
-import { CharacterLibrary, ModeLobby } from "./CharacterExperience";
+import { CharacterLibrary, ModeLobby } from "./characters/CharacterExperience";
 
 const summary = { character_id: "character-1", schema_version: "2.0.0", revision: 1, source: "draw" as const, status: "active" as const, display_name: "林见月", gender: "女" as const, user_alias: "", relationship_label: "长期陪伴", avatar: { src: "/avatar.webp", aspect: "2 / 3" as const, scale: 1, x: 0, y: 0 }, latest_session_id: "session-1", created_at: "2026-08-09T00:00:00Z", updated_at: "2026-08-09T00:00:00Z", last_used_at: "2026-08-09T00:00:00Z" };
 const record = { ...summary, card: { spec: "chara_card_v2" as const, spec_version: "2.0" as const, data: { name: "林见月", description: "清醒温和的同行者", personality: "细腻且独立", scenario: "长期陪伴", first_mes: "我在。", mes_example: "{{user}} 你好\n{{char}} 我在。", alternate_greetings: [], tags: ["命格"], creator: "Mindspace", character_version: "1.0", extensions: { mindspace: { gender: "女" as const } } } }, memory: { preferences: [], tasks: [] } };

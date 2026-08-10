@@ -1,3 +1,5 @@
+> 文档状态：prototype。内容尚未成为当前产品承诺；当前权威见 `docs/INDEX.md`。
+
 # 情绪能力接口（暂时停用）
 
 当前 0.5.7 优化版不加载或下载情绪模型，也不在对话图、ASR 流或后台线程中执行情绪分析。`assets/models/asr/SenseVoiceSmall` 已从源码资源与组件目录移除。

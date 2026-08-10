@@ -5,28 +5,16 @@ const test = require("node:test");
 
 const projectRoot = path.resolve(__dirname, "..");
 
-function readPowerShellArray(scriptName, variableName) {
-  const source = fs.readFileSync(
-    path.join(projectRoot, "scripts", scriptName),
-    "utf8",
-  );
-  const match = source.match(
-    new RegExp(`\\$${variableName}\\s*=\\s*@\\((?<body>[\\s\\S]*?)\\r?\\n\\)`),
-  );
-  assert.ok(match?.groups?.body, `${scriptName} 缺少 $${variableName}`);
-  return new Set(
-    [...match.groups.body.matchAll(/^\s*'([^']+)'\s*,?\s*$/gm)].map(
-      (entry) => entry[1],
-    ),
-  );
-}
-
-test("core package targets stay accepted by the updater", () => {
-  const packaged = readPowerShellArray("build-update.ps1", "Targets");
-  const accepted = readPowerShellArray("apply-update.ps1", "AllowedTargets");
-  assert.deepEqual(
-    [...packaged].filter((target) => !accepted.has(target)),
-    [],
-    "build-update.ps1 新增目标时必须同步 apply-update.ps1 白名单",
-  );
+test("Core builder and updater consume one positive target allowlist", () => {
+  const allowlistPath = path.join(projectRoot, "config", "core-release-allowlist.json");
+  const allowlist = JSON.parse(fs.readFileSync(allowlistPath, "utf8"));
+  const build = fs.readFileSync(path.join(projectRoot, "scripts", "build-update.ps1"), "utf8");
+  const apply = fs.readFileSync(path.join(projectRoot, "scripts", "apply-update.ps1"), "utf8");
+  assert.equal(allowlist.schema_version, "1.0.0");
+  assert.ok(allowlist.targets.length > 0);
+  assert.equal(new Set(allowlist.targets).size, allowlist.targets.length);
+  assert.match(build, /config\\core-release-allowlist\.json/);
+  assert.match(apply, /config\\core-release-allowlist\.json/);
+  assert.match(build, /\$Targets\s*=\s*@\(\$Allowlist\.targets/);
+  assert.match(apply, /\$AllowedTargets\s*=\s*@\(\$ReleaseAllowlist\.targets/);
 });

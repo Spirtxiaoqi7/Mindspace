@@ -1,64 +1,26 @@
-# Mindspace Current Function Map
+# Mindspace 0.8.3 功能图
 
-## Source and runtime boundary
+> 状态：current。
 
-- Editable source: `A:\RAG\Mindspace-admin`
-- Desktop runtime: `A:\Mindspace`
-- User data and desktop API configuration: `A:\Mindspace\data`
-- Never edit, replace, or clear runtime user data while developing or synchronizing code.
-- Test source changes before a deliberate desktop synchronization. The runtime tree is not a second source checkout.
+| 功能 | 权威入口 | 持久状态 | 主要门禁 |
+|---|---|---|---|
+| V7 命格 | destiny API + V7 画布 | journey、半批状态、selection、V2 | 8 方向、6+6、失败半批重试 |
+| 角色库 | V2 character API | chara_card_v2、revision | 导入导出、删除、迁移 |
+| 聊天 | chat/chat stream | durable run、turn、summary | 引用、附件、互动、重连 |
+| Provider | 本地设置桥 | provider config、attempt | 模型列表、失败尝试、密钥边界 |
+| 工具 | 原生短指令 | tool attempt、result summary | null/attempt、幂等、失败事实 |
+| 桌面 | preload + service config | 本地设置、端口、更新状态 | bridge、端口覆盖、更新签名 |
+| 语音 | ASR/TTS workers | 会话音频状态 | 模型目录、音色清单镜像 |
 
-## Product flow
+命格的“生成命签”是一个产品阶段、两个模型调用。前 6 类和后 6 类都通过才进入下一阶段，这不是旧的一次 96 卡调用，也不是新增中间页面。
 
-```mermaid
-flowchart LR
-    E["Desktop launcher"] --> F["React product frontend"]
-    F --> A["FastAPI API surface"]
-    A --> D["DestinyService"]
-    D --> C["chara_card_v2 character record"]
-    C --> S["ConversationService / RAG / memory"]
-```
+## 拆分模块映射
 
-## V7 destiny creation
-
-| Product responsibility | Source entry | API |
-|---|---|---|
-| V7 canvas, seed panel, selection and review | `frontend/src/DestinyCanvas.tsx` | `/api/v1/destiny/*` |
-| Canvas visual system | `frontend/src/destiny-canvas.css` | None |
-| Journey schema, prompts, validation and V2 synthesis | `src/mindspace_graph/destiny.py` | `/journeys`, `/archetypes`, `/cards`, `/selections`, `/synthesize`, `/commit` |
-| Journey avatar lifecycle | `src/mindspace_graph/api.py` | `/destiny/avatars` |
-| V2 card normalization and export | `src/mindspace_graph/character_card.py` | `/characters/{id}/card`, `/characters/{id}/export` |
-
-The normal model path is exactly three business calls:
-
-1. Generate eight direct character directions.
-2. Generate all 96 lightweight cards in one call.
-3. Synthesize the selected twelve cards into `chara_card_v2` text fields.
-
-The journey records errors and call counts. Failed stages require an explicit retry and must not issue hidden repair calls.
-
-## V2 character authority
-
-- Canonical record: `chara_card_v2` plus `memory.preferences` and `memory.tasks`.
-- Character library and historical migration: `src/mindspace_graph/characters.py`.
-- Historical profile records are converted once to V2 and backed up before conversion.
-- New manual draft, blueprint and legacy fate-authoring flows are retired. Their former API paths deliberately return `410 Gone` with a V7 migration message.
-- The frontend must not call `/api/v1/character-drafts*`, `/api/v1/characters/fate-options`, or `/api/v1/characters/options`.
-
-## Conversation and data services
-
-| Domain | Main source | Core tests |
-|---|---|---|
-| Streaming conversation | `service.py`, `graph.py`, `nodes.py`, `api.py` | `tests/test_streaming_protocol.py` |
-| Prompt and role state | `prompting.py`, `role_runtime.py`, `roleplay.py` | `tests/test_role_runtime.py`, `tests/test_prompt_cache_layout.py` |
-| Memory and RAG | `memory_service.py`, `memory_update.py`, `adapters/local_retriever.py` | `tests/test_memory_*` |
-| ASR and TTS | `streaming_asr.py`, `native_microphone.py`, `audio.py` | `tests/test_native_microphone.py`, `tests/test_audio.py` |
-| Settings transactions | `api.py`, `settings.py`, `product_config.py` | `tests/test_stage1_hardening.py` |
-
-## Required verification before desktop sync
-
-1. `python -m ruff check src tests`
-2. `python -m pytest --basetemp <new-writable-directory>`
-3. `npm run check`, `npm run test`, and `npm run build` in `frontend`
-4. One configured desktop-provider acceptance run when model or creation behavior changes.
-5. Hash-compare selected Core files and frontend assets before copying. Do not touch `A:\Mindspace\data`.
+| 产品域 | 后端 | Web | Desktop |
+|---|---|---|---|
+| 聊天/run | `api_routes/chat_runs.py`、`conversation_runs.py`、`service.py` | `chat/useConversation.ts`、`chat/MessageList.tsx` | Core service supervision |
+| 工具/provider | `native_tools.py`、`tool_chain.py`、`adapters/openai_compatible.py` | `chat/ExecutionInspector.tsx` | provider 设置桥 |
+| 角色/V2 | `api_routes/characters_cards.py`、`characters.py`、`character_card.py` | `characters/CharacterExperience.tsx` | 窄 preload IPC |
+| V7 命格 | `api_routes/destiny_routes.py`、`destiny.py` | `DestinyCanvas.tsx` | 无业务实现 |
+| 设置 | `api_routes/system_settings.py`、`product_config.py` | `settings/SettingsWorkspace.tsx` | `settings-controller.cjs`、`secret-store.cjs` |
+| 更新/端口 | Core 公共配置 | 状态展示 | `update-controller.cjs`、`service-supervisor.cjs`、`service-ports.cjs` |

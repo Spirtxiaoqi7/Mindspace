@@ -71,6 +71,7 @@ export function ScenePickerPage({
       setPreviewId(scene.scene_id);
       return;
     }
+    const previousPreviewId = current?.scene?.scene_id || scenes[0]?.scene_id || "";
     setPreviewId(scene.scene_id);
     setBusyId(scene.scene_id);
     try {
@@ -86,6 +87,9 @@ export function ScenePickerPage({
       );
       onChanged(updated);
       notify(`当前对话已切换到「${scene.title}」`);
+    } catch (error) {
+      setPreviewId(previousPreviewId);
+      notify(`切换场景失败：${(error as Error).message}`);
     } finally {
       setBusyId("");
     }
@@ -97,6 +101,11 @@ export function ScenePickerPage({
       notify("背景图片不能超过 12 MiB");
       return;
     }
+    if (!(file.type === "image/png" || file.type === "image/jpeg" || file.type === "image/webp" || /\.(png|jpe?g|webp)$/i.test(file.name))) {
+      notify("背景仅支持 PNG、JPEG 或 WebP");
+      return;
+    }
+    const previousPreviewId = current?.scene?.scene_id || scenes[0]?.scene_id || "";
     const form = new FormData();
     form.append("file", file);
     form.append("title", file.name.replace(/\.[^.]+$/, "").slice(0, 80) || "自定义场景");
@@ -114,6 +123,9 @@ export function ScenePickerPage({
       );
       onChanged(updated);
       notify(`已上传并切换到「${scene.title}」`);
+    } catch (error) {
+      setPreviewId(previousPreviewId);
+      notify(`背景处理失败：${(error as Error).message}。若图片已上传，可在列表中点击重试切换。`);
     } finally {
       setBusyId("");
       if (uploadInput.current) uploadInput.current.value = "";

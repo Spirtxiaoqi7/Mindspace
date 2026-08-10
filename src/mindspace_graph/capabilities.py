@@ -8,7 +8,6 @@ inside that category do not require per-call approval.
 from __future__ import annotations
 
 import ipaddress
-import json
 import re
 import socket
 from collections.abc import Callable
@@ -22,9 +21,9 @@ from urllib.parse import quote_plus, urljoin, urlparse
 from xml.etree import ElementTree
 
 import httpx
+
 from mindspace_graph.models import ChatRequest
 from mindspace_graph.tool_chain import ToolExecutionResult, ToolInstruction, is_url
-
 
 DEFAULT_CAPABILITY_SETTINGS: dict[str, Any] = {
     "master_enabled": True,

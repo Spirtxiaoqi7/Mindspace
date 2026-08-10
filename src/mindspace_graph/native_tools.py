@@ -7,7 +7,6 @@ from uuid import uuid4
 
 from .tool_chain import ToolInstruction, validate_task_command
 
-
 NATIVE_TOOL_GUIDANCE = (
     "需要外部信息或任务操作时使用结构化函数调用；"
     "不要在聊天正文中模拟、预告或描述工具调用。"

@@ -1,3 +1,5 @@
+> 文档状态：prototype。内容尚未成为当前产品承诺；当前权威见 `docs/INDEX.md`。
+
 # Qwen3 实时语音运行时
 
 Mindspace 0.5.46 将 Qwen3-TTS 作为可选、本机常驻的 `qwen3-vllm` Provider。桌面端仍调用

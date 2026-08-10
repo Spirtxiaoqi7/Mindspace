@@ -1,3 +1,6 @@
+/* MINDSPACE PRODUCT OVERRIDE AUTHORITY
+   Loaded after styles.css. Every repeated selector/context is reviewed and
+   allowlisted by css-governance.test.ts; do not merge cascade rules by guess. */
 /* Mindspace 2026 visual consolidation
    This layer deliberately overrides the legacy presentation without changing
    any data flow or feature handler. */
@@ -174,12 +177,6 @@ button, input, textarea, select { transition: color .16s ease, background-color 
 .composer-row button { padding: 7px 9px; font-size: .64rem; }
 .composer-row .voice-entry { color: var(--text); font-weight: 650; }
 .composer-row .voice-entry span { color: var(--accent); }
-.scene-entry { background: rgba(77,125,116,.07) !important; }
-.presentation-entry { display:flex; align-items:center; gap:5px; color:#6d625c; border:1px solid rgba(77,63,56,.12); background:rgba(255,255,255,.56); }
-.presentation-entry span { font-size:.56rem; opacity:.68; }
-.presentation-entry b { font-size:.63rem; font-weight:720; }
-.presentation-entry.dialogue { color:#52776f; background:rgba(226,240,234,.76); }
-.presentation-entry.scene { color:#9c503a; background:rgba(255,237,226,.78); }
 .composer-add-menu { position: relative; }
 .composer-add-menu > summary {
   display: grid; place-items: center; flex: 0 0 32px; width: 32px; height: 30px; padding: 0;
@@ -539,7 +536,7 @@ button, input, textarea, select { transition: color .16s ease, background-color 
 
 .conversation { background: radial-gradient(circle at 86% 10%, rgba(91,137,125,.13), transparent 27%), radial-gradient(circle at 10% 100%, rgba(211,128,91,.1), transparent 30%), linear-gradient(180deg,#f7f3ec,#efebe4); }.message-list { width:min(900px,calc(100% - 70px)); padding-top:34px; }.message-content { border-color:rgba(98,71,55,.09); border-radius:4px 18px 18px; background:rgba(255,253,249,.88); box-shadow:0 10px 27px rgba(77,54,40,.055); }.message.user .message-content { color:#fffaf6; border:1px solid rgba(116,65,49,.22); background:linear-gradient(135deg,#a95239,#c27555 72%,#cb9676); }.message.user .message-text { color:rgba(255,250,245,.94); }.message-head strong { color:#4d7c72; }
 .welcome-panel { border:1px solid rgba(103,75,59,.1); border-radius:24px; background:linear-gradient(135deg,rgba(255,253,249,.88),rgba(242,248,243,.65)); box-shadow:0 24px 55px rgba(75,51,37,.07); }.welcome-panel h2 { font-family:"Songti SC","STSong",Georgia,serif; font-weight:500; }.prompt-grid button { position:relative; overflow:hidden; color:#5c463d; border-color:rgba(103,75,59,.1); border-radius:13px; background:rgba(255,253,249,.74); }.prompt-grid button::after { content:""; position:absolute; right:-18px; bottom:-26px; width:68px; height:68px; border-radius:50%; background:rgba(101,149,136,.09); }.prompt-grid button:hover { border-color:rgba(183,96,69,.27); background:rgba(255,249,242,.94); }
-.composer-wrap { width:min(900px,calc(100% - 58px)); }.composer { border-color:rgba(176,98,70,.21); border-radius:19px; background:rgba(255,253,249,.94); box-shadow:0 19px 48px rgba(81,56,40,.12); }.composer:focus-within { border-color:rgba(85,132,120,.44); box-shadow:0 20px 55px rgba(77,51,37,.15),0 0 0 3px rgba(85,132,120,.07); }.composer-row .voice-entry { color:#9c503a; border:1px solid rgba(185,96,68,.13); background:rgba(255,243,234,.72); }.composer-row .scene-entry { color:#4d7d72; border:1px solid rgba(77,125,114,.13); background:rgba(233,244,238,.72); }.composer-menu > summary { color:#79665d; border:1px solid rgba(103,76,60,.11); }.composer-menu > summary::after { display:none; }.composer-row .send { width:41px; min-width:41px; min-height:41px; border-radius:13px 13px 5px 13px; background:linear-gradient(145deg,#9f503a,#c67756 64%,#8cac9e); box-shadow:0 8px 18px rgba(151,78,54,.18); }
+.composer-wrap { width:min(900px,calc(100% - 58px)); }.composer { border-color:rgba(176,98,70,.21); border-radius:19px; background:rgba(255,253,249,.94); box-shadow:0 19px 48px rgba(81,56,40,.12); }.composer:focus-within { border-color:rgba(85,132,120,.44); box-shadow:0 20px 55px rgba(77,51,37,.15),0 0 0 3px rgba(85,132,120,.07); }.composer-row .voice-entry { color:#9c503a; border:1px solid rgba(185,96,68,.13); background:rgba(255,243,234,.72); }.composer-menu > summary { color:#79665d; border:1px solid rgba(103,76,60,.11); }.composer-menu > summary::after { display:none; }.composer-row .send { width:41px; min-width:41px; min-height:41px; border-radius:13px 13px 5px 13px; background:linear-gradient(145deg,#9f503a,#c67756 64%,#8cac9e); box-shadow:0 8px 18px rgba(151,78,54,.18); }
 
 .mode-lobby { color:#46332c; background:radial-gradient(circle at 90% 13%,rgba(87,134,122,.16),transparent 28%),radial-gradient(circle at 9% 80%,rgba(210,123,83,.16),transparent 31%),linear-gradient(135deg,#fdf9f2,#f6eee5 56%,#edf4ef); }.mode-lobby::before { opacity:.34; background-image:linear-gradient(rgba(115,83,65,.05) 1px,transparent 1px),linear-gradient(90deg,rgba(115,83,65,.05) 1px,transparent 1px); }.mode-lobby-header h1 { color:#3e2d27; font-family:"Songti SC","STSong",Georgia,serif; font-weight:500; }.mode-lobby-header p { color:#816f66; }.mode-lobby-header .brand-mark { color:#fffaf3; border-radius:17px 17px 17px 5px; background:linear-gradient(145deg,#98513d,#c78b6d 66%,#7b9b8f); }.archive-link { color:#755142 !important; border-color:rgba(149,94,72,.2) !important; background:rgba(255,252,247,.76) !important; box-shadow:0 8px 20px rgba(89,60,44,.05); }.archive-link b { color:#fffdf9; background:linear-gradient(145deg,#b95f45,#d79570); }
 

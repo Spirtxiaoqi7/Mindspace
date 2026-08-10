@@ -1,11 +1,14 @@
 [CmdletBinding()]
 param(
     [string]$Device = 'cuda',
-    [int]$Port = 5055
+    [int]$Port = 0
 )
 
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+. (Join-Path $PSScriptRoot 'service-ports.ps1')
+$ServicePorts = Get-MindspaceServicePorts -ProjectRoot $ProjectRoot
+if ($Port -le 0) { $Port = $ServicePorts.tts }
 $TtsVenv = if ($env:MINDSPACE_TTS_VENV) { $env:MINDSPACE_TTS_VENV } else { Join-Path $ProjectRoot '.venv-tts' }
 $AsrVenv = if ($env:MINDSPACE_ASR_VENV) { $env:MINDSPACE_ASR_VENV } else { Join-Path $ProjectRoot '.venv-asr' }
 $LegacyPython = Join-Path $TtsVenv 'Scripts\python.exe'

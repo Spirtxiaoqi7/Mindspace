@@ -1,3 +1,5 @@
+> 状态：current。执行前以 docs/INDEX.md 和 0.8.3 当前权威文档为准。
+
 # Mindspace 在线更新发布
 
 Mindspace Launcher 默认读取以下官方签名目录，普通用户不需要填写更新地址：
@@ -13,7 +15,7 @@ https://douyinqijun.cn/downloads/mindspace/catalog/stable/windows-x64.json
 稳定版 Core 更新：
 
 ```powershell
-Set-Location A:\RAG\langgarph-rag
+Set-Location A:\RAG\Mindspace-admin
 
 .\scripts\prepare-online-release.ps1 `
   -Version 0.4.1 `

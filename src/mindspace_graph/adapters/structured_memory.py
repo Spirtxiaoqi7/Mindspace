@@ -302,10 +302,12 @@ class StructuredMemoryStore:
         )
 
     def _enforce_active_limits(self, data: dict[str, Any], timestamp: str) -> None:
-        by_field: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+        by_owner_field: dict[tuple[str, str], list[tuple[str, dict[str, Any]]]] = {}
         for key, record in data["active"].items():
-            by_field.setdefault(str(record.get("field_code") or ""), []).append((key, record))
-        for field_code, records in by_field.items():
+            owner = str(record.get("character_id") or "")
+            field_code = str(record.get("field_code") or "")
+            by_owner_field.setdefault((owner, field_code), []).append((key, record))
+        for (_owner, field_code), records in by_owner_field.items():
             field = self.registry.by_code(field_code)
             if field is None or len(records) <= field.max_items:
                 continue
@@ -571,12 +573,24 @@ class StructuredMemoryStore:
         with self._lock:
             data = self._load()
             forgotten = {episode_id for episode_id, episode in data["episodes"].items() if predicate(episode)}
+            for tombstone in data["tombstones"]:
+                source_episode = tombstone.get("source_episode")
+                if isinstance(source_episode, dict) and predicate(source_episode):
+                    forgotten.add(str(source_episode.get("episode_id") or tombstone.get("episode_id") or ""))
+            forgotten.discard("")
             if not forgotten:
                 return 0
             data["active"] = {
                 key: value for key, value in data["active"].items() if value.get("episode_id") not in forgotten
             }
             data["untagged"] = [item for item in data["untagged"] if item.get("episode_id") not in forgotten]
+            data["tombstones"] = [
+                item
+                for item in data["tombstones"]
+                if str(item.get("removed_record", {}).get("episode_id") or "") not in forgotten
+                and str(item.get("source_episode", {}).get("episode_id") or item.get("episode_id") or "")
+                not in forgotten
+            ]
             for episode_id in forgotten:
                 data["episodes"].pop(episode_id, None)
             self._save(data)
@@ -589,6 +603,46 @@ class StructuredMemoryStore:
     def reset(self) -> None:
         with self._lock:
             self._save(self._empty())
+
+    def reset_character(self, character_id: str) -> dict[str, int]:
+        """Remove one character's derived bindings while preserving every other owner."""
+
+        owner = str(character_id or "").strip()
+        if not owner:
+            raise ValueError("character_id is required for targeted memory reset")
+        with self._lock:
+            data = self._load()
+            removed_keys = {
+                key
+                for key, record in data["active"].items()
+                if str(record.get("character_id") or "") == owner
+            }
+            data["active"] = {key: record for key, record in data["active"].items() if key not in removed_keys}
+            removed_untagged = {
+                str(item.get("episode_id") or "")
+                for item in data["untagged"]
+                if str(data["episodes"].get(str(item.get("episode_id") or ""), {}).get("character_id") or "")
+                == owner
+            }
+            data["untagged"] = [
+                item for item in data["untagged"] if str(item.get("episode_id") or "") not in removed_untagged
+            ]
+            data["tombstones"] = [
+                item
+                for item in data["tombstones"]
+                if str(item.get("removed_record", {}).get("character_id") or "") != owner
+                and str(item.get("source_episode", {}).get("character_id") or "") != owner
+            ]
+            referenced = {
+                str(record.get("episode_id") or "") for record in data["active"].values()
+            } | {str(item.get("episode_id") or "") for item in data["untagged"]}
+            data["episodes"] = {
+                episode_id: episode
+                for episode_id, episode in data["episodes"].items()
+                if episode_id in referenced or str(episode.get("character_id") or "") != owner
+            }
+            self._save(data)
+            return {"active": len(removed_keys), "untagged": len(removed_untagged)}
 
     def migrate_entity_identities(self) -> dict[str, int]:
         """Upgrade legacy value-hash keys without changing remembered content."""

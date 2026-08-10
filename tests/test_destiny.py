@@ -290,9 +290,15 @@ def test_category_label_uses_a_valid_short_summary_prefix_without_a_second_model
     assert call_count == 3
 
 
-def test_incomplete_journey_with_legacy_category_labels_requires_cards_only_retry(tmp_path, monkeypatch):
+def test_reading_invalid_cards_is_non_destructive_and_explicit_post_rebuilds_them(tmp_path, monkeypatch):
     app = create_app(make_settings(tmp_path))
-    outputs = [people_payload(), cards_payload(0, 6), cards_payload(6, 6)]
+    outputs = [
+        people_payload(),
+        cards_payload(0, 6),
+        cards_payload(6, 6),
+        cards_payload(0, 6),
+        cards_payload(6, 6),
+    ]
     call_count = 0
 
     async def valid_model(*args, **kwargs):  # noqa: ANN001, ARG001
@@ -309,16 +315,45 @@ def test_incomplete_journey_with_legacy_category_labels_requires_cards_only_retr
     journey = client.post(f"/api/v1/destiny/journeys/{journey_id}/cards").json()
     first_slot = public_destiny_definition()["slots"][0]
     journey["cards_by_slot"][first_slot["id"]][0]["label"] = first_slot["axis"]
+    journey["status"] = "review_ready"
+    journey["selections"] = {first_slot["id"]: deepcopy(journey["cards_by_slot"][first_slot["id"]][0])}
+    journey["final_card"] = {"spec": "chara_card_v2", "data": {"name": "待修复角色"}}
     app.state.destiny.database.put_document(app.state.destiny._key(journey_id), journey)
+    before = deepcopy(app.state.destiny.database.get_document(app.state.destiny._key(journey_id)))
 
     restored = client.get(f"/api/v1/destiny/journeys/{journey_id}").json()
 
-    assert restored["status"] == "cards_failed"
-    assert restored["cards_by_slot"] == {}
-    assert restored["selections"] == {}
+    assert restored["status"] == "review_ready"
+    assert restored["cards_by_slot"] == before["cards_by_slot"]
+    assert restored["selections"] == before["selections"]
+    assert restored["final_card"] == before["final_card"]
+    assert restored["read_state"]["state"] == "cards_invalid"
+    assert app.state.destiny.database.get_document(app.state.destiny._key(journey_id)) == before
     assert restored["archetypes"] == people_payload()["people"]
     assert restored["model_calls"] == {"archetypes": 1, "cards": 2, "synthesis": 0}
-    assert "继续生成命签" in restored["errors"][-1]["message"]
+
+    rebuilt = client.post(f"/api/v1/destiny/journeys/{journey_id}/cards")
+    assert rebuilt.status_code == 200
+    assert rebuilt.json()["status"] == "cards_ready"
+    assert rebuilt.json()["selections"] == {}
+    assert rebuilt.json()["final_card"] is None
+    assert call_count == 5
+
+
+def test_reading_legacy_incomplete_journey_returns_status_without_writing(tmp_path):
+    app = create_app(make_settings(tmp_path))
+    journey = app.state.destiny.create(DestinySeed.model_validate(seed_payload()))
+    journey["schema_version"] = "1.0.0"
+    key = app.state.destiny._key(journey["journey_id"])
+    app.state.destiny.database.put_document(key, journey)
+    before = deepcopy(app.state.destiny.database.get_document(key))
+
+    response = TestClient(app).get(f"/api/v1/destiny/journeys/{journey['journey_id']}")
+
+    assert response.status_code == 200
+    assert response.json()["read_state"]["state"] == "legacy_incomplete"
+    assert response.json()["read_state"]["action"] == "restart"
+    assert app.state.destiny.database.get_document(key) == before
 
 
 def test_destiny_prompts_keep_the_simple_character_creation_contract():

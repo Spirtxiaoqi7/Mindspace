@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0.0",
+  "host": "127.0.0.1",
+  "services": {
+    "core": 8765,
+    "asr": 8766,
+    "tts": 5055,
+    "qwen": 8091
+  },
+  "environment": {
+    "core": "MINDSPACE_PORT",
+    "asr": "MINDSPACE_ASR_PORT",
+    "tts": "MINDSPACE_TTS_PORT",
+    "qwen": "MINDSPACE_QWEN3_PORT"
+  }
+}

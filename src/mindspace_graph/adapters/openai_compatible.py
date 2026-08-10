@@ -10,7 +10,7 @@ from typing import Any
 
 import httpx
 
-from mindspace_graph.models import ApiConfig, ModelUsage
+from mindspace_graph.models import ApiConfig, ModelUsage, ProviderHttpAttempt
 
 
 class EmptyVisibleContentError(ValueError):
@@ -60,7 +60,7 @@ class OpenAICompatibleLanguageModel:
                 max_keepalive_connections=10,
                 keepalive_expiry=20.0,
             ),
-            transport=httpx.HTTPTransport(retries=2),
+            transport=httpx.HTTPTransport(retries=0),
             # Provider traffic should not silently inherit a stale HTTP proxy
             # variable from the launcher environment. System-level TUN/VPN
             # routing continues to work because it operates below httpx.
@@ -75,6 +75,56 @@ class OpenAICompatibleLanguageModel:
         usage = getattr(self._local, "usage", None)
         self._local.usage = None
         return usage
+
+    def _reset_provider_attempts(self) -> None:
+        self._local.provider_attempts = []
+
+    def take_provider_attempts(self) -> list[ProviderHttpAttempt]:
+        attempts = list(getattr(self._local, "provider_attempts", []))
+        self._local.provider_attempts = []
+        return attempts
+
+    def _begin_provider_attempt(
+        self,
+        request_kind: str,
+        *,
+        compatibility_variant: str,
+        retry_reason: str = "",
+    ) -> tuple[int, float]:
+        attempts = getattr(self._local, "provider_attempts", None)
+        if not isinstance(attempts, list):
+            attempts = []
+            self._local.provider_attempts = attempts
+        return len(attempts) + 1, monotonic()
+
+    def _finish_provider_attempt(
+        self,
+        token: tuple[int, float],
+        request_kind: str,
+        *,
+        status: str,
+        compatibility_variant: str,
+        retry_reason: str = "",
+        http_status: int | None = None,
+        error: str = "",
+    ) -> None:
+        attempt, started = token
+        attempts = getattr(self._local, "provider_attempts", None)
+        if not isinstance(attempts, list):
+            attempts = []
+            self._local.provider_attempts = attempts
+        attempts.append(
+            ProviderHttpAttempt(
+                attempt=attempt,
+                request_kind=request_kind,
+                status=status,
+                elapsed_ms=round((monotonic() - started) * 1000, 1),
+                http_status=http_status,
+                compatibility_variant=compatibility_variant,
+                retry_reason=retry_reason,
+                error=error[:500],
+            )
+        )
 
     def _capture_usage(self, payload: dict[str, Any], config: ApiConfig, request_kind: str) -> None:
         raw = payload.get("usage")
@@ -102,7 +152,16 @@ class OpenAICompatibleLanguageModel:
             completion_tokens=completion,
             total_tokens=max(0, int(raw.get("total_tokens") or prompt + completion)),
             cache_source=source,
+            requested_max_tokens=max(0, int(config.max_tokens)),
+            finish_reason=str(getattr(self._local, "finish_reason", "") or ""),
         )
+
+    def _capture_finish_reason(self, value: object) -> None:
+        finish_reason = str(value or "").strip().lower()
+        self._local.finish_reason = finish_reason
+        usage = getattr(self._local, "usage", None)
+        if usage is not None:
+            self._local.usage = usage.model_copy(update={"finish_reason": finish_reason})
 
     def generate(self, messages: list[dict[str, str]], config: ApiConfig) -> str:
         return "".join(self.stream(messages, config))
@@ -118,6 +177,7 @@ class OpenAICompatibleLanguageModel:
 
     def stream(self, messages: list[dict[str, str]], config: ApiConfig) -> Iterator[str]:
         self._local.usage = None
+        self._reset_provider_attempts()
         yield from self._stream(messages, config, request_kind="generation")
 
     def stream_with_tools(
@@ -132,6 +192,7 @@ class OpenAICompatibleLanguageModel:
 
         self._local.usage = None
         self._local.native_tool_call = None
+        self._reset_provider_attempts()
         body: dict[str, Any] = {
             "model": config.model,
             "messages": messages,
@@ -148,44 +209,78 @@ class OpenAICompatibleLanguageModel:
         calls: dict[int, dict[str, Any]] = {}
         visible = False
         last_usage_event: dict[str, Any] | None = None
-        with self._client.stream(
-            "POST",
-            endpoint,
-            headers=headers,
-            json=body,
-            timeout=self.visible_timeout,
-        ) as response:
-            response.raise_for_status()
-            for line in response.iter_lines():
-                if not line or not line.startswith("data:"):
-                    continue
-                payload = line[5:].strip()
-                if payload == "[DONE]":
-                    break
-                event = json.loads(payload)
-                if isinstance(event.get("usage"), dict):
-                    last_usage_event = event
-                choices = event.get("choices") or []
-                if not choices:
-                    continue
-                delta = choices[0].get("delta") or {}
-                for part in delta.get("tool_calls") or []:
-                    index = int(part.get("index", 0))
-                    current = calls.setdefault(
-                        index,
-                        {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
-                    )
-                    if part.get("id"):
-                        current["id"] += str(part["id"])
-                    function = part.get("function") or {}
-                    if function.get("name"):
-                        current["function"]["name"] += str(function["name"])
-                    if function.get("arguments"):
-                        current["function"]["arguments"] += str(function["arguments"])
-                content = delta.get("content")
-                if isinstance(content, str) and content:
-                    visible = True
-                    yield content
+        attempt = self._begin_provider_attempt("generation", compatibility_variant="native_tools")
+        response_status: int | None = None
+        try:
+            with self._client.stream(
+                "POST",
+                endpoint,
+                headers=headers,
+                json=body,
+                timeout=self.visible_timeout,
+            ) as response:
+                response_status = response.status_code
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    payload = line[5:].strip()
+                    if payload == "[DONE]":
+                        break
+                    event = json.loads(payload)
+                    if isinstance(event.get("usage"), dict):
+                        last_usage_event = event
+                    choices = event.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    for part in delta.get("tool_calls") or []:
+                        index = int(part.get("index", 0))
+                        current = calls.setdefault(
+                            index,
+                            {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+                        )
+                        if part.get("id"):
+                            current["id"] += str(part["id"])
+                        function = part.get("function") or {}
+                        if function.get("name"):
+                            current["function"]["name"] += str(function["name"])
+                        if function.get("arguments"):
+                            current["function"]["arguments"] += str(function["arguments"])
+                    content = delta.get("content")
+                    if isinstance(content, str) and content:
+                        visible = True
+                        yield content
+            if not calls and not visible:
+                raise EmptyVisibleContentError("model returned no visible content or tool call")
+        except httpx.HTTPStatusError as exc:
+            self._finish_provider_attempt(
+                attempt, "generation", status="http_error", compatibility_variant="native_tools",
+                http_status=exc.response.status_code, error=str(exc),
+            )
+            raise
+        except EmptyVisibleContentError as exc:
+            self._finish_provider_attempt(
+                attempt, "generation", status="empty", compatibility_variant="native_tools",
+                http_status=response_status, error=str(exc),
+            )
+            raise
+        except (httpx.ConnectError, httpx.ReadError, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
+            self._finish_provider_attempt(
+                attempt, "generation", status="transport_error", compatibility_variant="native_tools", error=str(exc),
+            )
+            raise
+        except Exception as exc:
+            self._finish_provider_attempt(
+                attempt, "generation", status="error", compatibility_variant="native_tools",
+                http_status=response_status, error=str(exc),
+            )
+            raise
+        else:
+            self._finish_provider_attempt(
+                attempt, "generation", status="success", compatibility_variant="native_tools",
+                http_status=response_status,
+            )
         if last_usage_event is not None:
             self._capture_usage(last_usage_event, config, "generation")
         if len(calls) > 1:
@@ -193,8 +288,6 @@ class OpenAICompatibleLanguageModel:
         if calls:
             self._local.native_tool_call = calls[min(calls)]
             return
-        if not visible:
-            raise EmptyVisibleContentError("model returned no visible content or tool call")
 
     def take_native_tool_call(self) -> dict[str, Any] | None:
         call = getattr(self._local, "native_tool_call", None)
@@ -215,6 +308,7 @@ class OpenAICompatibleLanguageModel:
         )
         repair_messages = [*messages, {"role": "user", "content": prompt}]
         self._local.usage = None
+        self._reset_provider_attempts()
         yield from self._stream(repair_messages, config, request_kind="repair")
 
     def compact(self, messages: list[dict[str, str]], config: ApiConfig) -> str:
@@ -304,6 +398,7 @@ class OpenAICompatibleLanguageModel:
         """私有结构化调用：不流式展示，并为不同 OpenAI 兼容服务逐级降级字段。"""
 
         self._local.usage = None
+        self._reset_provider_attempts()
         endpoint = f"{config.base_url.rstrip('/')}/chat/completions"
         base_body: dict[str, Any] = {
             "model": config.model,
@@ -315,7 +410,7 @@ class OpenAICompatibleLanguageModel:
         headers = {"Content-Type": "application/json"}
         if config.api_key:
             headers["Authorization"] = f"Bearer {config.api_key}"
-        # DeepSeek V4 enables thinking by default. Small planners need visible
+        # DeepSeek V4 enables thinking by default. Small structured background calls need visible
         # JSON, not a reasoning trace that consumes their entire output budget.
         # Retry progressively for generic OpenAI-compatible servers that reject
         # vendor fields or JSON mode.
@@ -329,26 +424,65 @@ class OpenAICompatibleLanguageModel:
             base_body,
         ]
         last_error: Exception | None = None
-        for body in variants:
+        for variant_index, body in enumerate(variants, start=1):
+            variant = f"structured_variant_{variant_index}"
+            attempt = self._begin_provider_attempt(
+                request_kind,
+                compatibility_variant=variant,
+                retry_reason="compatibility_fallback" if variant_index > 1 else "",
+            )
             try:
                 response = self._client.post(endpoint, headers=headers, json=body, timeout=timeout)
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
+                self._finish_provider_attempt(
+                    attempt, request_kind, status="http_error", compatibility_variant=variant,
+                    retry_reason="compatibility_fallback" if variant_index > 1 else "",
+                    http_status=exc.response.status_code, error=str(exc),
+                )
                 if exc.response.status_code not in {400, 404, 422}:
                     raise
                 last_error = exc
                 continue
-            payload = response.json()
-            self._capture_usage(payload, config, request_kind)
-            choices = payload.get("choices") or []
-            choice = choices[0] if choices else {}
-            finish_reason = str(choice.get("finish_reason") or "").strip().lower()
-            content = _text_content((choice.get("message") or {}).get("content") if choice else None)
-            if finish_reason in {"length", "max_tokens"}:
-                raise ValueError("模型输出达到长度上限，JSON 在完成前被截断")
+            except (httpx.ConnectError, httpx.ReadError, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
+                self._finish_provider_attempt(
+                    attempt, request_kind, status="transport_error", compatibility_variant=variant,
+                    retry_reason="compatibility_fallback" if variant_index > 1 else "", error=str(exc),
+                )
+                raise
+            try:
+                payload = response.json()
+                self._capture_usage(payload, config, request_kind)
+                choices = payload.get("choices") or []
+                choice = choices[0] if choices else {}
+                finish_reason = str(choice.get("finish_reason") or "").strip().lower()
+                content = _text_content((choice.get("message") or {}).get("content") if choice else None)
+                if finish_reason in {"length", "max_tokens"}:
+                    raise ValueError("模型输出达到长度上限，JSON 在完成前被截断")
+            except Exception as exc:
+                self._finish_provider_attempt(
+                    attempt,
+                    request_kind,
+                    status="error",
+                    compatibility_variant=variant,
+                    retry_reason="compatibility_fallback" if variant_index > 1 else "",
+                    http_status=response.status_code,
+                    error=str(exc),
+                )
+                raise
             if content.strip():
+                self._finish_provider_attempt(
+                    attempt, request_kind, status="success", compatibility_variant=variant,
+                    retry_reason="compatibility_fallback" if variant_index > 1 else "",
+                    http_status=response.status_code,
+                )
                 return content
             last_error = ValueError(f"{request_kind} response content is blank")
+            self._finish_provider_attempt(
+                attempt, request_kind, status="empty", compatibility_variant=variant,
+                retry_reason="compatibility_fallback" if variant_index > 1 else "",
+                http_status=response.status_code, error=str(last_error),
+            )
         if last_error is not None:
             raise last_error
         raise ValueError(f"{request_kind} response content is blank")
@@ -369,7 +503,7 @@ class OpenAICompatibleLanguageModel:
         ]
         last_error: Exception | None = None
         blank_retry_used = False
-        for include_usage, disable_thinking in variants:
+        for variant_index, (include_usage, disable_thinking) in enumerate(variants):
             try:
                 yield from self._stream_with_connect_retry(
                     messages,
@@ -377,6 +511,7 @@ class OpenAICompatibleLanguageModel:
                     request_kind=request_kind,
                     include_usage=include_usage,
                     disable_thinking=disable_thinking,
+                    retry_reason="compatibility_fallback" if variant_index else "",
                 )
                 return
             except httpx.HTTPStatusError as exc:
@@ -398,6 +533,7 @@ class OpenAICompatibleLanguageModel:
                     request_kind=request_kind,
                     include_usage=False,
                     disable_thinking=disable_thinking,
+                    retry_reason="empty_output_retry",
                 )
                 return
         if last_error is not None:
@@ -412,6 +548,7 @@ class OpenAICompatibleLanguageModel:
         request_kind: str,
         include_usage: bool,
         disable_thinking: bool,
+        retry_reason: str = "",
     ) -> Iterator[str]:
         """Retry one failed connection or silent first response before visible text."""
 
@@ -424,6 +561,7 @@ class OpenAICompatibleLanguageModel:
                     request_kind=request_kind,
                     include_usage=include_usage,
                     disable_thinking=disable_thinking,
+                    retry_reason="connection_retry" if attempt else retry_reason,
                 ):
                     emitted = True
                     yield chunk
@@ -450,8 +588,11 @@ class OpenAICompatibleLanguageModel:
         request_kind: str,
         include_usage: bool,
         disable_thinking: bool,
+        retry_reason: str = "",
     ) -> Iterator[str]:
         """发送真实 provider 请求并把 SSE delta.content 原样交给协议解析层。"""
+
+        self._local.finish_reason = ""
 
         endpoint = f"{config.base_url.rstrip('/')}/chat/completions"
         body: dict[str, Any] = {
@@ -473,39 +614,78 @@ class OpenAICompatibleLanguageModel:
         saw_reasoning = False
         finish_reason = ""
         started_at = monotonic()
-        with self._client.stream(
-            "POST", endpoint, headers=headers, json=body, timeout=self.visible_timeout
-        ) as response:
-            response.raise_for_status()
-            for line in response.iter_lines():
-                line = line.strip()
-                if not line or line.startswith(":") or not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                payload = json.loads(data)
-                self._capture_usage(payload, config, request_kind)
-                choices = payload.get("choices") or []
-                if not choices:
-                    continue
-                choice = choices[0]
-                delta = choice.get("delta") or {}
-                reasoning = _text_content(delta.get("reasoning_content"))
-                if reasoning:
-                    saw_reasoning = True
-                content = _text_content(delta.get("content"))
-                if content:
-                    saw_content = True
-                    yield content
-                elif monotonic() - started_at >= 12:
-                    detail = "reasoning-only" if saw_reasoning else "no visible token"
-                    raise EmptyVisibleContentError(f"{request_kind} first visible token timeout ({detail})")
-                if choice.get("finish_reason") is not None:
-                    finish_reason = str(choice.get("finish_reason") or "")
-        if not saw_content:
-            detail = "reasoning-only" if saw_reasoning else "empty"
-            if finish_reason:
-                detail += f", finish_reason={finish_reason}"
-            raise EmptyVisibleContentError(f"{request_kind} response content is blank ({detail})")
+        variant = f"stream_usage_{int(include_usage)}_thinking_disabled_{int(disable_thinking)}"
+        attempt = self._begin_provider_attempt(
+            request_kind,
+            compatibility_variant=variant,
+            retry_reason=retry_reason,
+        )
+        response_status: int | None = None
+        try:
+            with self._client.stream(
+                "POST", endpoint, headers=headers, json=body, timeout=self.visible_timeout
+            ) as response:
+                response_status = response.status_code
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    line = line.strip()
+                    if not line or line.startswith(":") or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    payload = json.loads(data)
+                    self._capture_usage(payload, config, request_kind)
+                    choices = payload.get("choices") or []
+                    if not choices:
+                        continue
+                    choice = choices[0]
+                    delta = choice.get("delta") or {}
+                    reasoning = _text_content(delta.get("reasoning_content"))
+                    if reasoning:
+                        saw_reasoning = True
+                    content = _text_content(delta.get("content"))
+                    if content:
+                        saw_content = True
+                        yield content
+                    elif monotonic() - started_at >= 12:
+                        detail = "reasoning-only" if saw_reasoning else "no visible token"
+                        raise EmptyVisibleContentError(f"{request_kind} first visible token timeout ({detail})")
+                    if choice.get("finish_reason") is not None:
+                        finish_reason = str(choice.get("finish_reason") or "")
+                        self._capture_finish_reason(finish_reason)
+            if not saw_content:
+                detail = "reasoning-only" if saw_reasoning else "empty"
+                if finish_reason:
+                    detail += f", finish_reason={finish_reason}"
+                raise EmptyVisibleContentError(f"{request_kind} response content is blank ({detail})")
+        except httpx.HTTPStatusError as exc:
+            self._finish_provider_attempt(
+                attempt, request_kind, status="http_error", compatibility_variant=variant,
+                retry_reason=retry_reason, http_status=exc.response.status_code, error=str(exc),
+            )
+            raise
+        except EmptyVisibleContentError as exc:
+            self._finish_provider_attempt(
+                attempt, request_kind, status="empty", compatibility_variant=variant,
+                retry_reason=retry_reason, http_status=response_status, error=str(exc),
+            )
+            raise
+        except (httpx.ConnectError, httpx.ReadError, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
+            self._finish_provider_attempt(
+                attempt, request_kind, status="transport_error", compatibility_variant=variant,
+                retry_reason=retry_reason, error=str(exc),
+            )
+            raise
+        except Exception as exc:
+            self._finish_provider_attempt(
+                attempt, request_kind, status="error", compatibility_variant=variant,
+                retry_reason=retry_reason, http_status=response_status, error=str(exc),
+            )
+            raise
+        else:
+            self._finish_provider_attempt(
+                attempt, request_kind, status="success", compatibility_variant=variant,
+                retry_reason=retry_reason, http_status=response_status,
+            )
 

@@ -44,7 +44,7 @@ test("voice providers stay switchable after onboarding and the wizard can go bac
   assert.match(source, /返回上一步/);
   assert.match(source, /之前填写和保存的状态都已保留/);
   assert.match(main, /action === "provider"/);
-  assert.match(main, /previousProvider !== selected && children\.has\(targetService\)/);
+  assert.match(main, /previousProvider !== selected && serviceSupervisor\.hasChild\(targetService\)/);
   assert.match(main, /return observedTtsProvider \|\| "browser"/);
 });
 

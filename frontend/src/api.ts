@@ -1,4 +1,73 @@
-import type { StreamEnvelope } from "./types";
+import type { AudioStatus, ChatTurnRequest, StreamEnvelope } from "./types";
+
+type DesktopSettingsSaveResult = {
+  ok: boolean;
+  status?: number;
+  payload?: unknown;
+  error?: string;
+  phase?: string;
+  core_applied?: boolean;
+  secret_persisted?: boolean | null;
+  retryable?: boolean;
+};
+
+type DesktopLauncherBridge = {
+  saveSettings?: (payload: Record<string, unknown>) => Promise<DesktopSettingsSaveResult>;
+  getSettings?: () => Promise<DesktopSettingsSaveResult>;
+};
+
+const desktopLauncher = (): DesktopLauncherBridge | undefined => {
+  if (typeof window === "undefined") return undefined;
+  return (window as Window & { launcher?: DesktopLauncherBridge }).launcher;
+};
+
+const isSettingsMutation = (url: string, init: RequestInit) => {
+  const method = String(init.method || "GET").toUpperCase();
+  if (!['PUT', 'PATCH'].includes(method)) return false;
+  try {
+    return new URL(url, typeof location === "undefined" ? "http://localhost" : location.origin).pathname === "/api/v1/settings";
+  } catch {
+    return false;
+  }
+};
+
+const isSettingsRead = (url: string, init: RequestInit) => {
+  if (String(init.method || "GET").toUpperCase() !== "GET") return false;
+  try {
+    return new URL(url, typeof location === "undefined" ? "http://localhost" : location.origin).pathname === "/api/v1/settings";
+  } catch {
+    return false;
+  }
+};
+
+async function desktopSettingsRequest<T>(url: string, init: RequestInit): Promise<T | undefined> {
+  const launcher = desktopLauncher();
+  if (launcher?.getSettings && isSettingsRead(url, init)) {
+    const result = await launcher.getSettings();
+    if (!result.ok) throw new HttpError(result.status || 500, { detail: result.error || "桌面设置读取失败" });
+    return result.payload as T;
+  }
+  const bridge = launcher?.saveSettings;
+  if (!bridge || !isSettingsMutation(url, init)) return undefined;
+  if (typeof init.body !== "string") throw new HttpError(400, { detail: "桌面设置保存只接受 JSON" });
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(init.body) as Record<string, unknown>;
+  } catch {
+    throw new HttpError(400, { detail: "桌面设置 JSON 无效" });
+  }
+  const result = await bridge(payload);
+  if (!result.ok) {
+    throw new HttpError(result.status || 500, {
+      detail: result.error || "桌面设置保存失败",
+      phase: result.phase,
+      core_applied: result.core_applied,
+      secret_persisted: result.secret_persisted,
+      retryable: result.retryable,
+    });
+  }
+  return result.payload as T;
+}
 
 export class HttpError extends Error {
   readonly status: number;
@@ -12,7 +81,7 @@ export class HttpError extends Error {
   }
 }
 
-export async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
+export async function rawRequest(url: string, init: RequestInit = {}): Promise<Response> {
   const response = await fetch(url, {
     ...init,
     headers:
@@ -20,12 +89,43 @@ export async function request<T>(url: string, init: RequestInit = {}): Promise<T
         ? init.headers
         : { "Content-Type": "application/json", ...init.headers },
   });
-  const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
+    const payload = await response.clone().json().catch(() => ({}));
     throw new HttpError(response.status, payload);
   }
+  return response;
+}
+
+export async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
+  const desktopResult = await desktopSettingsRequest<T>(url, init);
+  if (desktopResult !== undefined) return desktopResult;
+  const response = await rawRequest(url, init);
+  const payload = await response.json().catch(() => ({}));
   return payload as T;
 }
+
+export const apiV1Request = <T>(path: string, init: RequestInit = {}) =>
+  request<T>(`/api/v1${path.startsWith("/") ? path : `/${path}`}`, init);
+
+export const openChatStream = (payload: ChatTurnRequest, requestId: string, signal: AbortSignal) =>
+  rawRequest("/api/v1/chat/stream", {
+    method: "POST",
+    headers: { "X-Request-ID": requestId },
+    body: JSON.stringify(payload),
+    signal,
+  });
+
+export const openRunEventStream = (runId: string, after: number, signal: AbortSignal) =>
+  rawRequest(`/api/v1/runs/${encodeURIComponent(runId)}/stream?after=${after}`, {
+    headers: { "Last-Event-ID": String(after) },
+    signal,
+  });
+
+export const cancelRunRequest = (runId: string) =>
+  rawRequest(`/api/v1/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+
+export const getAudioStatus = (signal?: AbortSignal) =>
+  request<AudioStatus>("/api/v1/audio/status", { signal });
 
 export async function consumeEventStream(
   response: Response,
@@ -107,10 +207,7 @@ export async function consumeResumableEventStream(
     }
     if (attempt === 6) break;
     await wait(Math.min(4000, 250 * 2 ** attempt), signal);
-    response = await fetch(
-      `/api/v1/runs/${encodeURIComponent(runId)}/stream?after=${lastSequence}`,
-      { headers: { "Last-Event-ID": String(lastSequence) }, signal },
-    );
+    response = await openRunEventStream(runId, lastSequence, signal);
   }
   throw lastError || new Error("流式回复恢复失败");
 }

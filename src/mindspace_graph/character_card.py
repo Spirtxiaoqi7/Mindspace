@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from datetime import UTC, datetime
-import re
 from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 

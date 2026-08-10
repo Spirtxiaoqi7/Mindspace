@@ -1,3 +1,5 @@
+> 文档状态：historical。旧工程手册仅供追溯，不得作为当前操作说明；当前权威见 `docs/INDEX.md`。
+
 # Mindspace 工程师手册
 
 ## 1. 文档范围与稳定契约
@@ -18,7 +20,7 @@
 ### 2.1 源码目录
 
 ```text
-A:\RAG\langgarph-rag\
+A:\RAG\Mindspace-admin\
 ├─ src\mindspace_graph\       FastAPI、LangGraph、Prompt、存储与语音后端
 ├─ frontend\                  React/Vite 聊天前端
 ├─ desktop\                   Electron Launcher、运行时和更新器
@@ -29,7 +31,7 @@ A:\RAG\langgarph-rag\
 └─ docs\                      架构、算法、发布与运维文档
 ```
 
-`A:\Mindscape` 与 `A:\Mindscape-app` 只作为只读来源，不得被新项目写入。
+`A:\Mindspace` 与 `A:\Mindspace-app` 只作为只读来源，不得被新项目写入。
 
 ### 2.2 正式安装目录
 
@@ -69,7 +71,7 @@ flowchart LR
 源码开发需要 PowerShell 7 和仓库虚拟环境；正式用户安装不需要这些系统依赖。
 
 ```powershell
-Set-Location A:\RAG\langgarph-rag
+Set-Location A:\RAG\Mindspace-admin
 
 pwsh -NoProfile -File .\scripts\start.ps1 -OpenBrowser
 pwsh -NoProfile -File .\scripts\start-asr.ps1
@@ -398,7 +400,7 @@ node .\scripts\verify-online-release.mjs --full
 ## 19. 测试与发布门槛
 
 ```powershell
-Set-Location A:\RAG\langgarph-rag
+Set-Location A:\RAG\Mindspace-admin
 
 .\.venv\Scripts\python.exe -m ruff check src tests
 .\.venv\Scripts\python.exe -m pytest -q

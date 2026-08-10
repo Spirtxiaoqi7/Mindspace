@@ -129,3 +129,44 @@ it("uploads a custom background and selects its persistent asset URL", async () 
   expect(container.querySelector(".scene-experience")).toHaveStyle({ backgroundImage: 'url("/api/v1/scene/files/scene-custom-one.webp")' });
   expect(fetchMock).toHaveBeenCalledWith("/api/v1/scenes/custom", expect.objectContaining({ method: "POST", body: expect.any(FormData) }));
 });
+
+it("rolls the optimistic scene preview back when binding fails", async () => {
+  const user = userEvent.setup();
+  const notify = vi.fn();
+  const current: ConversationScene = { session_id: "session-a", character_id: character.character_id, revision: 0, scene: null, inherited_from_character: false, updated_at: "" };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const url = String(input);
+    if (url === "/api/v1/scenes") return new Response(JSON.stringify({ items: scenes, count: scenes.length }), { status: 200 });
+    if (url === "/api/v1/sessions/session-a/scene" && init.method === "PUT") {
+      return new Response(JSON.stringify({ detail: "revision conflict" }), { status: 409, headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  }));
+  const { container } = render(<ScenePickerPage character={character} sessionId="session-a" current={current} onBack={vi.fn()} onChanged={vi.fn()} notify={notify} />);
+  await user.click(await screen.findByRole("button", { name: "切换到雨夜窗边" }));
+  await waitFor(() => expect(notify).toHaveBeenCalledWith(expect.stringContaining("切换场景失败")));
+  expect(container.querySelector(".scene-experience")).not.toHaveStyle({ backgroundImage: 'url("/assets/archive/scenes/scene-rainy-room.webp")' });
+});
+
+it("keeps an uploaded scene retryable and rolls the preview back when binding fails", async () => {
+  const user = userEvent.setup();
+  const notify = vi.fn();
+  const current: ConversationScene = { session_id: "session-a", character_id: character.character_id, revision: 0, scene: null, inherited_from_character: false, updated_at: "" };
+  const custom: SceneDefinition = {
+    scene_id: "custom-retry", title: "待重试房间", description: "已上传但首次绑定失败。",
+    location: "待重试房间", asset_id: "scene-custom-retry", asset_url: "/api/v1/scene/files/scene-custom-retry.webp", custom: true,
+  };
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+    const url = String(input);
+    if (url === "/api/v1/scenes") return new Response(JSON.stringify({ items: scenes, count: scenes.length }), { status: 200 });
+    if (url === "/api/v1/scenes/custom" && init.method === "POST") return new Response(JSON.stringify(custom), { status: 200 });
+    if (url === "/api/v1/sessions/session-a/scene" && init.method === "PUT") {
+      return new Response(JSON.stringify({ detail: "bind failed" }), { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  }));
+  render(<ScenePickerPage character={character} sessionId="session-a" current={current} onBack={vi.fn()} onChanged={vi.fn()} notify={notify} />);
+  await user.upload(screen.getByLabelText("上传自定义场景背景"), new File(["image"], "room.webp", { type: "image/webp" }));
+  expect(await screen.findByRole("button", { name: "切换到待重试房间" })).toBeInTheDocument();
+  expect(notify).toHaveBeenCalledWith(expect.stringContaining("可在列表中点击重试"));
+});

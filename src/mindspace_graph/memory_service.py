@@ -61,17 +61,18 @@ class StructuredMemoryService:
     def rebuild(self, *, dry_run: bool = False, character_id: str = "") -> dict[str, int | bool]:
         """Recreate structured bindings from the current authoritative profiles."""
 
-        groups: dict[str, list[dict[str, Any]]] = {"": []}
-        character_ids = (
+        all_character_ids = (
             [str(item["character_id"]) for item in self.profiles.characters.list()]
             if self.profiles.characters is not None
             else []
         )
-        if character_id and character_id not in character_ids:
+        if character_id and character_id not in all_character_ids:
             raise KeyError("character not found")
+        character_ids = [character_id] if character_id else all_character_ids
+        groups: dict[str, list[dict[str, Any]]] = ({character_id: []} if character_id else {"": []})
         for field in self.registry.fields:
             if field.target == "user_profile":
-                owners = [""]
+                owners = [] if character_id else [""]
             elif field.target == "character_memory":
                 owners = character_ids
             else:
@@ -108,10 +109,14 @@ class StructuredMemoryService:
             else nullcontext()
         )
         with transaction:
-            self.store.reset()
-            for owner, owner_patches in groups.items():
+            if character_id:
+                self.store.reset_character(character_id)
+            else:
+                self.store.reset()
+            for owner_index, (owner, owner_patches) in enumerate(groups.items()):
                 if not owner_patches:
                     continue
+                owner_identifier = f"{identifier}-{owner_index}"
                 profile = (
                     self.profiles.load_document("ai_profile", owner) if owner else {"identity": {"name": "Mindspace"}}
                 )
@@ -125,11 +130,11 @@ class StructuredMemoryService:
                     ),
                     "结构化记忆索引已完成确定性重建。",
                     persisted={
-                        "user_message_id": f"memory-rebuild-user-{identifier}",
-                        "assistant_message_id": f"memory-rebuild-{identifier}",
+                        "user_message_id": f"memory-rebuild-user-{owner_identifier}",
+                        "assistant_message_id": f"memory-rebuild-{owner_identifier}",
                     },
                     write_receipt=JsonWriteReceipt(
-                        turn_id=f"memory_rebuild_{identifier}",
+                        turn_id=f"memory_rebuild_{owner_identifier}",
                         applied=True,
                         patches=owner_patches,
                     ),

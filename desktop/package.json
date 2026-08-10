@@ -1,11 +1,12 @@
 {
   "name": "mindspace-desktop",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "Mindspace local AI desktop application",
   "author": "Mindspace",
   "private": true,
   "main": "main.cjs",
   "scripts": {
+    "prebuild": "node sync-runtime-assets.cjs",
     "check": "tsc --noEmit",
     "check:companion": "tsc --noEmit -p companion/tsconfig.json",
     "test": "node --test *.test.cjs",
@@ -19,20 +20,20 @@
     "package:app": "npm run build && electron-builder --win nsis"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "latest",
-    "electron-updater": "^6.8.9",
-    "extract-zip": "^2.0.1",
-    "react": "latest",
-    "react-dom": "latest",
-    "vite": "latest"
+    "@vitejs/plugin-react": "6.0.3",
+    "electron-updater": "6.8.9",
+    "extract-zip": "2.0.1",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "vite": "8.1.5"
   },
   "devDependencies": {
-    "@types/node": "latest",
-    "@types/react": "latest",
-    "@types/react-dom": "latest",
+    "@types/node": "26.1.1",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
     "electron": "43.1.1",
-    "electron-builder": "latest",
-    "typescript": "latest"
+    "electron-builder": "26.15.3",
+    "typescript": "7.0.2"
   },
   "build": {
     "appId": "com.mindspace.desktop",
@@ -63,6 +64,13 @@
       "app-paths.cjs",
       "storage-location.cjs",
       "bootstrap-core.cjs",
+      "external-navigation.cjs",
+      "secret-store.cjs",
+      "service-supervisor.cjs",
+      "settings-controller.cjs",
+      "product-windows.cjs",
+      "update-controller.cjs",
+      "service-ports.cjs",
       "root-hint.json",
       "package.json"
     ],
@@ -78,6 +86,10 @@
       {
         "from": "assets/runtime-manifest.json",
         "to": "runtime/runtime-manifest.json"
+      },
+      {
+        "from": "../config/service-ports.json",
+        "to": "config/service-ports.json"
       },
       {
         "from": "bootstrap/runtime-bundle/uv",
