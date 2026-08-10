@@ -284,7 +284,23 @@ class OpenAICompatibleLanguageModel:
         if last_usage_event is not None:
             self._capture_usage(last_usage_event, config, "generation")
         if len(calls) > 1:
-            raise ValueError("provider returned more than one tool call in a single turn")
+            configured_names = {
+                str((item.get("function") or {}).get("name") or "")
+                for item in tools
+                if isinstance(item, dict)
+            } - {""}
+            returned_names = {
+                str((item.get("function") or {}).get("name") or "")
+                for item in calls.values()
+                if isinstance(item, dict)
+            } - {""}
+            forced_single_function = (
+                tool_choice == "required"
+                and len(configured_names) == 1
+                and returned_names == configured_names
+            )
+            if not forced_single_function:
+                raise ValueError("provider returned more than one tool call in a single turn")
         if calls:
             self._local.native_tool_call = calls[min(calls)]
             return

@@ -258,6 +258,45 @@ def test_native_tool_stream_accumulates_fragmented_call_without_visible_text():
     client.close()
 
 
+def test_required_single_native_tool_keeps_first_duplicate_provider_call():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=(
+                'data: {"choices":[{"delta":{"tool_calls":['
+                '{"index":0,"id":"call_1","type":"function","function":{"name":"web","arguments":"{\\"query\\":\\"first\\"}"}},'
+                '{"index":1,"id":"call_2","type":"function","function":{"name":"web","arguments":"{\\"query\\":\\"second\\"}"}}]}}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+            headers={"Content-Type": "text/event-stream"},
+        )
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    model = OpenAICompatibleLanguageModel(client=client)
+    config = ApiConfig(api_key="test", base_url="https://api.deepseek.com")
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "web",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"],
+                },
+            },
+        }
+    ]
+
+    assert list(model.stream_with_tools([], config, tools=tools, tool_choice="required")) == []
+    assert model.take_native_tool_call() == {
+        "id": "call_1",
+        "type": "function",
+        "function": {"name": "web", "arguments": '{"query":"first"}'},
+    }
+    client.close()
+
+
 def test_visible_stream_retries_one_reasoning_only_result_before_ui_output():
     bodies = []
 

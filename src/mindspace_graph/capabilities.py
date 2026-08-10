@@ -49,14 +49,16 @@ _ELLIPTICAL_WEB_REQUEST = re.compile(
     re.IGNORECASE,
 )
 _FRESH_HINTS = re.compile(
-    r"(现在|当前|今天|今日|刚刚|最新|最近|实时|本周|本月|今年|价格|版本|发布|更新)",
+    r"(现在|当前|今天|今日|今晚|明天|明早|刚刚|最新|最近|实时|本周|本月|今年|"
+    r"去年|上个月|上一代|很久没|旧版|旧价格|价格|版本|发布|更新)",
     re.IGNORECASE,
 )
 _FRESH_INFORMATION_HINTS = re.compile(
     r"(天气|气温|降雨|下雨|空气质量|台风|地震|汇率|股价|股票|基金|金价|油价|"
-    r"价格|多少钱|赛程|比分|比赛|航班|列车|高铁|政策|法规|法律|规定|版本|"
+    r"价格|报价|官方价|美元|人民币|黄金|比特币|A股|行情|多少钱|赛程|比分|比赛|"
+    r"航班|列车|高铁|地铁|日出|政策|法规|法律|规定|版本|稳定版|LTS|升级|落后|过时|"
     r"发布|更新|新闻|热点|热搜|选举|总统|总理|首相|CEO|负责人|时间|几点|"
-    r"日期|营业|开放|排名|销量)",
+    r"日期|营业|开放|排名|销量|服务状态|服务端|异常|超时|波动|GitHub|iPhone|Android)",
     re.IGNORECASE,
 )
 _TREND_HINTS = re.compile(
@@ -64,7 +66,7 @@ _TREND_HINTS = re.compile(
     re.IGNORECASE,
 )
 _AMBIGUOUS_HINTS = re.compile(
-    r"(听说|据说|有消息说|是不是真的|真的吗|你知道吗|怎么样了|有没有这回事)",
+    r"(听说|据说|朋友说|同事说|别人说|有消息说|是不是真的|真的吗|你知道吗|怎么样了|有没有这回事)",
     re.IGNORECASE,
 )
 _STRONG_CONTEXTUAL_WEB_FOLLOWUP = re.compile(
