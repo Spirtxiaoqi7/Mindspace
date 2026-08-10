@@ -33,25 +33,14 @@ from mindspace_graph.roleplay import (
 
 DEFAULT_PROFILES: dict[str, dict[str, Any]] = {
     "user_profile": {
-        "schema_version": "1.2.0",
+        "schema_version": "1.3.0",
         "profile_type": "user",
         "revision": 0,
         "identity": {
             "preferred_name": "用户",
             "gender": "男",
-            "occupation": "",
-            "language": "zh-CN",
         },
-        "communication_preferences": {
-            "preferred_tone": "自然",
-            "response_length": "",
-            "explanation_depth": "清晰",
-            "preferred_names": [],
-            "disliked_expressions": [],
-        },
-        "stable_preferences": {"likes": [], "dislikes": [], "interests": [], "habits": []},
-        "background": {"important_experiences": []},
-        "behavior_requirements": {"always_apply": [], "avoid": [], "hard_boundaries": []},
+        "custom_profile": "",
     },
     "ai_profile": {
         "schema_version": "1.2.0",

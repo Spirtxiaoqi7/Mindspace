@@ -1,4 +1,4 @@
-# 0.8.3 代码阅读指南
+# 0.9.0 代码阅读指南
 
 > 状态：current。开发源仅为 `A:\RAG\Mindspace-admin`。
 
@@ -10,7 +10,7 @@
 4. `frontend/src/api.ts`、聊天状态与页面组件：浏览器请求、SSE、provider/tool attempt 展示。
 5. `desktop/preload.cjs`、设置桥、端口/更新管理模块：桌面权限与 Core 启动边界。
 
-## 0.8.3 拆分后的精确入口
+## 0.9.0 拆分后的精确入口
 
 - API 装配：`src/mindspace_graph/api.py` 只创建共享服务并注册 `src/mindspace_graph/api_routes/` 下的 `chat_runs.py`、`characters_cards.py`、`destiny_routes.py`、`system_settings.py`、`memory_knowledge.py`、`audio_scenes.py` 与 `legacy_routes.py`。
 - Durable run：`src/mindspace_graph/conversation_runs.py` 负责 run、SSE envelope、重放、加入与孤儿终态；业务编排仍从 `service.py` 进入 `graph.py`。
@@ -19,7 +19,7 @@
 - 前端角色：`frontend/src/characters/CharacterExperience.tsx` 负责角色库与入口，V7 画布仍位于 `frontend/src/DestinyCanvas.tsx`。
 - Desktop controllers：`desktop/settings-controller.cjs`、`update-controller.cjs`、`service-supervisor.cjs` 分别承担设置秘密、更新和服务生命周期；`main.cjs` 只组合，`preload.cjs` 只暴露窄 IPC。
 
-完整逐文件导航由 `scripts/generate-codebase-index.mjs` 生成，见 `docs/CODEBASE_INDEX_0.8.3.md` 与 `docs/CODEBASE_FILE_INDEX_0.8.3.md`。
+完整逐文件导航由 `scripts/generate-codebase-index.mjs` 生成，见 `docs/CODEBASE_INDEX_0.9.0.md` 与 `docs/CODEBASE_FILE_INDEX_0.9.0.md`。
 
 ## 当前关键不变量
 

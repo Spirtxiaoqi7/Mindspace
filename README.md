@@ -1,40 +1,59 @@
-# Mindspace 0.8.3
+# Mindspace 0.9.0
 
-Mindspace 是本地优先的 AI 角色、长期会话与多模态桌面系统。唯一开发源是 `A:\RAG\Mindspace-admin`；桌面安装目录与用户数据目录不是开发工作树。
+Mindspace 是本地优先的 AI 角色、长期会话与多模态桌面系统。0.9.0 将角色创建、聊天、记忆、工具调用和本地语音运行时收束为一条可维护的正式产品链。
 
-## 当前产品链路
+> 当前稳定源码：`main` / `v0.9.0`
+>
+> 唯一开发目录：`A:\RAG\Mindspace-admin`
+>
+> 桌面运行目录：`A:\Mindspace`，不是开发工作树；`A:\Mindspace\data` 永远不进入源码提交。
 
-- 角色创建使用 V7 十二节点命格画布。种子生成 8 个方向，96 张命签在同一个可见阶段内按前 6 类、后 6 类两次调用完成；任一半失败只重试失败半批，双批通过后才能选签。
-- 十二项选择完成后生成 `chara_card_v2`，确认入库后进入本地聊天；下一次创建从全新旅程开始。
-- 聊天请求进入 durable run。每轮持久化 provider attempt、工具 attempt 和终态，刷新或重连不得把无工具轮次伪装成任务处理。
-- 工具使用原生短指令握手；旧 planner/research/repair 多模型链不再是当前架构。
-- 模型密钥只属于本地设置/进程边界。仓库、CI、发布包、报告和测试夹具不得包含真实密钥或完整私密正文。
+## 当前产品链
 
-## 开发与验证
+- **V7 命格画布**：从角色种子生成 8 个方向，96 张命签按可恢复的 `6 + 6` 双批完成；十二项选择后合成标准 `chara_card_v2` 并进入本地聊天。
+- **V2 角色与简洁用户档案**：角色长期权威数据采用 V2 卡；用户档案只保留名字、性别和 500 字手动补充资料，长期事实统一交给记忆中心。
+- **连续会话与三层记忆**：近期对话与压缩摘要维持短期一致性，六槽事件记忆承接中期事项，长期 RAG 和结构化记忆按需召回且按角色、会话隔离。
+- **原生工具调用**：`web`、`memory`、`task` 进入 LangGraph 单工具链；工具结果以数据回注，失败不能伪装成已核实或已完成。
+- **聊天交互重构**：互动标签、多选组合、场景、消息更多菜单、工具状态、物理时间与压缩详情统一进入当前聊天体验。
+- **本地语音与环境复用**：ASR、CosyVoice、GPT-SoVITS、Qwen3-TTS 和 FFmpeg 支持有界发现、已有环境复用、失败重试和按需安装，不进行全盘扫描。
+
+## 代码维护基线
+
+- `config/version.json` 是产品版本唯一真源，版本消费者与生成资产由脚本同步。
+- Core、Web、Launcher、模型、运行时和用户数据保持明确边界；发布代码不读取桌面明文密钥或私密对话。
+- 当前文档、历史文档、原型和一次性报告在 [文档状态索引](docs/INDEX.md) 中分级，只有 `current` 文档可作为执行依据。
+- 旧工具规划链、旧角色权威档案和旧用户字段不再参与当前产品链。
+- 临时测试目录、真实 API 结果、模型、日志、安装包和用户数据不进入 Git。
+
+## 开发与构建
 
 ```powershell
-cd A:\RAG\Mindspace-admin
-node scripts/verify-version-consistency.mjs
-node scripts/sync-gpt-sovits-catalog.mjs --check
-node scripts/verify-repository-policy.mjs
-uv sync --frozen --extra dev
-uv run pytest -q
-cd frontend; npm ci; npm run check; npm test; npm run build
-cd ..\desktop; npm ci; npm test; npm run check
+Set-Location A:\RAG\Mindspace-admin
+
+node scripts\sync-version.mjs --check
+node scripts\verify-version-consistency.mjs
+node scripts\verify-repository-policy.mjs
+
+npm --prefix frontend ci
+npm --prefix frontend run build
+
+pwsh -File scripts\build-update.ps1 -Version 0.9.0
+npm --prefix desktop ci
+npm --prefix desktop run dist
 ```
 
-真实 API 与成人内容回归只能由开发者在隔离数据目录手工执行，不属于自动 CI，也不是发布输入。详情见 [验证说明](docs/VERIFICATION.md) 与 [本地报告规范](docs/LOCAL_REPORT_POLICY.md)。
+完整 Python、Web、Launcher 测试和真实 API 验收要求见 [验证门禁](docs/VERIFICATION.md)。真实 API 与成人内容回归必须使用隔离数据目录，不属于公开仓库或 CI 输入。
 
-## 权威文档
+## 当前权威文档
 
-- [文档状态索引](docs/INDEX.md)
 - [完整调用链](docs/APPLICATION_FULL_CHAIN.md)
 - [代码阅读指南](docs/CODE_READING_GUIDE.md)
+- [功能与模块索引](docs/MINDSPACE_FUNCTION_MAP.md)
 - [运行手册](docs/RUNTIME_RUNBOOK.md)
+- [封装说明](docs/PACKAGING.md)
+- [验证门禁](docs/VERIFICATION.md)
 - [版本与生成资产](docs/VERSIONING_AND_GENERATED_ASSETS.md)
-- [废弃清单](docs/DEPRECATION_REGISTER_0.8.3.md)
-- [开发分支与提交规范](docs/DEVELOPMENT_WORKFLOW_0.8.3.md)
+- [废弃清单](docs/DEPRECATION_REGISTER_0.9.0.md)
+- [分支与提交规范](docs/DEVELOPMENT_WORKFLOW_0.9.0.md)
 
-## 版本边界
-
-`config/version.json` 是版本契约唯一真源。产品版本为 `0.8.3`；签名运行时组件包有独立版本，仍由同一契约声明。运行 `node scripts/sync-version.mjs` 生成受管消费者，运行 `--check` 或 `verify-version-consistency.mjs` 只校验、不修改。
+版本变化只在 [CHANGELOG](CHANGELOG.md) 与发布日志中展示，旧设计不代表当前运行链。

@@ -3300,7 +3300,7 @@ function App() {
     {modal === "settings" && settings && <SettingsWorkspace value={settings} avatars={avatars} initialTab={settingsInitialTab} onClose={closeModal} onDirty={setModalDirty} onOpenProfile={(role) => { setProfileEditorRole(role); setModalDirty(false); setModal("profile"); }} onOpenMemory={() => { setModalDirty(false); setModal("memory"); }} onOpenKnowledge={() => { setModalDirty(false); setModal("knowledge"); }} onOpenDiagnostics={() => { setModalDirty(false); setModal("diagnostics"); }} onSaved={(next, nextAvatars) => { setSettings(next); setAvatars(nextAvatars); setModalDirty(false); setModal(null); }} onSettingsChange={setSettings} onAvatarsChange={setAvatars} notify={notify} />}
     {modal === "knowledge" && <KnowledgeDialog onClose={closeModal} onDirty={setModalDirty} notify={notify} />}
     {modal === "memory" && <MemoryDialog characterId={activeCharacterId} onClose={closeModal} onDirty={setModalDirty} notify={notify} />}
-    {modal === "profile" && <ProfileDialog characterId={activeCharacterId} initialName={profileEditorRole} onClose={closeModal} onDirty={setModalDirty} onOpenConnection={() => openSettings("model")} onSaved={() => void loadCharacters()} notify={notify} />}
+    {modal === "profile" && <ProfileDialog characterId={activeCharacterId} initialName={profileEditorRole} onClose={closeModal} onDirty={setModalDirty} onOpenConnection={() => openSettings("model")} onOpenMemory={() => { setModalDirty(false); setModal("memory"); }} onSaved={() => void loadCharacters()} notify={notify} />}
     {modal === "diagnostics" && <DiagnosticsDialog onClose={closeModal} notify={notify} onCleared={() => { newSession(); void loadSessions(); }} />}
     {modal === "voice-entry" && <VoiceEntryDialog mode={voiceEntryMode} scene={voiceEntryScene} busy={voiceEntryBusy} error={voiceEntryError} onModeChange={(next) => { setVoiceEntryMode(next); setModalDirty(true); }} onSceneChange={(next) => { setVoiceEntryScene(next); setModalDirty(true); }} onClose={closeVoiceEntry} onStart={() => void startVoiceFromEntry()} />}
     {profileCardRole && <ProfileCardDialog characterId={activeCharacterId} role={profileCardRole} avatars={effectiveAvatars} displayName={profileCardRole === "user" ? userName : characterName} onClose={() => setProfileCardRole(null)} onEdit={(role) => { setProfileCardRole(null); setProfileEditorRole(role); setModal("profile"); }} />}
@@ -3502,7 +3502,7 @@ function v2ProfileEditorDocument(record: Record<string, unknown>): Record<string
   };
 }
 
-function ProfileDialog({ characterId, initialName, onClose, onDirty, onOpenConnection, onSaved, notify }: { characterId: string; initialName: Role | "state"; onClose: () => void; onDirty: (dirty: boolean) => void; onOpenConnection: () => void; onSaved: () => void; notify: (message: string) => void }) {
+function ProfileDialog({ characterId, initialName, onClose, onDirty, onOpenConnection, onOpenMemory, onSaved, notify }: { characterId: string; initialName: Role | "state"; onClose: () => void; onDirty: (dirty: boolean) => void; onOpenConnection: () => void; onOpenMemory: () => void; onSaved: () => void; notify: (message: string) => void }) {
   const [name, setName] = useState(initialName); const [document, setDocument] = useState(""); const [savedDocument, setSavedDocument] = useState(""); const [history, setHistory] = useState<ProfileHistoryItem[]>([]); const [loading, setLoading] = useState(true); const [saving, setSaving] = useState(false); const [mode, setMode] = useState<"form" | "json">("form"); const [error, setError] = useState("");
   const [v2Card, setV2Card] = useState<Record<string, unknown> | null>(null);
   const [characterUsesV2, setCharacterUsesV2] = useState(false);
@@ -3588,7 +3588,18 @@ function ProfileDialog({ characterId, initialName, onClose, onDirty, onOpenConne
         const versions = await request<{ items: ProfileHistoryItem[] }>(`/api/v1/characters/${encodeURIComponent(characterId)}/history`).catch(() => ({ items: [] }));
         setHistory(versions.items); onSaved(); notify("V2 角色卡已保存，后续对话将使用新版本");
       } else {
-        const result = await request<{ document: Record<string, unknown> }>(`/api/v1/profiles/${name}${characterQuery}`, { method: "PUT", body: JSON.stringify(parsed) });
+        const payload = name === "user" ? {
+          schema_version: "1.3.0",
+          profile_type: "user",
+          revision: Number(parsed.revision || 0),
+          identity: {
+            preferred_name: str(profileObject(parsed.identity).preferred_name).trim(),
+            gender: str(profileObject(parsed.identity).gender || "不指定"),
+          },
+          custom_profile: str(parsed.custom_profile).trim(),
+        } : parsed;
+        if (name === "user" && !str(profileObject(payload.identity).preferred_name).trim()) throw new Error("用户名字不能为空");
+        const result = await request<{ document: Record<string, unknown> }>(`/api/v1/profiles/${name}${characterQuery}`, { method: "PUT", body: JSON.stringify(payload) });
         const serialized = JSON.stringify(result.document, null, 2); setDocument(serialized); setSavedDocument(serialized); onSaved(); notify("档案已保存，人物名称与后续对话将使用新版本");
       }
     } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); }
@@ -3608,7 +3619,8 @@ function ProfileDialog({ characterId, initialName, onClose, onDirty, onOpenConne
     } catch (reason) { const message = (reason as Error).message; setError(message); notify(message); }
     finally { setSaving(false); }
   };
-  const switchProfile = async (id: Role | "state") => { if (document !== savedDocument && !(await styledConfirm({ title: "放弃未保存的修改？", message: "切换档案后，本页尚未保存的编辑会丢失。", confirmLabel: "继续切换", danger: true }))) return; setName(id); };
+  const switchProfile = async (id: Role | "state") => { if (document !== savedDocument && !(await styledConfirm({ title: "放弃未保存的修改？", message: "切换档案后，本页尚未保存的编辑会丢失。", confirmLabel: "继续切换", danger: true }))) return; if (id === "user") setMode("form"); setName(id); };
+  const openMemory = async () => { if (document !== savedDocument && !(await styledConfirm({ title: "先放弃未保存的修改？", message: "进入长期记忆后，本页尚未保存的输入会丢失。", confirmLabel: "进入长期记忆", danger: true }))) return; onOpenMemory(); };
   return <Modal
     title="人设工作区"
     kicker="PERSONA WORKSPACE"
@@ -3624,11 +3636,23 @@ function ProfileDialog({ characterId, initialName, onClose, onDirty, onOpenConne
       <button className="profile-connection-tab" onClick={onOpenConnection}>API 连接 <span>↗</span></button>
     </div>
     <div className="profile-editor-toolbar">
-      <p className="advanced-note">{v2Card ? "这里直接编辑标准 chara_card_v2；名称、性别、关系、角色文本和偏好/任务记忆保存后立即进入后续对话。" : "用户修改直接生效并生成新 revision；AI 后续写回必须基于该 revision。"} 当前保留 {history.length} 个可恢复版本。</p>
-      <div><button className={mode === "form" ? "active" : ""} onClick={() => setMode("form")}>表单编辑</button><button className={mode === "json" ? "active" : ""} onClick={() => setMode("json")}>高级 JSON</button></div>
+      <p className="advanced-note">{name === "user" ? "这里只保存你的称呼、性别和手动补充资料；AI 与自动记忆不能改写。" : v2Card ? "这里直接编辑标准 chara_card_v2；名称、性别、关系、角色文本和偏好/任务记忆保存后立即进入后续对话。" : "用户修改直接生效并生成新 revision；AI 后续写回必须基于该 revision。"} 当前保留 {history.length} 个可恢复版本。</p>
+      {name !== "user" && <div><button className={mode === "form" ? "active" : ""} onClick={() => setMode("form")}>表单编辑</button><button className={mode === "json" ? "active" : ""} onClick={() => setMode("json")}>高级 JSON</button></div>}
     </div>
     {error && <div className="profile-editor-error" role="alert">{error}</div>}
-    {loading ? <div className="empty-mini">正在载入档案…</div> : mode === "json" ? <textarea aria-label="高级 JSON 编辑器" className="json-editor" value={document} onChange={(event) => { setDocument(event.target.value); setError(""); }} spellCheck={false} /> : parsed ? <div className="profile-form">{Object.entries(parsed).filter(([key]) => !PROFILE_TECHNICAL_FIELDS.has(key)).map(([key, value]) => <ProfileFieldEditor key={key} fieldKey={key} value={value} path={[key]} onChange={updateValue} />)}</div> : <div className="profile-editor-error" role="alert">JSON 格式无效，请切换到高级 JSON 修正。</div>}
+    {loading ? <div className="empty-mini">正在载入档案…</div> : name === "user" && parsed ? <div className="user-profile-compact">
+      <section className="user-profile-card">
+        <header><span>ABOUT YOU</span><h3>你的基础资料</h3><p>这些内容会作为稳定身份用于称呼、代词和角色互动。</p></header>
+        <div className="user-profile-fields">
+          <label><span>用户名字</span><input autoComplete="nickname" maxLength={80} value={str(profileObject(parsed.identity).preferred_name)} onChange={(event) => updateValue(["identity", "preferred_name"], event.target.value)} /></label>
+          <label><span>用户性别</span><select value={str(profileObject(parsed.identity).gender || "不指定")} onChange={(event) => updateValue(["identity", "gender"], event.target.value)}><option value="男">男</option><option value="女">女</option><option value="不指定">不指定</option></select></label>
+          <label className="user-profile-custom"><span>补充资料 <small>{str(parsed.custom_profile).length} / 500</small></span><textarea maxLength={500} value={str(parsed.custom_profile)} placeholder="可选：用自然语言填写职业、习惯、偏好或希望角色了解的稳定信息。" onChange={(event) => updateValue(["custom_profile"], event.target.value)} /></label>
+        </div>
+      </section>
+      <button className="memory-jump-card" onClick={() => void openMemory()}>
+        <span className="memory-jump-mark" aria-hidden="true">忆</span><span><strong>长期记忆</strong><small>查看和管理对话中形成的偏好、经历与重要事实</small></span><b aria-hidden="true">→</b>
+      </button>
+    </div> : mode === "json" ? <textarea aria-label="高级 JSON 编辑器" className="json-editor" value={document} onChange={(event) => { setDocument(event.target.value); setError(""); }} spellCheck={false} /> : parsed ? <div className="profile-form">{Object.entries(parsed).filter(([key]) => !PROFILE_TECHNICAL_FIELDS.has(key)).map(([key, value]) => <ProfileFieldEditor key={key} fieldKey={key} value={value} path={[key]} onChange={updateValue} />)}</div> : <div className="profile-editor-error" role="alert">JSON 格式无效，请切换到高级 JSON 修正。</div>}
   </Modal>;
 }
 

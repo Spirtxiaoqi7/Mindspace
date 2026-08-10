@@ -81,6 +81,8 @@ interface RuntimeComponentState {
   status: RuntimeInstallPhase | string; progress: number; downloadedBytes: number;
   totalBytes: number; speedBps: number; message: string; error: string;
   sourceHost?: string; sourceFallback?: boolean;
+  discoveryState?: "ready" | "repairable" | "missing"; discoveryMessage?: string;
+  candidateCount?: number; partialCandidateCount?: number; selectedSource?: string;
   operationId?: string; errorCode?: string; errorStage?: string; startedAt?: string; updatedAt?: string;
 }
 interface RuntimeManifest { schema_version: string; runtime_version: string; platform: "win32"; arch: "x64"; components: RuntimeComponentState[] }

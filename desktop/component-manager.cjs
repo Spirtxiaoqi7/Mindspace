@@ -275,6 +275,8 @@ function createComponentManager(options) {
   const states = new Map();
   let active = "";
   let controller = null;
+  let snapshotCache = null;
+  let snapshotCacheAt = 0;
 
   function log(event, details = {}) {
     if (!options.logFile) return;
@@ -305,33 +307,43 @@ function createComponentManager(options) {
     try { return JSON.parse(fs.readFileSync(markerPath(component), "utf8")); } catch { return {}; }
   }
 
+  function reportFor(component) {
+    return options.inspectTarget?.(component)
+      || reportReady(options.rootPath(), component, options.resolveTarget);
+  }
+
   function readyDependents(component) {
     return catalog.filter((candidate) => (candidate.dependencies || []).includes(component.id))
-      .filter((candidate) => reportReady(options.rootPath(), candidate, options.resolveTarget).ready)
+      .filter((candidate) => reportFor(candidate).ready)
       .map((candidate) => candidate.name);
   }
 
   function itemSnapshot(component) {
-    const report = reportReady(options.rootPath(), component, options.resolveTarget);
+    const report = reportFor(component);
     const state = stateFor(component);
     const marker = markerFor(component);
     const dependents = readyDependents(component);
     const installedBytes = report.ready ? Number(marker.bytes || component.estimatedBytes || 0) : 0;
     const removable = Boolean(component.optional && report.ready && dependents.length === 0);
     if (report.ready && !["downloading", "installing", "resolving", "verifying"].includes(state.status)) {
-      return { ...component, category: categoryFor(component), filter: undefined, files: undefined, archives: undefined, official: undefined, ...state, ...report, managed: true, installedBytes, removable, dependents, status: "ready", progress: 100, message: dependents.length ? `组件已就绪；被 ${dependents.join("、")} 使用` : "组件已就绪", error: "" };
+      return { ...component, category: categoryFor(component), filter: undefined, files: undefined, archives: undefined, official: undefined, ...state, ...report, managed: true, installedBytes, removable, dependents, status: "ready", progress: 100, message: dependents.length ? `组件已就绪；被 ${dependents.join("、")} 使用` : report.discoveryMessage || "组件已就绪", error: "" };
     }
-    const message = report.partial && !["downloading", "installing", "resolving", "verifying"].includes(state.status)
-      ? "上次安装未完成；点击继续将复用现有文件并补齐依赖"
+    const message = (report.partial || report.discoveryState === "repairable") && !["downloading", "installing", "resolving", "verifying"].includes(state.status)
+      ? report.discoveryMessage || "上次安装未完成；点击继续将复用现有文件并补齐依赖"
       : state.message;
     return { ...component, category: categoryFor(component), filter: undefined, files: undefined, archives: undefined, official: undefined, ...state, managed: true, installedBytes, removable, dependents, message, ...report };
   }
 
   function snapshot() {
-    return { active, downloadSource: normalizeDownloadSource(options.getDownloadSource?.()), items: catalog.map(itemSnapshot) };
+    const now = Date.now();
+    if (snapshotCache && now - snapshotCacheAt < 250) return snapshotCache;
+    snapshotCache = { active, downloadSource: normalizeDownloadSource(options.getDownloadSource?.()), items: catalog.map(itemSnapshot) };
+    snapshotCacheAt = now;
+    return snapshotCache;
   }
 
   function setState(component, patch) {
+    snapshotCache = null;
     Object.assign(stateFor(component), patch, { updatedAt: new Date().toISOString() });
   }
 
@@ -424,11 +436,11 @@ function createComponentManager(options) {
     for (const dependencyId of component.dependencies || []) {
       const dependency = catalog.find((item) => item.id === dependencyId);
       if (!dependency) throw new Error(`${component.name} 缺少依赖定义：${dependencyId}`);
-      if (!reportReady(options.rootPath(), dependency, options.resolveTarget).ready) await download(dependencyId);
-      if (!reportReady(options.rootPath(), dependency, options.resolveTarget).ready) throw new Error(`${component.name} 的依赖未完成：${dependency.name}`);
+      if (!reportFor(dependency).ready) await download(dependencyId);
+      if (!reportFor(dependency).ready) throw new Error(`${component.name} 的依赖未完成：${dependency.name}`);
     }
     if (active) throw new Error(`正在下载 ${active}，请等待或取消后再试`);
-    if (reportReady(options.rootPath(), component, options.resolveTarget).ready) return snapshot();
+    if (reportFor(component).ready) return snapshot();
     active = id;
     controller = new AbortController();
     const operationId = `${id}-${Date.now().toString(36)}-${crypto.randomBytes(3).toString("hex")}`;
@@ -480,7 +492,7 @@ function createComponentManager(options) {
           await options.finalizeComponent(component, targetRoot);
         }
       }
-      const report = reportReady(options.rootPath(), component, options.resolveTarget);
+      const report = reportFor(component);
       if (!report.ready) throw new Error(`下载完成但组件仍不完整：${report.missing.join("、")}`);
       fs.mkdirSync(path.dirname(markerPath(component)), { recursive: true });
       fs.writeFileSync(markerPath(component), `${JSON.stringify({ id, source: downloadSource, repository: componentForSource(component, downloadSource).repo || component.provider, downloaded_at: new Date().toISOString(), bytes: totalBytes, files: fileCount }, null, 2)}\n`);
@@ -508,7 +520,7 @@ function createComponentManager(options) {
   async function downloadAll() {
     for (const component of catalog) {
       if (component.optional) continue;
-      if (!reportReady(options.rootPath(), component, options.resolveTarget).ready) {
+      if (!reportFor(component).ready) {
         await download(component.id);
         if (stateFor(component).status === "cancelled") break;
       }

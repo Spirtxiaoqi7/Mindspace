@@ -550,13 +550,11 @@ def build_prompt(
         }
         for item in filtered_context
     ]
-    prompt_user_profile = deepcopy(profiles.user_profile)
-    communication_preferences = prompt_user_profile.get("communication_preferences")
-    if isinstance(communication_preferences, dict):
-        communication_preferences.pop("response_length", None)
+    user_custom_profile = str(profiles.user_profile.get("custom_profile") or "").strip()[:500]
     authoritative_json = _json(
         {
             "confirmed_role_state": {"loaded_in": "persona_system"},
+            **({"user_custom_profile": user_custom_profile} if user_custom_profile else {}),
             "revisions": {
                 "user": revisions.get("user_profile", 0),
                 "character": revisions.get("ai_profile", 0),

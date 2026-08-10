@@ -1,4 +1,4 @@
-name: 0.8.3 quality gates
+name: 0.9.0 quality gates
 
 on:
   pull_request:
@@ -75,4 +75,4 @@ jobs:
       - shell: pwsh
         run: ./scripts/verify-powershell-syntax.ps1
       - shell: pwsh
-        run: ./scripts/build-update.ps1 -Version 0.8.3 -SkipBuild -DryRun
+        run: ./scripts/build-update.ps1 -Version 0.9.0 -SkipBuild -DryRun

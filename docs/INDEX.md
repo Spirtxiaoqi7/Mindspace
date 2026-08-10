@@ -4,7 +4,7 @@
 
 ## Current
 
-`APPLICATION_FULL_CHAIN.md`、`CODE_READING_GUIDE.md`、`MINDSPACE_FUNCTION_MAP.md`、`ONLINE_UPDATE_RELEASE.md`、`PACKAGING.md`、`READ_ONLY_CAPABILITIES.md`、`RUNTIME_RUNBOOK.md`、`VERIFICATION.md`、`VERSIONING_AND_GENERATED_ASSETS.md`、`LOCAL_REPORT_POLICY.md`、`DEVELOPMENT_WORKFLOW_0.8.3.md`、`DEPRECATION_REGISTER_0.8.3.md`。
+`APPLICATION_FULL_CHAIN.md`、`CODE_READING_GUIDE.md`、`MINDSPACE_FUNCTION_MAP.md`、`ONLINE_UPDATE_RELEASE.md`、`PACKAGING.md`、`READ_ONLY_CAPABILITIES.md`、`RUNTIME_RUNBOOK.md`、`VERIFICATION.md`、`VERSIONING_AND_GENERATED_ASSETS.md`、`LOCAL_REPORT_POLICY.md`、`DEVELOPMENT_WORKFLOW_0.9.0.md`、`DEPRECATION_REGISTER_0.9.0.md`。
 
 ## Historical
 
@@ -20,6 +20,6 @@
 
 ## Generated
 
-`CODEBASE_INDEX_0.8.3.md`、`CODEBASE_FILE_INDEX_0.8.3.md`。两者由 `scripts/generate-codebase-index.mjs` 生成并执行严格 completeness check，不得手工编辑。
+`CODEBASE_INDEX_0.9.0.md`、`CODEBASE_FILE_INDEX_0.9.0.md`。两者由 `scripts/generate-codebase-index.mjs` 根据版本契约生成并执行严格 completeness check，不得手工编辑。
 
 新增文档必须先登记状态。Historical/prototype/report/generated 文档必须在文件顶部显示状态横幅，不能被根 README 当作当前 runbook 链接。

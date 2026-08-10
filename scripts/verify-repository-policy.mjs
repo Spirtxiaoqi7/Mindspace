@@ -7,6 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const failures = [];
 const read = (relative) => fs.readFileSync(path.join(root, relative), "utf8");
 const json = (relative) => JSON.parse(read(relative));
+const productVersion = json("config/version.json").product_version;
 const normalize = (value) => value.replaceAll("\\", "/").toLowerCase();
 const excludedDirectories = new Set([".git", "node_modules", ".venv", "dist", "build", "reports", "vendor", "artifacts", "runtime", "desktop/bootstrap"]);
 
@@ -131,7 +132,7 @@ const currentDocs = [
   "docs/READ_ONLY_CAPABILITIES.md",
   "docs/RUNTIME_RUNBOOK.md",
   "docs/VERIFICATION.md",
-  "docs/DEVELOPMENT_WORKFLOW_0.8.3.md",
+  `docs/DEVELOPMENT_WORKFLOW_${productVersion}.md`,
   "docs/LOCAL_REPORT_POLICY.md",
   "docs/VERSIONING_AND_GENERATED_ASSETS.md",
 ];
@@ -170,7 +171,7 @@ if (!bootstrapSource.includes("bootstrap/manifest.json") && !bootstrapSource.inc
 if (fs.existsSync(path.join(root, "desktop/bootstrap/manifest.json"))) failures.push("generated desktop/bootstrap/manifest.json must not be committed or precreated outside formal packaging");
 
 const workflow = read(".github/workflows/ci.yml");
-for (const command of ["uv run pytest -q", "test_api_route_contract.py", "npm run check", "npm test", "npm run build", "verify-version-consistency.mjs", "generate-codebase-index.mjs --check", "verify-current-doc-paths.mjs", "verify-repository-policy.mjs", "verify-cjs-syntax.mjs", "verify-powershell-syntax.ps1", "build-update.ps1 -Version 0.8.3 -SkipBuild -DryRun"]) {
+for (const command of ["uv run pytest -q", "test_api_route_contract.py", "npm run check", "npm test", "npm run build", "verify-version-consistency.mjs", "generate-codebase-index.mjs --check", "verify-current-doc-paths.mjs", "verify-repository-policy.mjs", "verify-cjs-syntax.mjs", "verify-powershell-syntax.ps1", `build-update.ps1 -Version ${productVersion} -SkipBuild -DryRun`]) {
   if (!workflow.includes(command)) failures.push(`CI workflow is missing required gate: ${command}`);
 }
 

@@ -76,7 +76,7 @@ Write-Output 'ASR_STAGE=funasr'
 $BuildPackages = @('setuptools<81', 'wheel')
 & $UvExe pip install --python $PythonExe @BuildPackages --index-url $PackageIndex
 if ($LASTEXITCODE -ne 0) { throw "ASR 构建基础依赖从$SourceLabel安装失败。" }
-$SpeechPackages = @('funasr>=1.3.15,<2', 'tiktoken>=0.9,<1', 'huggingface-hub>=0.34,<2', 'fastapi>=0.115,<1', 'uvicorn>=0.34,<1', 'websockets>=15,<17', 'sounddevice>=0.5.5,<0.6')
+$SpeechPackages = @('numpy>=1.26,<3', 'funasr>=1.3.15,<2', 'tiktoken>=0.9,<1', 'huggingface-hub>=0.34,<2', 'fastapi>=0.115,<1', 'uvicorn>=0.34,<1', 'websockets>=15,<17', 'sounddevice>=0.5.5,<0.6')
 & $UvExe pip install --python $PythonExe @SpeechPackages --index-url $PackageIndex
 if ($LASTEXITCODE -ne 0) { throw "FunASR 运行依赖从$SourceLabel安装失败。" }
 Write-Output 'ASR_STAGE=project'
@@ -91,11 +91,19 @@ if (-not $SkipModels) {
 
 Write-Output "ASR_PYTHON=$PythonExe"
 Write-Output "ASR_MODELS=$ModelRoot"
+$RuntimeProbe = (& $PythonExe -c "import json,sys,torch,funasr,sounddevice; print(json.dumps({'python':sys.version.split()[0],'torch':torch.__version__,'funasr':getattr(funasr,'__version__',''),'sounddevice':getattr(sounddevice,'__version__',''),'cuda':torch.version.cuda or ''}))") | Select-Object -Last 1 | ConvertFrom-Json
 @{
-    schema_version = '1.2.0'
+    schema_version = '2.0.0'
+    environment_id = 'asr-cuda'
+    environment_version = '0.8.3-cu128'
     ready = $true
     final_refinement = 'Fun-ASR-Nano-2512'
-    python = $PythonExe
+    python = 'Scripts\python.exe'
+    python_version = $RuntimeProbe.python
+    torch_version = $RuntimeProbe.torch
+    funasr_version = $RuntimeProbe.funasr
+    sounddevice_version = $RuntimeProbe.sounddevice
+    cuda = $RuntimeProbe.cuda
     verified_at = [DateTime]::UtcNow.ToString('o')
 } | ConvertTo-Json | Set-Content -LiteralPath "$ReadyMarker.next" -Encoding utf8
 Move-Item -LiteralPath "$ReadyMarker.next" -Destination $ReadyMarker -Force

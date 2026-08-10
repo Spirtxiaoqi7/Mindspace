@@ -105,6 +105,19 @@ function createServiceSupervisor(dependencies) {
     recordServiceEvent("service.restart_scheduled", { service: name, failure: failures, delay_ms: delayMs, uptime_ms: uptimeMs, exit_code: exitCode, signal });
   }
 
+  function asrRuntimeReport() {
+    return componentSnapshot()?.items?.find((item) => item.id === "asr-runtime") || null;
+  }
+
+  function asrRuntimePath() {
+    return asrRuntimeReport()?.path
+      || (app.isPackaged ? path.join(currentLayout().venvs, "asr-cuda") : path.join(rootPath(), ".venv-asr"));
+  }
+
+  function componentPath(id, fallback) {
+    return componentSnapshot()?.items?.find((item) => item.id === id)?.path || fallback;
+  }
+
   function serviceEnvironment(extra = {}) {
     const base = runtimeSnapshot()?.privateEnvironment?.() || process.env;
     const llm = configuredLlm();
@@ -120,15 +133,15 @@ function createServiceSupervisor(dependencies) {
       MINDSPACE_LLM_MODE: llm.mode, MINDSPACE_LLM_BASE_URL: llm.base_url, MINDSPACE_LLM_API_KEY: llm.api_key, MINDSPACE_LLM_MODEL: llm.model,
       MINDSPACE_ASR_API_KEY: readCredential("asr_api_key"), MINDSPACE_TTS_SILICONFLOW_API_KEY: readCredential("tts_siliconflow_api_key"),
       MINDSPACE_CORE_PYTHON: app.isPackaged ? String(coreMarker.executable || "") : path.join(rootPath(), ".venv", "Scripts", "python.exe"),
-      MINDSPACE_ASR_VENV: app.isPackaged ? path.join(currentLayout().venvs, "asr-cuda") : path.join(rootPath(), ".venv-asr"),
+      MINDSPACE_ASR_VENV: asrRuntimePath(),
       MINDSPACE_TTS_VENV: app.isPackaged ? path.join(currentLayout().venvs, "tts-cuda") : path.join(rootPath(), ".venv-tts"),
-      MINDSPACE_TTS_MARKER_ROOT: app.isPackaged ? path.join(currentLayout().state, "components", "tts-runtime") : path.join(rootPath(), "runtime", "components", "tts-runtime"),
-      MINDSPACE_GPT_SOVITS_VENV: app.isPackaged ? path.join(currentLayout().venvs, "gpt-sovits") : path.join(rootPath(), ".venv-gpt-sovits"),
+      MINDSPACE_TTS_MARKER_ROOT: componentPath("tts-runtime", app.isPackaged ? path.join(currentLayout().state, "components", "tts-runtime") : path.join(rootPath(), "runtime", "components", "tts-runtime")),
+      MINDSPACE_GPT_SOVITS_VENV: componentPath("gpt-sovits-runtime", app.isPackaged ? path.join(currentLayout().venvs, "gpt-sovits") : path.join(rootPath(), ".venv-gpt-sovits")),
       MINDSPACE_GPT_SOVITS_CODE_ROOT: path.join(rootPath(), "vendor", "GPT-SoVITS"),
       MINDSPACE_GPT_SOVITS_RUNTIME_ROOT: path.join(modelRoot(), "tts", "gpt-sovits", "runtime"),
       MINDSPACE_QWEN3_WSL_DISTRO: base.MINDSPACE_QWEN3_WSL_DISTRO || "MindspaceVLLM",
-      MINDSPACE_QWEN3_RUNTIME_ROOT: path.join(currentLayout().home, "environment", "qwen3-vllm"),
-      MINDSPACE_FFMPEG: path.join(ffmpegRoot, "ffmpeg.exe"), CUDA_MODULE_LOADING: base.CUDA_MODULE_LOADING || "LAZY",
+      MINDSPACE_QWEN3_RUNTIME_ROOT: componentPath("qwen3-vllm-runtime", path.join(currentLayout().home, "environment", "qwen3-vllm")),
+      MINDSPACE_FFMPEG: path.join(componentPath("gpt-sovits-ffmpeg", ffmpegRoot), "ffmpeg.exe"), CUDA_MODULE_LOADING: base.CUDA_MODULE_LOADING || "LAZY",
       PYTORCH_CUDA_ALLOC_CONF: base.PYTORCH_CUDA_ALLOC_CONF || "expandable_segments:True,max_split_size_mb:128",
       PATH: `${ffmpegRoot}${path.delimiter}${base.PATH || base.Path || process.env.PATH || ""}`,
       ...extra,
@@ -147,10 +160,11 @@ function createServiceSupervisor(dependencies) {
     if (app.isPackaged && !runtime?.snapshot?.().ready) return { ok: false, error: "基础运行环境尚未完成，请先点击“一键初始化”" };
     if (!ps7) return { ok: false, error: "应用私有 PowerShell 7 尚未安装" };
     if (!service || !fs.existsSync(script)) return { ok: false, error: `缺少 ${service?.script || name}` };
-    const asrPython = app.isPackaged ? path.join(currentLayout().venvs, "asr-cuda", "Scripts", "python.exe") : path.join(root, ".venv-asr", "Scripts", "python.exe");
+    const asrRuntime = asrRuntimeReport();
+    const asrPython = path.join(asrRuntimePath(), "Scripts", "python.exe");
     const asrReadyMarker = path.join(path.dirname(path.dirname(asrPython)), ".mindspace-asr-ready.json");
-    if (name === "asr" && (!fs.existsSync(asrPython) || !fs.existsSync(asrReadyMarker))) {
-      return { ok: false, error: fs.existsSync(asrPython) ? "上次 ASR CUDA 安装未完成；请点击“继续修复并启动”，已下载内容会被复用" : "ASR CUDA 尚未安装；请点击“安装并启动”，基础文字功能不受影响" };
+    if (name === "asr" && !asrRuntime?.ready) {
+      return { ok: false, error: asrRuntime?.partial || fs.existsSync(asrPython) ? "ASR CUDA 环境不完整；请点击“继续修复并启动”，已有文件会被复用" : "确认未找到可用 ASR CUDA 环境；请点击“安装并启动”，基础文字功能不受影响" };
     }
     if (name === "tts" && configuredTtsProvider(root) === "cosyvoice") {
       const candidates = app.isPackaged ? [path.join(currentLayout().venvs, "tts-cuda", "Scripts", "python.exe"), asrPython] : [path.join(root, ".venv-tts", "Scripts", "python.exe"), asrPython];
@@ -163,7 +177,7 @@ function createServiceSupervisor(dependencies) {
     if (name === "tts" && configuredTtsProvider(root) === "gpt-sovits") {
       const voiceId = configuredTtsVoice();
       const voice = gptVoices.find((candidate) => candidate.id === voiceId);
-      const python = app.isPackaged ? path.join(currentLayout().venvs, "gpt-sovits", "Scripts", "python.exe") : path.join(root, ".venv-gpt-sovits", "Scripts", "python.exe");
+      const python = path.join(componentPath("gpt-sovits-runtime", app.isPackaged ? path.join(currentLayout().venvs, "gpt-sovits") : path.join(root, ".venv-gpt-sovits")), "Scripts", "python.exe");
       const marker = app.isPackaged ? path.join(currentLayout().venvs, "gpt-sovits", "ready.json") : path.join(root, ".venv-gpt-sovits", "ready.json");
       const selected = voice && componentSnapshot()?.items.find((item) => item.id === voice.componentId);
       if (!voice) return { ok: false, error: `未知 GPT-SoVITS 音色：${voiceId}` };

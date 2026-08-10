@@ -1,4 +1,4 @@
-> 状态：current。执行前以 docs/INDEX.md 和 0.8.3 当前权威文档为准。
+> 状态：current。执行前以 docs/INDEX.md 和 0.9.0 当前权威文档为准。
 
 # Mindspace 在线更新发布
 

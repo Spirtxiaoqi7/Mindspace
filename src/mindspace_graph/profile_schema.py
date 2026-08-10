@@ -20,10 +20,6 @@ IDENTITY_GENDERS = {"男", "女", "不指定"}
 REQUIRED_SECTIONS = {
     "user_profile": {
         "identity": dict,
-        "communication_preferences": dict,
-        "stable_preferences": dict,
-        "background": dict,
-        "behavior_requirements": dict,
     },
     "ai_profile": {
         "identity": dict,
@@ -72,7 +68,7 @@ def _validate_safe_json(value: Any, *, depth: int = 0) -> None:
 
 
 class ProfileSchemaRegistry:
-    current_version = "1.2.0"
+    current_version = "1.3.0"
 
     def validate_document(
         self,
@@ -108,8 +104,25 @@ class ProfileSchemaRegistry:
             gender = candidate["identity"].get("gender")
             if gender not in IDENTITY_GENDERS:
                 raise ValueError(f"{key}.identity.gender must be 男、女或不指定")
+        if key == "user_profile":
+            preferred_name = str(candidate["identity"].get("preferred_name") or "").strip()
+            custom_profile = str(candidate.get("custom_profile") or "").strip()
+            if not preferred_name or len(preferred_name) > 80:
+                raise ValueError("user_profile.identity.preferred_name must be 1-80 characters")
+            if len(custom_profile) > 500:
+                raise ValueError("user_profile.custom_profile must not exceed 500 characters")
+            candidate = {
+                "schema_version": self.current_version,
+                "profile_type": PROFILE_TYPES[key],
+                "revision": int(candidate.get("revision", 0)),
+                "identity": {"preferred_name": preferred_name, "gender": gender},
+                "custom_profile": custom_profile,
+                **({"updated_at": candidate["updated_at"]} if "updated_at" in candidate else {}),
+            }
         for field in DEFAULT_MEMORY_REGISTRY.fields:
             if field.target != key:
+                continue
+            if key == "user_profile":
                 continue
             try:
                 value = _read(candidate, field.path)

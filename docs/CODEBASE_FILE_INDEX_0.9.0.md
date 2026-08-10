@@ -1,8 +1,8 @@
-# Mindspace 0.8.3 Per-file Index
+# Mindspace 0.9.0 Per-file Index
 
 > 文档状态：generated。由 `scripts/generate-codebase-index.mjs` 生成；每个维护文件恰好一行。
 
-维护文件总数：**386**。隐藏的 `INDEXED` 标记用于严格 completeness check。
+维护文件总数：**390**。隐藏的 `INDEXED` 标记用于严格 completeness check。
 
 ## API composition (7)
 
@@ -195,7 +195,7 @@
 <!-- INDEXED:pyproject.toml -->
 | `pyproject.toml` | Repository root | Maintains Core foundation configuration or execution behavior. | none | none | network | repository policy / full suite | current | Core release manifest/dependency surface |
 <!-- INDEXED:README.md -->
-| `README.md` | Documentation | Documents “Mindspace 0.8.3” with current authority. | Mindspace 0.8.3 | linked current/historical documentation | database/state | repository policy / full suite | current | Repository governance; inspect allowlist before release |
+| `README.md` | Documentation | Documents “Mindspace 0.9.0” with current authority. | Mindspace 0.9.0 | linked current/historical documentation | database/state | repository policy / full suite | current | Repository governance; inspect allowlist before release |
 <!-- INDEXED:SECURITY.md -->
 | `SECURITY.md` | Documentation | Documents “Security Policy” with current authority. | Security Policy | linked current/historical documentation | none | desktop/security-boundaries.test.cjs | current | Repository governance; inspect allowlist before release |
 <!-- INDEXED:src/mindspace_graph/__init__.py -->
@@ -280,7 +280,7 @@
 <!-- INDEXED:desktop/preload.cjs -->
 | `desktop/preload.cjs` | Desktop Launcher | Exposes the narrow renderer IPC bridge for settings, updates, diagnostics, storage and window operations. | none | electron | Electron IPC | desktop/security-boundaries.test.cjs; desktop/settings-bridge.test.cjs | current | Launcher public; no protected Core source |
 
-## Desktop composition (25)
+## Desktop composition (26)
 
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
@@ -294,6 +294,8 @@
 | `desktop/companion-policy.cjs` | Desktop Launcher | const DEFAULT_WIDTH = 336; | module.exports | none | none | desktop/companion-policy.test.cjs | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/component-manager.cjs -->
 | `desktop/component-manager.cjs` | Desktop Launcher | const crypto = require("node:crypto"); | module.exports | node:crypto; node:fs; node:path; ./gpt-sovits-catalog.cjs | filesystem; database/state | desktop/component-manager.test.cjs | current | Launcher public; no protected Core source |
+<!-- INDEXED:desktop/environment-registry.cjs -->
+| `desktop/environment-registry.cjs` | Desktop Launcher | const fs = require("node:fs"); | module.exports | node:fs; node:path | filesystem; environment | repository policy / full suite | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/external-navigation.cjs -->
 | `desktop/external-navigation.cjs` | Desktop Launcher | const DEFAULT_ALLOWED_HOSTS = Object.freeze(new Set([ | module.exports | none | none | repository policy / full suite | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/gpt-sovits-catalog.cjs -->
@@ -303,7 +305,7 @@
 <!-- INDEXED:desktop/index.html -->
 | `desktop/index.html` | Desktop Launcher | <!doctype html> | none | none | UI/rendering | repository policy / full suite | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/main.cjs -->
-| `desktop/main.cjs` | Desktop Launcher | Composes Electron lifecycle, windows, preload security, service supervision, settings and update controllers. | IPC launcher:snapshot; IPC companion:snapshot; IPC companion:action; IPC launcher:service; IPC launcher:all; IPC launcher:open; IPC launcher:external; IPC launcher:maintenance; IPC launcher:select-root; IPC launcher:select-storage | electron; node:child_process; node:crypto; node:fs; node:path; extract-zip; ./component-manager.cjs; ./gpt-sovits-catalog.cjs | filesystem; network; Electron IPC; process execution; environment | desktop/desktop-architecture.test.cjs; desktop/security-boundaries.test.cjs | current | Launcher public; no protected Core source |
+| `desktop/main.cjs` | Desktop Launcher | Composes Electron lifecycle, windows, preload security, service supervision, settings and update controllers. | IPC launcher:snapshot; IPC companion:snapshot; IPC companion:action; IPC launcher:service; IPC launcher:all; IPC launcher:open; IPC launcher:external; IPC launcher:maintenance; IPC launcher:select-root; IPC launcher:select-storage | electron; node:child_process; node:crypto; node:fs; node:path; extract-zip; ./component-manager.cjs; ./environment-registry.cjs | filesystem; network; Electron IPC; process execution; environment | desktop/desktop-architecture.test.cjs; desktop/security-boundaries.test.cjs | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/onboarding-policy.cjs -->
 | `desktop/onboarding-policy.cjs` | Desktop Launcher | const ONBOARDING_VERSION = 2; | module.exports | none | none | desktop/onboarding-policy.test.cjs | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/prepare-bootstrap.cjs -->
@@ -353,23 +355,23 @@
 <!-- INDEXED:docs/APPLICATION_ALGORITHM_FOUNDATION.md -->
 | `docs/APPLICATION_ALGORITHM_FOUNDATION.md` | Documentation | Documents “Mindspace 应用层算法根基（v1）” with prototype authority. | Mindspace 应用层算法根基（v1） | linked current/historical documentation | none | repository policy / full suite | prototype | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/APPLICATION_FULL_CHAIN.md -->
-| `docs/APPLICATION_FULL_CHAIN.md` | Documentation | Documents “Mindspace 0.8.3 全链路” with current authority. | Mindspace 0.8.3 全链路 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
+| `docs/APPLICATION_FULL_CHAIN.md` | Documentation | Documents “Mindspace 0.9.0 全链路” with current authority. | Mindspace 0.9.0 全链路 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/ARCHITECTURE.md -->
 | `docs/ARCHITECTURE.md` | Documentation | Documents “Mindspace 只读拆解与 LangGraph 映射” with historical authority. | Mindspace 只读拆解与 LangGraph 映射 | linked current/historical documentation | none | desktop/desktop-architecture.test.cjs | historical | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/ART_PREVIEW_PROVENANCE_0.7.0.md -->
 | `docs/ART_PREVIEW_PROVENANCE_0.7.0.md` | Documentation | Documents “0.7.0 共同篇章美术预览来源” with historical authority. | 0.7.0 共同篇章美术预览来源 | linked current/historical documentation | none | repository policy / full suite | historical | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/CODE_READING_GUIDE.md -->
-| `docs/CODE_READING_GUIDE.md` | Documentation | Documents “0.8.3 代码阅读指南” with current authority. | 0.8.3 代码阅读指南 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
-<!-- INDEXED:docs/CODEBASE_FILE_INDEX_0.8.3.md -->
-| `docs/CODEBASE_FILE_INDEX_0.8.3.md` | Documentation | Documents “Mindspace 0.8.3 Per-file Index” with generated authority. | Mindspace 0.8.3 Per-file Index | linked current/historical documentation | database/state; network; process execution | repository policy / full suite | generated | Development-only; not runtime payload by default |
-<!-- INDEXED:docs/CODEBASE_INDEX_0.8.3.md -->
-| `docs/CODEBASE_INDEX_0.8.3.md` | Documentation | Documents “Mindspace 0.8.3 Codebase Index” with generated authority. | Mindspace 0.8.3 Codebase Index | linked current/historical documentation | none | repository policy / full suite | generated | Development-only; not runtime payload by default |
-<!-- INDEXED:docs/DEPRECATION_REGISTER_0.8.3.md -->
-| `docs/DEPRECATION_REGISTER_0.8.3.md` | Documentation | Documents “0.8.3 废弃清单” with current authority. | 0.8.3 废弃清单 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
+| `docs/CODE_READING_GUIDE.md` | Documentation | Documents “0.9.0 代码阅读指南” with current authority. | 0.9.0 代码阅读指南 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
+<!-- INDEXED:docs/CODEBASE_FILE_INDEX_0.9.0.md -->
+| `docs/CODEBASE_FILE_INDEX_0.9.0.md` | Documentation | Documents “Mindspace 0.9.0 Per-file Index” with generated authority. | Mindspace 0.9.0 Per-file Index | linked current/historical documentation | database/state; network; process execution | repository policy / full suite | generated | Development-only; not runtime payload by default |
+<!-- INDEXED:docs/CODEBASE_INDEX_0.9.0.md -->
+| `docs/CODEBASE_INDEX_0.9.0.md` | Documentation | Documents “Mindspace 0.9.0 Codebase Index” with generated authority. | Mindspace 0.9.0 Codebase Index | linked current/historical documentation | none | repository policy / full suite | generated | Development-only; not runtime payload by default |
+<!-- INDEXED:docs/DEPRECATION_REGISTER_0.9.0.md -->
+| `docs/DEPRECATION_REGISTER_0.9.0.md` | Documentation | Documents “0.9.0 废弃清单” with current authority. | 0.9.0 废弃清单 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/DEVELOPMENT_DESIGN_HISTORY.md -->
-| `docs/DEVELOPMENT_DESIGN_HISTORY.md` | Documentation | Documents “Mindspace 整体设计演进与开发记录” with current authority. | Mindspace 整体设计演进与开发记录 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
-<!-- INDEXED:docs/DEVELOPMENT_WORKFLOW_0.8.3.md -->
-| `docs/DEVELOPMENT_WORKFLOW_0.8.3.md` | Documentation | Documents “0.8.3 分支与提交规范” with current authority. | 0.8.3 分支与提交规范 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
+| `docs/DEVELOPMENT_DESIGN_HISTORY.md` | Documentation | Documents “Mindspace 整体设计演进与开发记录” with historical authority. | Mindspace 整体设计演进与开发记录 | linked current/historical documentation | none | repository policy / full suite | historical | Development-only; not runtime payload by default |
+<!-- INDEXED:docs/DEVELOPMENT_WORKFLOW_0.9.0.md -->
+| `docs/DEVELOPMENT_WORKFLOW_0.9.0.md` | Documentation | Documents “0.9.0 分支与提交规范” with current authority. | 0.9.0 分支与提交规范 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/EMOTION_INTERFACE.md -->
 | `docs/EMOTION_INTERFACE.md` | Documentation | Documents “情绪能力接口（暂时停用）” with prototype authority. | 情绪能力接口（暂时停用） | linked current/historical documentation | none | repository policy / full suite | prototype | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/ENGINEER_HANDBOOK.md -->
@@ -401,7 +403,7 @@
 <!-- INDEXED:docs/MINDSPACE_0.8.3_CODE_AUDIT_STAGE_1.md -->
 | `docs/MINDSPACE_0.8.3_CODE_AUDIT_STAGE_1.md` | Documentation | Documents “Mindspace 0.8.3 代码大审查：第一阶段” with report authority. | Mindspace 0.8.3 代码大审查：第一阶段 | linked current/historical documentation | database/state | repository policy / full suite | report | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/MINDSPACE_FUNCTION_MAP.md -->
-| `docs/MINDSPACE_FUNCTION_MAP.md` | Documentation | Documents “Mindspace 0.8.3 功能图” with current authority. | Mindspace 0.8.3 功能图 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
+| `docs/MINDSPACE_FUNCTION_MAP.md` | Documentation | Documents “Mindspace 0.9.0 功能图” with current authority. | Mindspace 0.9.0 功能图 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/PACKAGING.md -->
 | `docs/PACKAGING.md` | Documentation | Documents “封装与分包方案” with current authority. | 封装与分包方案 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/PRODUCT_ARCHITECTURE.md -->
@@ -419,7 +421,7 @@
 <!-- INDEXED:docs/SHARED_CHAPTERS_ARCHITECTURE.md -->
 | `docs/SHARED_CHAPTERS_ARCHITECTURE.md` | Documentation | Documents “Mindspace 0.7.2 共同篇章与会话场景架构” with historical authority. | Mindspace 0.7.2 共同篇章与会话场景架构 | linked current/historical documentation | none | repository policy / full suite | historical | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/VERIFICATION.md -->
-| `docs/VERIFICATION.md` | Documentation | Documents “0.8.3 验证门禁” with current authority. | 0.8.3 验证门禁 | linked current/historical documentation | database/state | repository policy / full suite | current | Development-only; not runtime payload by default |
+| `docs/VERIFICATION.md` | Documentation | Documents “0.9.0 验证门禁” with current authority. | 0.9.0 验证门禁 | linked current/historical documentation | database/state | repository policy / full suite | current | Development-only; not runtime payload by default |
 
 ## Frontend characters (1)
 
@@ -503,7 +505,7 @@
 <!-- INDEXED:src/mindspace_graph/api_routes/legacy_routes.py -->
 | `src/mindspace_graph/api_routes/legacy_routes.py` | Core backend | Keeps explicit legacy and 410 route contracts isolated from current product route modules. | register_routes | __future__; fastapi; context | none | tests/test_api_route_contract.py | current | Core protected release surface |
 
-## Memory and retrieval (18)
+## Memory and retrieval (21)
 
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
@@ -518,9 +520,11 @@
 <!-- INDEXED:src/mindspace_graph/adapters/structured_memory.py -->
 | `src/mindspace_graph/adapters/structured_memory.py` | Core backend | Deterministic JSON-tagged memory without model-authored classifications. | StructuredMemoryStore | __future__; hashlib; json; re; copy; datetime; pathlib; threading | filesystem; database/state | tests/test_structured_memory.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/api_routes/memory_knowledge.py -->
-| `src/mindspace_graph/api_routes/memory_knowledge.py` | Core backend | Registers memory, knowledge, entity and retrieval maintenance endpoints against the shared API context. | register_routes | __future__; json; typing; fastapi; mindspace_graph.memory_registry; context | database/state | tests/test_api.py; tests/test_memory_registry.py; tests/test_structured_memory.py | current | Core protected release surface |
+| `src/mindspace_graph/api_routes/memory_knowledge.py` | Core backend | Registers memory, knowledge, entity and retrieval maintenance endpoints against the shared API context. | register_routes | __future__; json; typing; fastapi; pydantic; mindspace_graph.event_memory; mindspace_graph.memory_registry; context | database/state | tests/test_api.py; tests/test_memory_registry.py; tests/test_structured_memory.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/compaction.py -->
 | `src/mindspace_graph/compaction.py` | Core backend | Low-priority context compaction kept outside the conversational graph. | COMPACTION_SYSTEM_PROMPT; build_compaction_messages; parse_compaction_output; ContextCompactionService | __future__; asyncio; json; re; collections.abc; typing; mindspace_graph.context_ledger; mindspace_graph.models | database/state | tests/test_context_compaction.py | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/event_memory.py -->
+| `src/mindspace_graph/event_memory.py` | Core backend | Small, mutable event memory between live context and long-term retrieval. | PENDING_LIMIT; SUBJECT_CATEGORIES; should_consider_event; event_memory_lane; parse_event_operation; build_event_extraction_messages; resolve_event_target; normalize_event_operation; EventMemoryStore; EventMemoryWritebackService | __future__; asyncio; copy; datetime; json; re; threading; typing | database/state | tests/test_event_memory_tool_conflict.py; tests/test_event_memory.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/memory_registry.py -->
 | `src/mindspace_graph/memory_registry.py` | Core backend | Single source of truth for persistent profile fields and memory reduction. | MemoryField; FIELDS; MemoryRegistry; V2_FIELDS; DEFAULT_MEMORY_REGISTRY | __future__; dataclasses; typing | none | tests/test_memory_registry.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/memory_service.py -->
@@ -528,11 +532,15 @@
 <!-- INDEXED:src/mindspace_graph/memory_update.py -->
 | `src/mindspace_graph/memory_update.py` | Core backend | Conditional, evidence-bound extraction of conversational profile changes. | should_extract_memory; build_memory_extraction_messages; parse_memory_plan | __future__; json; re; typing; mindspace_graph.memory_registry; mindspace_graph.models | none | tests/test_memory_update.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/memory_writeback.py -->
-| `src/mindspace_graph/memory_writeback.py` | Core backend | Evidence-bound, post-turn profile memory writeback. | MemoryWritebackService | __future__; asyncio; collections.abc; typing; mindspace_graph.memory_update; mindspace_graph.models; mindspace_graph.policies; mindspace_graph.ports | none | repository policy / full suite | current | Core protected release surface |
+| `src/mindspace_graph/memory_writeback.py` | Core backend | Evidence-bound, post-turn profile memory writeback. | MemoryWritebackService | __future__; asyncio; collections.abc; typing; mindspace_graph.memory_update; mindspace_graph.event_memory; mindspace_graph.models; mindspace_graph.policies | none | repository policy / full suite | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/retrieval_fusion.py -->
 | `src/mindspace_graph/retrieval_fusion.py` | Core backend | Deterministic hybrid retrieval primitives. | tokenize; BM25Plus; reciprocal_rank_fusion; bounded_boost; CrossEncoderReranker | __future__; math; re; collections; collections.abc; dataclasses; typing; mindspace_graph.models | none | repository policy / full suite | current | Core protected release surface |
 <!-- INDEXED:tests/test_context_compaction.py -->
 | `tests/test_context_compaction.py` | Tests | Verifies test_compaction_excludes_decorative_stage_prose_from_continuity; test_background_compaction_activates_a_new_epoch_and_keeps_recent_tail; test_semantic_compaction_starts_at_round_fifteen_and_retains_three_raw_rounds; test_compaction_sanitizes_adult_details_even_if_model_mislabels_the_lane; test_adult_facts_are_retained_only_in_the_adult_prompt_view. | profiles; test_compaction_excludes_decorative_stage_prose_from_continuity; request; append_round; test_background_compaction_activates_a_new_epoch_and_keeps_recent_tail; test_semantic_compaction_starts_at_round_fifteen_and_retains_three_raw_rounds; test_compaction_sanitizes_adult_details_even_if_model_mislabels_the_lane; test_adult_facts_are_retained_only_in_the_adult_prompt_view; test_compaction_rejects_assistant_only_shared_memory_claims; test_compaction_yields_to_active_conversation_and_runs_afterward | __future__; asyncio; json; copy; mindspace_graph.adapters.file_storage; mindspace_graph.adapters.in_memory; mindspace_graph.compaction; mindspace_graph.context_ledger | database/state | direct test file | current | Development-only; not runtime payload by default |
+<!-- INDEXED:tests/test_event_memory_tool_conflict.py -->
+| `tests/test_event_memory_tool_conflict.py` | Tests | Verifies test_web_turn_replaces_false_event_memory_saved_claim; test_web_turn_keeps_truthful_not_saved_statement. | test_web_turn_replaces_false_event_memory_saved_claim; test_web_turn_keeps_truthful_not_saved_statement | mindspace_graph.tool_chain | none | direct test file | current | Development-only; not runtime payload by default |
+<!-- INDEXED:tests/test_event_memory.py -->
+| `tests/test_event_memory.py` | Tests | Verifies test_event_memory_enforces_three_plus_three; test_subject_slot_replaces_only_its_category; test_parser_and_candidate_gate_are_bounded; test_destructive_target_is_corrected_by_current_user_wording; test_event_slot_and_lifecycle_are_normalized_from_user_evidence. | operation; test_event_memory_enforces_three_plus_three; test_subject_slot_replaces_only_its_category; test_parser_and_candidate_gate_are_bounded; test_destructive_target_is_corrected_by_current_user_wording; test_event_slot_and_lifecycle_are_normalized_from_user_evidence | mindspace_graph.event_memory; mindspace_graph.product_database | database/state | direct test file | current | Development-only; not runtime payload by default |
 <!-- INDEXED:tests/test_local_retriever.py -->
 | `tests/test_local_retriever.py` | Tests | Verifies test_parent_child_chunking_expands_retrieved_context; test_stored_vectors_are_not_recomputed_and_knowledge_file_is_cached; test_chat_retrieval_reuses_history_loaded_by_graph. | test_parent_child_chunking_expands_retrieved_context; RecordingEmbeddingModel; test_stored_vectors_are_not_recomputed_and_knowledge_file_is_cached; test_chat_retrieval_reuses_history_loaded_by_graph | __future__; json; numpy; mindspace_graph.adapters.file_storage; mindspace_graph.adapters.local_retriever | none | direct test file | current | Development-only; not runtime payload by default |
 <!-- INDEXED:tests/test_memory_registry.py -->
@@ -549,7 +557,7 @@
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
 <!-- INDEXED:docs/READ_ONLY_CAPABILITIES.md -->
-| `docs/READ_ONLY_CAPABILITIES.md` | Documentation | Documents “0.8.3 原生工具能力” with current authority. | 0.8.3 原生工具能力 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
+| `docs/READ_ONLY_CAPABILITIES.md` | Documentation | Documents “0.9.0 原生工具能力” with current authority. | 0.9.0 原生工具能力 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
 <!-- INDEXED:scripts/run_082_two_card_tool_benchmark.py -->
 | `scripts/run_082_two_card_tool_benchmark.py` | Developer tooling | Deprecated 0.8.2 benchmark; retained as a fail-closed tombstone. | none | none | database/state | repository policy / full suite | deprecated | Developer tool; release only when allowlisted |
 <!-- INDEXED:src/mindspace_graph/capabilities.py -->
@@ -575,7 +583,7 @@
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
 <!-- INDEXED:.github/workflows/ci.yml -->
-| `.github/workflows/ci.yml` | Governance/config | name: 0.8.3 quality gates | none | none | database/state | repository policy / full suite | current | Development-only; not runtime payload by default |
+| `.github/workflows/ci.yml` | Governance/config | name: 0.9.0 quality gates | none | none | database/state | repository policy / full suite | current | Development-only; not runtime payload by default |
 <!-- INDEXED:config/.env.example -->
 | `config/.env.example` | Governance/config | Maintains Repository governance configuration or execution behavior. | none | none | none | repository policy / full suite | current | Development/config; never contains secrets |
 <!-- INDEXED:config/codebase-index-overrides.json -->
@@ -726,7 +734,7 @@
 <!-- INDEXED:desktop/stability-policy.test.cjs -->
 | `desktop/stability-policy.test.cjs` | Desktop Launcher | Verifies hardware acceleration is disabled before Electron becomes ready; desktop records and recovers renderer and GPU process failures; chat window has a bounded load timeout and background throttling. | none | node:assert/strict; node:fs; node:path; node:test | filesystem | direct test file | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/storage-location.test.cjs -->
-| `desktop/storage-location.test.cjs` | Desktop Launcher | Verifies fresh packaged installs keep large data beside the selected install directory; existing LocalAppData payload is preserved and offered a safe migration; custom storage location persists outside LocalAppData; storage migration rejects disk roots, nested paths and occupied targets; installer exposes a directory chooser and no longer forces LocalAppData. | none | node:assert/strict; node:fs; node:os; node:path; node:test; ./app-paths.cjs; ./storage-location.cjs | filesystem | direct test file | current | Launcher public; no protected Core source |
+| `desktop/storage-location.test.cjs` | Desktop Launcher | Verifies fresh packaged installs keep large data beside the selected install directory; existing LocalAppData payload is preserved and offered a safe migration; an existing packaged deployment wins over stale LocalAppData payload; custom storage location persists outside LocalAppData; storage migration rejects disk roots, nested paths and occupied targets. | none | node:assert/strict; node:fs; node:os; node:path; node:test; ./app-paths.cjs; ./storage-location.cjs | filesystem | direct test file | current | Launcher public; no protected Core source |
 <!-- INDEXED:frontend/src/App.test.tsx -->
 | `frontend/src/App.test.tsx` | Web frontend | Verifies keeps the destiny entry while presenting V2 as the resulting character format; edits only the compact V2 character fields in the library; offers both resume and new conversation actions from the library; requires two clicks before moving a character out of the library; selects the first character when the library data arrives asynchronously. | none | @testing-library/react; @testing-library/user-event; vitest; ./characters/CharacterExperience | UI/rendering | direct test file | current | Web public; no Core secrets |
 <!-- INDEXED:frontend/src/css-governance.test.ts -->
@@ -764,7 +772,7 @@
 <!-- INDEXED:tests/test_maturity_persistence.py -->
 | `tests/test_maturity_persistence.py` | Tests | Verifies test_restart_closes_running_run_without_reexecuting_and_keeps_partial; test_run_event_storage_is_idempotent_and_bounded_to_128_events. | test_restart_closes_running_run_without_reexecuting_and_keeps_partial; test_run_event_storage_is_idempotent_and_bounded_to_128_events | __future__; json; mindspace_graph.product_database | database/state | direct test file | current | Development-only; not runtime payload by default |
 <!-- INDEXED:tests/test_openai_compatible.py -->
-| `tests/test_openai_compatible.py` | Tests | Verifies test_private_structured_calls_disable_thinking_and_request_json; test_character_structured_generation_records_compatible_usage_kind; test_compaction_disables_thinking_and_requests_json; test_role_audit_uses_structured_compatibility_ladder; test_private_structured_calls_fall_back_for_generic_compatible_servers. | test_private_structured_calls_disable_thinking_and_request_json; test_character_structured_generation_records_compatible_usage_kind; test_compaction_disables_thinking_and_requests_json; test_role_audit_uses_structured_compatibility_ladder; test_private_structured_calls_fall_back_for_generic_compatible_servers; test_stream_retries_connect_handshake_before_first_token; test_visible_stream_disables_thinking_by_default; test_visible_stream_falls_back_when_compatibility_fields_are_rejected; test_native_tool_stream_accumulates_fragmented_call_without_visible_text; test_visible_stream_retries_one_reasoning_only_result_before_ui_output | json; httpx; mindspace_graph.adapters.in_memory; mindspace_graph.adapters.openai_compatible; mindspace_graph.graph; mindspace_graph.models | network | direct test file | current | Development-only; not runtime payload by default |
+| `tests/test_openai_compatible.py` | Tests | Verifies test_private_structured_calls_disable_thinking_and_request_json; test_character_structured_generation_records_compatible_usage_kind; test_compaction_disables_thinking_and_requests_json; test_role_audit_uses_structured_compatibility_ladder; test_private_structured_calls_fall_back_for_generic_compatible_servers. | test_private_structured_calls_disable_thinking_and_request_json; test_character_structured_generation_records_compatible_usage_kind; test_compaction_disables_thinking_and_requests_json; test_role_audit_uses_structured_compatibility_ladder; test_private_structured_calls_fall_back_for_generic_compatible_servers; test_stream_retries_connect_handshake_before_first_token; test_visible_stream_disables_thinking_by_default; test_visible_stream_falls_back_when_compatibility_fields_are_rejected; test_native_tool_stream_accumulates_fragmented_call_without_visible_text; test_required_single_native_tool_keeps_first_duplicate_provider_call | json; httpx; mindspace_graph.adapters.in_memory; mindspace_graph.adapters.openai_compatible; mindspace_graph.graph; mindspace_graph.models | network | direct test file | current | Development-only; not runtime payload by default |
 <!-- INDEXED:tests/test_prompt_cache_layout.py -->
 | `tests/test_prompt_cache_layout.py` | Tests | Verifies test_next_turn_keeps_confirmed_messages_but_excludes_audit_context; test_compatibility_split_keeps_exactly_the_latest_three_rounds; test_hidden_initiative_trigger_is_not_persisted_as_dialogue_history; test_json_baseline_precedes_history_and_post_history_calibration_is_last; test_native_tool_guidance_is_short_and_old_protocol_is_absent. | profiles; history_through; request; test_next_turn_keeps_confirmed_messages_but_excludes_audit_context; test_compatibility_split_keeps_exactly_the_latest_three_rounds; test_hidden_initiative_trigger_is_not_persisted_as_dialogue_history; test_json_baseline_precedes_history_and_post_history_calibration_is_last; test_native_tool_guidance_is_short_and_old_protocol_is_absent; test_recent_raw_chat_is_not_duplicated_inside_retrieval_context; test_old_raw_chat_can_return_through_rag_outside_direct_history_window | __future__; copy; mindspace_graph.adapters.file_storage; mindspace_graph.context_ledger; mindspace_graph.models; mindspace_graph.native_tools; mindspace_graph.prompting | none | direct test file | current | Development-only; not runtime payload by default |
 <!-- INDEXED:tests/test_r18_private_library.py -->
@@ -835,7 +843,7 @@
 <!-- INDEXED:docs/release-history.json -->
 | `docs/release-history.json` | Documentation | Defines governed Version and release data with top-level keys: 0; 1; 2; 3; 4; 5; 6; 7. | 0; 1; 2; 3; 4; 5; 6; 7; 8; 9 | none | none | repository policy / full suite | generated | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/RUNTIME_RUNBOOK.md -->
-| `docs/RUNTIME_RUNBOOK.md` | Documentation | Documents “0.8.3 Runtime Runbook” with current authority. | 0.8.3 Runtime Runbook | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
+| `docs/RUNTIME_RUNBOOK.md` | Documentation | Documents “0.9.0 Runtime Runbook” with current authority. | 0.9.0 Runtime Runbook | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/UPDATE_AND_CAPACITY.md -->
 | `docs/UPDATE_AND_CAPACITY.md` | Documentation | Documents “更新发布与容量基线” with prototype authority. | 更新发布与容量基线 | linked current/historical documentation | none | repository policy / full suite | prototype | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/VERSIONING_AND_GENERATED_ASSETS.md -->

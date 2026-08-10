@@ -419,6 +419,8 @@ function App() {
     ? `${activeAsrItem.message || `正在准备 ${activeAsrItem.name}`} · ${asrInstallProgress.toFixed(0)}%`
     : asrProgressItem?.error
       ? `${asrProgressItem.name} 安装中断，可继续修复`
+      : asrProgressItem?.discoveryMessage
+        ? asrProgressItem.discoveryMessage
       : asrProgressItem
         ? `待准备 ${asrProgressItem.name} · ${asrReadyCount}/${asrItems.length} 项已就绪`
         : "正在检查实时语音组件";
@@ -857,7 +859,7 @@ function App() {
           return <article className={`service-card ${online && !ttsDisabled ? "online" : ""}${showAsrProgress ? " has-progress" : ""}`} key={id}>
             <span className={`service-icon ${item.tone}`}>{item.icon === "brand" ? <img src="./mindspace-brand-icon.png" alt="" /> : item.icon}</span>
             <div><strong>{isQwenTts ? "Qwen3 实时语音" : item.title}</strong><small>{ttsDisabled ? "声音已关闭 · 仅文字对话" : remoteTts ? "SiliconFlow · 流式 API" : isQwenTts ? "vLLM-Omni · WSL2 · CustomVoice 固定 Serena" : id === "tts" && data?.ttsProvider === "gpt-sovits" ? `${voices.items.find((voice) => voice.id === voices.current)?.label || "GPT-SoVITS"} · 本地流式` : item.subtitle}</small></div>
-            <span className="service-state" title={hardwareUnavailable ? selectedHardwareItem?.unavailableReason : ""}><i />{ttsDisabled ? "已关闭" : remoteTts ? "API 托管" : hardwareUnavailable ? "硬件不满足" : isQwenTts && !qwenRuntime?.ready ? "运行时未接入" : isQwenTts && starting ? "正在加载模型" : online ? "运行中" : id === "asr" && asrInstalling ? "正在安装" : "未启动"}</span>
+            <span className="service-state" title={hardwareUnavailable ? selectedHardwareItem?.unavailableReason : ""}><i />{ttsDisabled ? "已关闭" : remoteTts ? "API 托管" : hardwareUnavailable ? "硬件不满足" : isQwenTts && !qwenRuntime?.ready ? "运行时未接入" : isQwenTts && starting ? "正在加载模型" : online ? "运行中" : id === "asr" && asrInstalling ? "正在安装" : id === "asr" && asrRuntime?.discoveryState === "repairable" ? "待修复" : id === "asr" && asrRuntime?.discoveryState === "missing" ? "未安装" : "未启动"}</span>
             <button disabled={Boolean(busy) || ttsDisabled || remoteTts || hardwareUnavailable || (isQwenTts && !qwenRuntime?.ready)} title={hardwareUnavailable ? selectedHardwareItem?.unavailableReason : ""} onClick={() => serviceAction(serviceId, starting ? "stop" : online ? "restart" : "start")}>{ttsDisabled ? "无需启动" : remoteTts ? "无需本地模型" : hardwareUnavailable ? selectedHardwareItem?.preflightCode === "RAM_INSUFFICIENT" ? "内存不足" : selectedHardwareItem?.preflightCode === "VRAM_INSUFFICIENT" ? "显存不足" : "硬件不满足" : isQwenTts && !qwenRuntime?.ready ? "请先接入" : isQwenTts && starting ? "停止加载" : online ? "重启" : id === "asr" && asrInstalling ? `${asrInstallProgress.toFixed(0)}%` : asrNeedsSetup ? asrRuntime?.partial || asrProgressItem?.partial || asrProgressItem?.error ? "继续修复并启动" : "安装并启动" : "启动"}</button>
             {showAsrProgress && <div className="service-install-progress" role="status" aria-live="polite">
               <span>{asrInstallText}</span>

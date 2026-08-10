@@ -1,6 +1,6 @@
 # Mindspace 整体设计演进与开发记录
 
-> 当前 Core / Web / Launcher 基线：`0.8.2`
+> 文档状态：historical。本文记录旧版本设计演进，不代表当前运行链；现行版本与权威入口见根目录 `README.md` 和 `docs/INDEX.md`。
 >
 > 唯一开发源码：`A:\RAG\Mindspace-admin`  
 > 桌面程序：`A:\Mindspace\application`  
@@ -16,7 +16,7 @@
 5. 产品、工程和后续研究应从哪里继续阅读。
 
 如果本文件与早期专题文档在“当前实现”上发生冲突，以当前源码、自动化测试和本文件标注的
-`0.8.2 当前状态`为准。`CHANGELOG.md`保留逐版本事实；专题文档仍可作为当时的设计快照阅读。
+各章节只代表当时状态；当前状态以根目录 `README.md` 和 `docs/INDEX.md` 为准。`CHANGELOG.md`保留逐版本事实；专题文档仍可作为当时的设计快照阅读。
 
 ---
 

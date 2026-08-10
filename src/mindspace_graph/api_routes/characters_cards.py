@@ -458,9 +458,14 @@ def register_routes(app: FastAPI, context: ApiContext) -> None:
         character_id: str = Query(default="", max_length=64),
     ):
         try:
+            profile_key = _profile_key(name)
             with container.database.transaction(operation="user_direct_profile_edit", details={"profile": name}):
-                value = container.profiles.save_document(_profile_key(name), payload, character_id)
-                rebuilt = container.memory_service.rebuild(dry_run=False, character_id=character_id)
+                value = container.profiles.save_document(profile_key, payload, character_id)
+                rebuilt = (
+                    {"skipped": True, "reason": "compact_user_profile_has_no_memory_index"}
+                    if profile_key == "user_profile"
+                    else container.memory_service.rebuild(dry_run=False, character_id=character_id)
+                )
                 container.audit.record(
                     "user_direct_profile_edit",
                     {

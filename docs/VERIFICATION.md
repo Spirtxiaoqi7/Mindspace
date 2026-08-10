@@ -1,4 +1,4 @@
-# 0.8.3 验证门禁
+# 0.9.0 验证门禁
 
 > 状态：current。自动门禁不访问真实 API、不读取用户数据、不执行正式打包。
 
@@ -37,7 +37,7 @@ npm test
 npm run check
 ```
 
-Windows CI 额外运行 `scripts/build-update.ps1 -Version 0.8.3 -SkipBuild -DryRun`，验证 PowerShell 路径和 allowlist，不产出正式包。
+Windows CI 额外运行 `scripts/build-update.ps1 -Version 0.9.0 -SkipBuild -DryRun`，验证 PowerShell 路径和 allowlist，不产出正式包。
 
 ## 手工真实 API
 

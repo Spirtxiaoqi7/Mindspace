@@ -1,17 +1,17 @@
-# Mindspace 0.8.3 Codebase Index
+# Mindspace 0.9.0 Codebase Index
 
 > 文档状态：generated。由 `scripts/generate-codebase-index.mjs` 生成；不得手工编辑。
 
 ## Coverage
 
-维护文件总数：**386**。逐文件证据见 [CODEBASE_FILE_INDEX_0.8.3.md](CODEBASE_FILE_INDEX_0.8.3.md)。
+维护文件总数：**390**。逐文件证据见 [CODEBASE_FILE_INDEX_0.9.0.md](CODEBASE_FILE_INDEX_0.9.0.md)。
 
-- Core backend: 76
+- Core backend: 77
 - Developer tooling: 75
-- Desktop Launcher: 67
+- Desktop Launcher: 68
 - Documentation: 58
 - Web frontend: 47
-- Tests: 44
+- Tests: 46
 - Governance/config: 8
 - Repository root: 8
 - Packaging adapter: 3
@@ -68,9 +68,9 @@ flowchart LR
 - Audio and voice: 38
 - Repository governance: 37
 - Documentation governance: 35
-- Desktop composition: 25
+- Desktop composition: 26
+- Memory and retrieval: 21
 - Frontend shell: 19
-- Memory and retrieval: 18
 - Characters and V2 cards: 12
 - Chat and durable runs: 10
 - Settings and provider: 8

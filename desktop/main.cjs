@@ -10,6 +10,7 @@ const originalProxyEnvironment = {
   ALL_PROXY: process.env.ALL_PROXY,
 };
 const { createComponentManager } = require("./component-manager.cjs");
+const { createEnvironmentRegistry } = require("./environment-registry.cjs");
 const { GPT_SOVITS_VOICES } = require("./gpt-sovits-catalog.cjs");
 const { createRuntimeManager } = require("./runtime-manager.cjs");
 const { evaluateHardwareAvailability } = require("./hardware-policy.cjs");
@@ -88,6 +89,7 @@ let companionWindow;
 let tray;
 let quitting = false;
 let componentManager;
+let environmentRegistry;
 let runtimeManager;
 let credentialStore;
 let serviceSupervisor;
@@ -361,11 +363,13 @@ function runtimeDataRoot() {
 }
 
 function modelRoot() {
-  return app.isPackaged ? currentLayout().models : path.join(rootPath(), "assets", "models");
+  const fallback = app.isPackaged ? currentLayout().models : path.join(rootPath(), "assets", "models");
+  return environmentRegistry?.resolveModelRoot(fallback) || fallback;
 }
 
 function qwenRuntimeRoot() {
-  return path.join(currentLayout().home, "environment", "qwen3-vllm");
+  const fallback = path.join(currentLayout().home, "environment", "qwen3-vllm");
+  return environmentRegistry?.resolveTarget({ id: "qwen3-vllm-runtime", name: "Qwen3 实时语音运行时", required: ["ready.json"] }, fallback) || fallback;
 }
 
 function qwenLauncherCandidates() {
@@ -415,6 +419,11 @@ async function refreshQwenRuntimePreflight() {
   const launcherCandidates = qwenLauncherCandidates();
   const marker = path.join(qwenRuntimeRoot(), "ready.json");
   let modelSourceReady = fs.existsSync(marker);
+  const localModel = path.join(currentLayout().home, "experimental", "qwen3-tts", "models", "Qwen3-TTS-12Hz-1.7B-CustomVoice");
+  const localWeight = path.join(localModel, "model.safetensors");
+  if (!modelSourceReady && launcherCandidates.length && fs.existsSync(path.join(localModel, "config.json")) && fs.existsSync(localWeight)) {
+    try { modelSourceReady = fs.statSync(localWeight).size >= 3 * 1024 ** 3; } catch {}
+  }
   if (!modelSourceReady && wslExecutable && installed.includes(distro) && launcherCandidates.length) {
     try {
       const launcherText = fs.readFileSync(launcherCandidates[0], "utf8");
@@ -1497,29 +1506,43 @@ async function finalizeComponent(component, targetRoot) {
   }
 }
 
-function componentTarget(component) {
+function defaultComponentTarget(component) {
   if (!app.isPackaged) return path.join(rootPath(), component.target);
   const targets = {
-    embedding: path.join(currentLayout().models, "shibing624", "text2vec-base-chinese"),
-    asr: path.join(currentLayout().models, "asr", "paraformer-zh-streaming"),
-    "asr-final": path.join(currentLayout().models, "asr", "Fun-ASR-Nano-2512"),
-    vad: path.join(currentLayout().models, "asr", "fsmn-vad"),
-    punc: path.join(currentLayout().models, "asr", "ct-punc"),
+    embedding: path.join(modelRoot(), "shibing624", "text2vec-base-chinese"),
+    asr: path.join(modelRoot(), "asr", "paraformer-zh-streaming"),
+    "asr-final": path.join(modelRoot(), "asr", "Fun-ASR-Nano-2512"),
+    vad: path.join(modelRoot(), "asr", "fsmn-vad"),
+    punc: path.join(modelRoot(), "asr", "ct-punc"),
     "asr-runtime": path.join(currentLayout().venvs, "asr-cuda"),
-    tts: path.join(currentLayout().models, "tts", "Fun-CosyVoice3-0.5B-2512"),
+    tts: path.join(modelRoot(), "tts", "Fun-CosyVoice3-0.5B-2512"),
     "tts-runtime": path.join(currentLayout().state, "components", "tts-runtime"),
-    "gpt-sovits-v4-base": path.join(currentLayout().models, "tts", "gpt-sovits", "runtime", "GPT_SoVITS"),
+    "gpt-sovits-v4-base": path.join(modelRoot(), "tts", "gpt-sovits", "runtime", "GPT_SoVITS"),
     "gpt-sovits-ffmpeg": path.join(currentLayout().tools, "ffmpeg", "8.1.2"),
     "gpt-sovits-runtime": path.join(currentLayout().venvs, "gpt-sovits"),
     "qwen3-vllm-runtime": path.join(currentLayout().home, "environment", "qwen3-vllm"),
   };
   if (component.category === "voice" && component.id.startsWith("gpt-sovits-")) {
-    return path.join(currentLayout().models, "tts", "gpt-sovits", "runtime");
+    return path.join(modelRoot(), "tts", "gpt-sovits", "runtime");
   }
   return targets[component.id] || path.join(currentLayout().home, component.target);
 }
 
+function componentTarget(component) {
+  const fallback = defaultComponentTarget(component);
+  return environmentRegistry?.resolveTarget(component, fallback) || fallback;
+}
+
 function initializeComponentManager() {
+  environmentRegistry = createEnvironmentRegistry({
+    paths: currentLayout(),
+    environment: process.env,
+    developmentRoot: rootPath(),
+    userDataRoot: app.getPath("userData"),
+    localAppData: process.env.LOCALAPPDATA,
+    packaged: app.isPackaged,
+    logFile: path.join(logRoot(), "environment-registry.jsonl"),
+  });
   componentManager = createComponentManager({
     rootPath,
     fetch: (...arguments_) => net.fetch(...arguments_),
@@ -1530,6 +1553,7 @@ function initializeComponentManager() {
       currentLayout().environment,
     ],
     resolveTarget: componentTarget,
+    inspectTarget: (component) => environmentRegistry.inspectTarget(component, defaultComponentTarget(component)),
     getDownloadSource: downloadSource,
     installComponent,
     finalizeComponent,

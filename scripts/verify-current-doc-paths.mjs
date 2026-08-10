@@ -3,11 +3,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const productVersion = JSON.parse(fs.readFileSync(path.join(root, "config/version.json"), "utf8")).product_version;
 const currentDocs = [
   "README.md", "SECURITY.md", "docs/INDEX.md", "docs/APPLICATION_FULL_CHAIN.md", "docs/CODE_READING_GUIDE.md",
   "docs/MINDSPACE_FUNCTION_MAP.md", "docs/ONLINE_UPDATE_RELEASE.md", "docs/PACKAGING.md",
   "docs/READ_ONLY_CAPABILITIES.md", "docs/RUNTIME_RUNBOOK.md", "docs/VERIFICATION.md",
-  "docs/DEVELOPMENT_WORKFLOW_0.8.3.md", "docs/LOCAL_REPORT_POLICY.md", "docs/VERSIONING_AND_GENERATED_ASSETS.md",
+  `docs/DEVELOPMENT_WORKFLOW_${productVersion}.md`, "docs/LOCAL_REPORT_POLICY.md", "docs/VERSIONING_AND_GENERATED_ASSETS.md",
 ];
 const rootFiles = new Set(["Dockerfile", "README.md", "SECURITY.md", "payload.json", "pyproject.toml", "uv.lock"]);
 const relativePrefix = /^(?:src|frontend|desktop|scripts|config|tests|docs|\.github)\//;

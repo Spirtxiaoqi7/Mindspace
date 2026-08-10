@@ -1,4 +1,4 @@
-# Mindspace 0.8.3 功能图
+# Mindspace 0.9.0 功能图
 
 > 状态：current。
 

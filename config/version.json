@@ -1,14 +1,16 @@
 {
   "schema_version": "1.0.0",
-  "product_version": "0.8.3",
-  "release_date": "2026-08-10",
-  "release_title": "0.8.3 工程治理与发布边界",
-  "release_status": "development",
+  "product_version": "0.9.0",
+  "release_date": "2026-08-11",
+  "release_title": "0.9.0 角色、记忆、工具与桌面运行时大改版",
+  "release_status": "stable",
   "release_summary": [
-    "建立单一版本契约、可复现依赖和跨平台 CI 门禁",
-    "历史真实 API 脚本改为拒绝读取桌面明文设置的 fail-closed 墓碑",
-    "建立文档状态索引、废弃清单、报告脱敏和协作分支规范",
-    "近期 V7、durable run、provider/tool attempt 与桌面安全测试纳入门禁"
+    "V7 十二节点命格、6+6 命签生成与 chara_card_v2 成为统一角色创建链",
+    "原生工具调用、持久压缩、六槽事件记忆和长期 RAG 形成分层连续性",
+    "聊天互动、场景、工具状态、物理时间与人物库完成桌面产品重构",
+    "本地 ASR、TTS、Qwen3 与 FFmpeg 支持有界发现和已有环境复用",
+    "用户档案收缩为名字、性别和手动补充资料，长期事实归入记忆中心",
+    "版本、CI、文档状态、废弃登记和代码索引完成 0.9.0 维护治理"
   ],
   "runtime_bundle": {
     "manifest_version": "0.4.0",

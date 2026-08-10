@@ -1,4 +1,4 @@
-# Mindspace 0.8.3 全链路
+# Mindspace 0.9.0 全链路
 
 > 状态：current。本文是产品请求链的权威说明，不描述已废弃 planner/research/repair 方案。
 

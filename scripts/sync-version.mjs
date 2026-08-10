@@ -52,6 +52,7 @@ function syncLock(relative, packageRelative) {
     if (JSON.stringify(rootPackage.devDependencies ?? {}) !== JSON.stringify(pkg.devDependencies ?? {})) failures.push(`${relative}: root devDependencies differ from ${packageRelative}`);
     return;
   }
+  lock.version = version;
   rootPackage.version = version;
   rootPackage.dependencies = pkg.dependencies ?? {};
   rootPackage.devDependencies = pkg.devDependencies ?? {};
@@ -132,7 +133,7 @@ const entry = {
 };
 if (!Array.isArray(history)) throw new Error(`${historyPath} must be a release array`);
 if (checkOnly) {
-  if (JSON.stringify(history[0]) !== JSON.stringify(entry)) failures.push(`${historyPath}: first release is not the canonical 0.8.3 entry`);
+  if (JSON.stringify(history[0]) !== JSON.stringify(entry)) failures.push(`${historyPath}: first release is not the canonical ${version} entry`);
 } else {
   writeJson(historyPath, [entry, ...history.filter((item) => item.version !== version)]);
 }
