@@ -23,11 +23,17 @@ function compareVersions(left, right) {
 }
 
 function installedVersion(root) {
-  try {
-    return String(JSON.parse(fs.readFileSync(path.join(root, "payload.json"), "utf8")).version || "");
-  } catch {
-    return "";
+  const candidates = [
+    path.join(root, "runtime", "updates", "current.json"),
+    path.join(root, "payload.json"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      const version = String(JSON.parse(fs.readFileSync(candidate, "utf8")).version || "");
+      if (version) return version;
+    } catch {}
   }
+  return "";
 }
 
 const PROTECTED_CORE_PATHS = Object.freeze([

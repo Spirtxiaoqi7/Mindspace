@@ -160,3 +160,31 @@ test("upgrade refuses a Core directory that still contains legacy user state", a
   await assert.rejects(ensureCoreRoot({ root, archive, version: "0.8.2", extract: () => {} }), /must be migrated/);
   assert.equal(fs.readFileSync(path.join(root, "runtime", "data", "session.json"), "utf8"), "keep\n");
 });
+
+test("a hot-updated Core uses current.json instead of stale bootstrap payload version", async (context) => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-hot-updated-"));
+  context.after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  const root = path.join(parent, "app");
+  const archive = path.join(parent, "mindspace-core.zip");
+  fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
+  fs.mkdirSync(path.join(root, "runtime", "data"), { recursive: true });
+  fs.mkdirSync(path.join(root, "runtime", "updates"), { recursive: true });
+  fs.writeFileSync(path.join(root, "pyproject.toml"), "version = \"0.8.3\"\n");
+  fs.writeFileSync(path.join(root, "payload.json"), '{"version":"0.8.0"}\n');
+  fs.writeFileSync(path.join(root, "runtime", "updates", "current.json"), '{"version":"0.8.3"}\n');
+  fs.writeFileSync(path.join(root, "scripts", "start.ps1"), "updated\n");
+  fs.writeFileSync(path.join(root, "runtime", "data", "session.json"), "keep\n");
+  fs.writeFileSync(archive, "fixture");
+  let extracted = false;
+
+  const result = await ensureCoreRoot({
+    root,
+    archive,
+    version: "0.8.3",
+    extract: () => { extracted = true; },
+  });
+
+  assert.equal(result.upgraded, false);
+  assert.equal(extracted, false);
+  assert.equal(fs.readFileSync(path.join(root, "runtime", "data", "session.json"), "utf8"), "keep\n");
+});
