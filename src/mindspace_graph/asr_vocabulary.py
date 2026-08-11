@@ -16,7 +16,7 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
-from mindspace_graph.adapters.file_storage import _atomic_json
+from mindspace_graph.infrastructure.storage.json_io import atomic_json_write
 from mindspace_graph.memory_registry import DEFAULT_MEMORY_REGISTRY
 
 PRIORITIES = {"low": 30, "medium": 65, "high": 90, "critical": 100}
@@ -156,7 +156,7 @@ class ASRVocabularyStore:
             except (OSError, ValueError, json.JSONDecodeError):
                 pass
         else:
-            _atomic_json(path, self._manual)
+            atomic_json_write(path, self._manual)
 
     def _system_entries(self) -> list[dict[str, Any]]:
         return [
@@ -303,7 +303,7 @@ class ASRVocabularyStore:
                 "revision": int(self._manual["revision"]) + 1,
                 "entries": normalized,
             }
-            _atomic_json(self.path, self._manual)
+            atomic_json_write(self.path, self._manual)
         return self.snapshot()
 
     def record_correction(self, raw_text: str, corrected_text: str) -> dict[str, Any]:
@@ -339,7 +339,7 @@ class ASRVocabularyStore:
                 "revision": int(self._manual["revision"]) + 1,
                 "entries": entries,
             }
-            _atomic_json(self.path, self._manual)
+            atomic_json_write(self.path, self._manual)
         return self.snapshot()
 
     def test_text(self, text: str) -> dict[str, Any]:

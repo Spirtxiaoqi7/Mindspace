@@ -4,13 +4,13 @@
 
 ## Coverage
 
-维护文件总数：**390**。逐文件证据见 [CODEBASE_FILE_INDEX_0.9.0.md](CODEBASE_FILE_INDEX_0.9.0.md)。
+维护文件总数：**467**。逐文件证据见 [CODEBASE_FILE_INDEX_0.9.0.md](CODEBASE_FILE_INDEX_0.9.0.md)。
 
-- Core backend: 77
-- Developer tooling: 75
-- Desktop Launcher: 68
-- Documentation: 58
-- Web frontend: 47
+- Core backend: 96
+- Web frontend: 89
+- Developer tooling: 77
+- Desktop Launcher: 75
+- Documentation: 65
 - Tests: 46
 - Governance/config: 8
 - Repository root: 8
@@ -62,21 +62,21 @@ flowchart LR
 
 ## Domain counts
 
-- Version and release: 59
-- Core foundation: 47
+- Core foundation: 62
+- Version and release: 60
+- Audio and voice: 45
+- Documentation governance: 42
 - Verification: 42
-- Audio and voice: 38
-- Repository governance: 37
-- Documentation governance: 35
-- Desktop composition: 26
-- Memory and retrieval: 21
-- Frontend shell: 19
-- Characters and V2 cards: 12
-- Chat and durable runs: 10
-- Settings and provider: 8
-- API composition: 7
+- Repository governance: 38
+- Frontend shell: 32
+- Desktop composition: 31
+- Memory and retrieval: 26
+- Characters and V2 cards: 18
+- Chat and durable runs: 18
+- Settings and provider: 12
+- API composition: 11
+- V7 destiny: 8
 - Native tools: 7
-- V7 destiny: 7
 - Desktop controllers: 3
 - Frontend chat: 3
 - Chat orchestration: 2

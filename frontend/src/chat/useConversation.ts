@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
-import { cancelRunRequest, consumeResumableEventStream, openChatStream, openRunEventStream } from "../api";
+import { cancelRunRequest, consumeResumableEventStream, openChatStream, openRunEventStream } from "../shared/api";
 import { clearActiveRun, createActiveRunRecord, prepareRegeneration, readActiveRun, readTurnRequestSnapshot, recoveredUserMessage, saveTurnRequestSnapshot, writeActiveRun } from "../chat-contract";
 import type { ChatAttachment, ChatTurnRequest, Message, StreamEnvelope } from "../types";
 

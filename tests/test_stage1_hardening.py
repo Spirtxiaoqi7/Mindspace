@@ -94,7 +94,7 @@ def test_settings_rollback_preserves_a_concurrent_profile_edit(tmp_path, monkeyp
         refresh_attempts += 1
         if refresh_attempts == 1:
             profile = container.profiles.load_document("user_profile")
-            profile["communication_preferences"]["preferred_tone"] = "并发保存的偏好"
+            profile["custom_profile"] = "并发保存的补充资料"
             container.profiles.save_document("user_profile", profile)
             raise RuntimeError("injected refresh failure after concurrent profile save")
         original_refresh()
@@ -110,7 +110,7 @@ def test_settings_rollback_preserves_a_concurrent_profile_edit(tmp_path, monkeyp
     restored = container.profiles.load_document("user_profile")
     assert response.status_code >= 400
     assert restored["identity"]["preferred_name"] == "用户"
-    assert restored["communication_preferences"]["preferred_tone"] == "并发保存的偏好"
+    assert restored["custom_profile"] == "并发保存的补充资料"
     assert container.database.get_document("settings-transaction:pending") is None
 
 

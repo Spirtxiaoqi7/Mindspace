@@ -31,7 +31,7 @@ from mindspace_graph.api_routes.context import (
 )
 from mindspace_graph.audio import AudioService
 from mindspace_graph.destiny import DestinyService
-from mindspace_graph.service import ProductContainer, build_container
+from mindspace_graph.bootstrap import ProductContainer, build_container
 from mindspace_graph.settings import AppSettings
 from mindspace_graph.version import APP_VERSION
 

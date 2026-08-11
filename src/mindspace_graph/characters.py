@@ -18,12 +18,9 @@ from threading import RLock
 from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from mindspace_graph.adapters.file_storage import (
-    DEFAULT_PROFILES,
-    _apply_patch,
-    _atomic_json,
-    _read_pointer,
-)
+from mindspace_graph.adapters.profile_repository import DEFAULT_PROFILES
+from mindspace_graph.infrastructure.storage.json_io import atomic_json_write
+from mindspace_graph.infrastructure.storage.json_patch import apply_json_patch, read_json_pointer
 from mindspace_graph.character_card import (
     card_summary,
     empty_memory,
@@ -88,7 +85,7 @@ class CharacterRepository:
         return self.root / character_id / "character.json"
 
     def _project(self, record: dict[str, Any]) -> None:
-        _atomic_json(self._path(str(record["character_id"])), record)
+        atomic_json_write(self._path(str(record["character_id"])), record)
 
     def _store(self, record: dict[str, Any]) -> None:
         self.database.put_document(self._key(str(record["character_id"])), record)
@@ -203,7 +200,7 @@ class CharacterRepository:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
                 copied.append(relative.as_posix())
-            _atomic_json(
+            atomic_json_write(
                 staging / "manifest.json",
                 {
                     "schema_version": "1.0.0",
@@ -641,9 +638,9 @@ class CharacterRepository:
                 before = (
                     None
                     if patch.op == "add" and patch.path.endswith("/-")
-                    else _read_pointer(candidate["memory"], patch.path)
+                    else read_json_pointer(candidate["memory"], patch.path)
                 )
-                _apply_patch(candidate["memory"], patch.op, patch.path, deepcopy(patch.value))
+                apply_json_patch(candidate["memory"], patch.op, patch.path, deepcopy(patch.value))
                 receipt_patches.append(
                     {
                         "target": patch.target,
@@ -667,9 +664,9 @@ class CharacterRepository:
             if patch.target not in {"ai_profile", "runtime_state"}:
                 continue
             document = candidate[patch.target]
-            before = _read_pointer(document, patch.path)
-            _apply_patch(document, patch.op, patch.path, deepcopy(patch.value))
-            after = None if patch.op == "remove" else _read_pointer(document, patch.path)
+            before = read_json_pointer(document, patch.path)
+            apply_json_patch(document, patch.op, patch.path, deepcopy(patch.value))
+            after = None if patch.op == "remove" else read_json_pointer(document, patch.path)
             receipt_patches.append(
                 {
                     "target": patch.target,

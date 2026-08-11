@@ -19,8 +19,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
-from mindspace_graph.adapters.file_storage import _atomic_json
 from mindspace_graph.entity_registry import EntityRegistry
+from mindspace_graph.infrastructure.storage.json_io import atomic_json_write, read_json
 from mindspace_graph.memory_registry import DEFAULT_MEMORY_REGISTRY, MemoryRegistry
 from mindspace_graph.models import ChatRequest, JsonWriteReceipt, RetrievedChunk
 from mindspace_graph.product_database import ProductDatabase
@@ -68,14 +68,14 @@ class StructuredMemoryStore:
                 imported = None
                 if path.exists():
                     try:
-                        imported = json.loads(path.read_text(encoding="utf-8"))
+                        imported = read_json(path)
                     except (OSError, json.JSONDecodeError):
                         imported = None
                 self._save(imported if isinstance(imported, dict) else self._empty())
             else:
                 self._save(self.database.get_document("structured_memory", self._empty()))
         elif not path.exists():
-            _atomic_json(path, self._empty())
+            atomic_json_write(path, self._empty())
 
     @staticmethod
     def _empty() -> dict[str, Any]:
@@ -106,11 +106,11 @@ class StructuredMemoryStore:
 
     def _save(self, value: dict[str, Any]) -> None:
         if self.database is None:
-            _atomic_json(self.path, value)
+            atomic_json_write(self.path, value)
             return
         self.database.put_document("structured_memory", value)
         snapshot = deepcopy(value)
-        self.database.defer_projection(lambda: _atomic_json(self.path, snapshot))
+        self.database.defer_projection(lambda: atomic_json_write(self.path, snapshot))
 
     @staticmethod
     def _episode(

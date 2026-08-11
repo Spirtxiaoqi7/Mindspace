@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { request } from "../api";
+import { request } from "../shared/api";
 import type { InspectorEvent, InspectorTab, PromptInspection, ToolExecution } from "../types";
 
 const asRecord = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};

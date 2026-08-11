@@ -5,7 +5,8 @@ from __future__ import annotations
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from mindspace_graph.models import ChatRequest
+from mindspace_graph.api_contracts.chat import ChatTurnCreateRequest
+from mindspace_graph.models import ChatResponse
 
 from .context import ApiContext, InterruptRequest, SessionCreateRequest, _character_summary
 
@@ -35,24 +36,26 @@ def register_routes(app: FastAPI, context: ApiContext) -> None:
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    @app.post("/api/v1/chat")
-    async def chat(payload: ChatRequest, x_request_id: str | None = Header(default=None)):
+    @app.post("/api/v1/chat", response_model=ChatResponse)
+    async def chat(payload: ChatTurnCreateRequest, x_request_id: str | None = Header(default=None)):
+        request = payload.to_internal()
         try:
-            return await container.conversation.invoke(payload, x_request_id)
+            return await container.conversation.invoke(request, x_request_id)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     @app.post("/api/v1/chat/stream")
     async def chat_stream(
-        payload: ChatRequest,
+        payload: ChatTurnCreateRequest,
         x_request_id: str | None = Header(default=None),
     ):
+        request = payload.to_internal()
         try:
-            request_id = await container.conversation.prepare_stream(payload, x_request_id)
+            request_id = await container.conversation.prepare_stream(request, x_request_id)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return StreamingResponse(
-            container.conversation.stream(payload, request_id),
+            container.conversation.stream(request, request_id),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )

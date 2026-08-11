@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 
 import pytest
@@ -14,13 +15,10 @@ from mindspace_graph.entity_registry import EntityRegistry
 from mindspace_graph.models import (
     ApiConfig,
     ChatRequest,
-    JsonPatch,
-    JsonUpdatePlan,
     JsonWriteReceipt,
     ProfileBundle,
     RoleAuditResult,
 )
-from mindspace_graph.policies import normalize_json_update
 from mindspace_graph.product_database import ProductDatabase
 from mindspace_graph.prompting import build_prompt
 from mindspace_graph.retrieval_fusion import BM25Plus, reciprocal_rank_fusion
@@ -37,7 +35,7 @@ def test_shared_transaction_rolls_back_every_canonical_store(tmp_path):
     with pytest.raises(RuntimeError):
         with database.transaction(operation="fault_injection"):
             edited = deepcopy(original)
-            edited["identity"]["occupation"] = "测试员"
+            edited["custom_profile"] = "事务内写入的补充资料"
             profiles.save_document("user_profile", edited)
             persisted = sessions.persist_turn(
                 request,
@@ -81,10 +79,10 @@ def test_regenerate_withdraws_old_memory_context_and_indexes_atomically(tmp_path
         applied=True,
         patches=[
             {
-                "target": "user_profile",
-                "op": "add",
-                "path": "/stable_preferences/likes/-",
-                "before": None,
+                "target": "runtime_state",
+                "op": "replace",
+                "path": "/user_state/current_topic",
+                "before": "",
                 "after": "草莓",
                 "evidence_ids": ["current_user"],
             }
@@ -192,45 +190,40 @@ def test_regenerate_withdraws_old_memory_context_and_indexes_atomically(tmp_path
         assert db.execute("SELECT COUNT(*) FROM role_audit_jobs WHERE session_id='regen'").fetchone()[0] == 0
 
 
-def test_alias_identity_removes_opposing_value_without_model_judgment(tmp_path):
+def test_alias_identity_resolves_to_the_same_entity_without_duplication(tmp_path):
     database = ProductDatabase(tmp_path / "context.db")
     entities = EntityRegistry(database)
     strawberry = entities.resolve("草莓", scope="user", entity_type="user.preference")
     entities.add_alias(str(strawberry), "士多啤梨")
     assert entities.resolve("士多啤梨", scope="user", entity_type="user.preference", create=False) == strawberry
 
-    user = deepcopy(DEFAULT_PROFILES["user_profile"])
-    user["stable_preferences"]["likes"] = ["草莓"]
-    profiles = ProfileBundle(
-        user_profile=user,
-        ai_profile=deepcopy(DEFAULT_PROFILES["ai_profile"]),
-        runtime_state=deepcopy(DEFAULT_PROFILES["runtime_state"]),
-    )
-    plan = JsonUpdatePlan(
-        trigger="current_user",
-        patches=[
-            JsonPatch(
-                target="user_profile",
-                op="add",
-                path="/stable_preferences/dislikes",
-                value="士多啤梨",
-                evidence_ids=["current_user"],
-            )
-        ],
-    )
-    normalized = normalize_json_update(plan, profiles, entities)
-    assert [(item.op, item.path) for item in normalized.patches] == [
-        ("remove", "/stable_preferences/likes/0"),
-        ("add", "/stable_preferences/dislikes/-"),
-    ]
 
+def test_profile_schema_migrates_legacy_user_fields_to_compact_v13_document(tmp_path):
+    root = tmp_path / "profiles"
+    root.mkdir()
+    legacy = {
+        "schema_version": "1.2.0",
+        "profile_type": "user",
+        "revision": 7,
+        "identity": {
+            "preferred_name": "柒君",
+            "gender": "男",
+            "occupation": "已废弃字段",
+        },
+        "stable_preferences": {"likes": ["草莓"], "dislikes": []},
+        "communication_preferences": {"response_length": "固定两百字"},
+    }
+    (root / "user-profile.json").write_text(json.dumps(legacy, ensure_ascii=False), encoding="utf-8")
 
-def test_profile_schema_rejects_incomplete_advanced_document(tmp_path):
-    profiles = JsonProfileRepository(tmp_path / "profiles")
-    invalid = profiles.load_document("user_profile")
-    invalid.pop("stable_preferences")
-    with pytest.raises(ValueError, match="stable_preferences"):
-        profiles.save_document("user_profile", invalid)
+    migrated = JsonProfileRepository(root).load_document("user_profile")
+
+    assert migrated == {
+        "schema_version": "1.3.0",
+        "profile_type": "user",
+        "revision": 7,
+        "identity": {"preferred_name": "柒君", "gender": "男"},
+        "custom_profile": "",
+    }
 
 
 def test_profile_gender_defaults_and_validation_are_explicit(tmp_path):
@@ -240,7 +233,8 @@ def test_profile_gender_defaults_and_validation_are_explicit(tmp_path):
 
     assert user["identity"]["gender"] == "男"
     assert assistant["identity"]["gender"] == "女"
-    assert user["schema_version"] == "1.2.0"
+    assert user["schema_version"] == "1.3.0"
+    assert user["custom_profile"] == ""
 
     invalid = deepcopy(user)
     invalid["identity"]["gender"] = "未设置"

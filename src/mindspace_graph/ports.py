@@ -43,6 +43,14 @@ class RetrieverPort(Protocol):
     ) -> None: ...
 
 
+class ChatCorpusPort(Protocol):
+    """Minimal read-only session history required by retrieval adapters."""
+
+    def load_session(self, session_id: str) -> dict[str, Any]: ...
+
+    def list_chunks(self, session_id: str | None = None) -> list[dict[str, Any]]: ...
+
+
 class StructuredMemoryPort(Protocol):
     def record_turn(
         self,
@@ -127,6 +135,12 @@ class LanguageModelPort(Protocol):
     def take_usage(self) -> ModelUsage | None: ...
 
 
+class LanguageModelFactoryPort(Protocol):
+    """Create the currently configured language-model implementation."""
+
+    def create(self) -> LanguageModelPort: ...
+
+
 class RolePolicyPort(Protocol):
     def validate(
         self,
@@ -165,6 +179,7 @@ class Dependencies:
     llm: LanguageModelPort
     role_policy: RolePolicyPort
     audit: AuditPort
+    language_model_factory: LanguageModelFactoryPort | None = None
     cancellation: CancellationPort | None = None
     memory: StructuredMemoryPort | None = None
     event_memory: Any | None = None

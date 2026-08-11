@@ -46,16 +46,16 @@ def profiles() -> ProfileBundle:
     )
 
 
-def test_profile_v12_migrates_missing_roleplay_sections_without_overwriting(tmp_path):
+def test_profile_v13_initializes_roleplay_sections_without_overwriting(tmp_path):
     repository = JsonProfileRepository(tmp_path / "profiles")
     bundle = repository.load_bundle()
 
-    assert bundle.ai_profile["schema_version"] == "1.2.0"
+    assert bundle.ai_profile["schema_version"] == "1.3.0"
     assert "roleplay" in bundle.ai_profile
     assert "roleplay_state" in bundle.runtime_state
 
 
-def test_profile_v11_migration_preserves_existing_character_content(tmp_path):
+def test_legacy_profile_migration_preserves_existing_character_content(tmp_path):
     root = tmp_path / "profiles"
     root.mkdir()
     legacy = dict(DEFAULT_PROFILES["ai_profile"])
@@ -70,7 +70,7 @@ def test_profile_v11_migration_preserves_existing_character_content(tmp_path):
 
     document = JsonProfileRepository(root).load_document("ai_profile")
 
-    assert document["schema_version"] == "1.2.0"
+    assert document["schema_version"] == "1.3.0"
     assert document["identity"]["self_description"] == "用户已经写好的原文，不得覆盖"
     assert document["roleplay"]["examples"]["casual"] == []
 

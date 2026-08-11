@@ -2,16 +2,24 @@
 
 > 文档状态：generated。由 `scripts/generate-codebase-index.mjs` 生成；每个维护文件恰好一行。
 
-维护文件总数：**390**。隐藏的 `INDEXED` 标记用于严格 completeness check。
+维护文件总数：**467**。隐藏的 `INDEXED` 标记用于严格 completeness check。
 
-## API composition (7)
+## API composition (11)
 
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
 <!-- INDEXED:frontend/src/api.test.ts -->
 | `frontend/src/api.test.ts` | Web frontend | Verifies consumeEventStream; deduplicates replayed sequences and recognizes terminal events; treats a recovered Core interruption as terminal without retrying; delivers durable model.attempt events without renaming diagnostic fields; desktop settings routing. | none | vitest; ./api; ./types | none | direct test file | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/app/AppRouter.tsx -->
+| `frontend/src/app/AppRouter.tsx` | Web frontend | Defines AppRouter for the API composition domain. | AppRouter | ../App | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/shared/api.ts -->
+| `frontend/src/shared/api.ts` | Web frontend | Defines HttpError; rawRequest; request; apiV1Request; openChatStream for the API composition domain. | HttpError; rawRequest; request; apiV1Request; openChatStream; openRunEventStream; cancelRunRequest; getAudioStatus; consumeEventStream; consumeResumableEventStream | ../types | network | frontend/src/api.test.ts; tests/test_api_route_contract.py; tests/test_api.py | current | Web public; no Core secrets |
+<!-- INDEXED:scripts/export-api-contracts.py -->
+| `scripts/export-api-contracts.py` | Developer tooling | Deterministically export the Mindspace FastAPI OpenAPI contract. | REPOSITORY_ROOT; SOURCE_ROOT; OUTPUT_PATH; main | __future__; argparse; asyncio; json; sys; tempfile; pathlib; typing | filesystem; database/state | repository policy / full suite | current | Developer tool; release only when allowlisted |
 <!-- INDEXED:scripts/run_082_real_api_regression.py -->
 | `scripts/run_082_real_api_regression.py` | Developer tooling | Deprecated 0.8.2 real-provider harness; retained as a fail-closed tombstone. | none | none | database/state | repository policy / full suite | deprecated | Developer tool; release only when allowlisted |
+<!-- INDEXED:src/mindspace_graph/api_contracts/__init__.py -->
+| `src/mindspace_graph/api_contracts/__init__.py` | Core backend | Public HTTP request and response boundary contracts. | none | mindspace_graph.api_contracts.chat | none | repository policy / full suite | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/api_routes/__init__.py -->
 | `src/mindspace_graph/api_routes/__init__.py` | Core backend | Domain route registration for the Mindspace HTTP API. | none | audio_scenes; characters_cards; chat_runs; destiny_routes; legacy_routes; memory_knowledge; system_settings | none | repository policy / full suite | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/api_routes/context.py -->
@@ -30,7 +38,7 @@
 <!-- INDEXED:src/mindspace_graph/api_routes/audio_scenes.py -->
 | `src/mindspace_graph/api_routes/audio_scenes.py` | Core backend | Registers ASR, TTS, voice catalog, scene, journal and presentation-facing endpoints. | register_routes | __future__; asyncio; json; pathlib; typing; uuid; fastapi; fastapi.responses | filesystem | tests/test_audio.py; tests/test_api.py; tests/test_shared_chapters.py | current | Core protected release surface |
 
-## Audio and voice (38)
+## Audio and voice (45)
 
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
@@ -38,6 +46,8 @@
 | `config/gpt-sovits-voices.json` | Governance/config | Defines governed Audio and voice data with top-level keys: schema_version; voices. | schema_version; voices | none | none | repository policy / full suite | current | Development/config; never contains secrets |
 <!-- INDEXED:desktop/assets/gpt-sovits-voices.json -->
 | `desktop/assets/gpt-sovits-voices.json` | Desktop Launcher | Defines governed Audio and voice data with top-level keys: schema_version; voices. | schema_version; voices | none | none | repository policy / full suite | generated | Launcher public; no protected Core source |
+<!-- INDEXED:desktop/voice-controller.cjs -->
+| `desktop/voice-controller.cjs` | Desktop Launcher | const fs = require("node:fs"); | module.exports; IPC launcher:voice | node:fs; node:path; ./gpt-sovits-catalog.cjs; ./onboarding-policy.cjs | filesystem; Electron IPC | repository policy / full suite | current | Launcher public; no protected Core source |
 <!-- INDEXED:docs/ASR_FINAL_REFINEMENT.md -->
 | `docs/ASR_FINAL_REFINEMENT.md` | Documentation | Documents “中文 ASR 整句复核与调度” with historical authority. | 中文 ASR 整句复核与调度 | linked current/historical documentation | none | repository policy / full suite | historical | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/GPT-SOVITS-VOICE-CATALOG.md -->
@@ -50,6 +60,18 @@
 | `docs/voice-session-architecture.md` | Documentation | Documents “语音会话架构（0.5.39）” with prototype authority. | 语音会话架构（0.5.39） | linked current/historical documentation | none | repository policy / full suite | prototype | Development-only; not runtime payload by default |
 <!-- INDEXED:frontend/public/tts-playback-worklet.js -->
 | `frontend/public/tts-playback-worklet.js` | Web frontend | class MindspaceTTSPlaybackProcessor extends AudioWorkletProcessor { | none | none | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/voice/index.ts -->
+| `frontend/src/features/voice/index.ts` | Web frontend | Maintains Audio and voice configuration or execution behavior. | none | ../../speech; ./VoiceMode; ./useTtsRuntime; ./useVoiceSessionRuntime; ../../types; ./useAsrReadiness; ./types | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/voice/types.ts -->
+| `frontend/src/features/voice/types.ts` | Web frontend | export interface SpeechQueueItem { | SpeechQueueItem; PCMStreamHandle; VoiceCaptureGraph; WarmVoiceCapture | none | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/voice/useAsrReadiness.ts -->
+| `frontend/src/features/voice/useAsrReadiness.ts` | Web frontend | Defines useAsrReadiness for the Audio and voice domain. | useAsrReadiness | react; ../../shared/api; ../../types | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/voice/useTtsRuntime.ts -->
+| `frontend/src/features/voice/useTtsRuntime.ts` | Web frontend | Defines alignPCM16Chunk; shouldBufferQwenReplyForSinglePass; shouldAutomaticallyQueueSpeech; shouldSkipSpeechSegmentFailure; TtsRuntimeCallbacks for the Audio and voice domain. | alignPCM16Chunk; shouldBufferQwenReplyForSinglePass; shouldAutomaticallyQueueSpeech; shouldSkipSpeechSegmentFailure; TtsRuntimeCallbacks; useTtsRuntime | react; ../../shared/api; ../../shared/formatters; ../../speech; ../../types; ./types | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/voice/useVoiceSessionRuntime.ts -->
+| `frontend/src/features/voice/useVoiceSessionRuntime.ts` | Web frontend | Defines companionContinuationPlan; voiceMergeDelay; shouldIgnoreASREvent; voiceReconnectDelay; shouldRetryMicrophoneStartup for the Audio and voice domain. | companionContinuationPlan; voiceMergeDelay; shouldIgnoreASREvent; voiceReconnectDelay; shouldRetryMicrophoneStartup; asrClientDisposition; VoiceSessionRuntimeCallbacks; useVoiceSessionRuntime | react; ../../shared/api; ../../shared/formatters; ../../shared/turn; ../../types; ./types; ./useTtsRuntime | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/voice/VoiceMode.tsx -->
+| `frontend/src/features/voice/VoiceMode.tsx` | Web frontend | Defines VoiceMode for the Audio and voice domain. | VoiceMode | react; ../../types; ../../ui/avatar | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
 <!-- INDEXED:frontend/src/microphone-capture.test.ts -->
 | `frontend/src/microphone-capture.test.ts` | Web frontend | Verifies microphone capture; keeps microphone capture independent from TTS playback; does not close the shared capture context from a stale start attempt; keeps ASR open while generation and TTS preparation are pending; parks a disabled live track for a bounded rapid-reopen window. | none | node:fs; node:path; vitest | filesystem | direct test file | current | Web public; no Core secrets |
 <!-- INDEXED:scripts/audit-gpt-sovits-voices.py -->
@@ -111,7 +133,7 @@
 <!-- INDEXED:vendor/cosyvoice_mindspace_worker.py -->
 | `vendor/cosyvoice_mindspace_worker.py` | Packaging adapter | Resident CosyVoice worker for Mindspace TTS. | CosyVoiceWorker; make_handler; main | __future__; argparse; hashlib; json; os; socket; sys; threading | filesystem; environment | repository policy / full suite | current | Core protected release surface |
 
-## Characters and V2 cards (12)
+## Characters and V2 cards (18)
 
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
@@ -121,10 +143,22 @@
 | `docs/CHARACTER_CARD_PACKAGE.md` | Documentation | Documents “`.mindspace-card` 角色卡包格式” with prototype authority. | `.mindspace-card` 角色卡包格式 | linked current/historical documentation | none | repository policy / full suite | prototype | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/MULTI_CHARACTER_ARCHITECTURE.md -->
 | `docs/MULTI_CHARACTER_ARCHITECTURE.md` | Documentation | Documents “Mindspace 0.6 多角色架构” with prototype authority. | Mindspace 0.6 多角色架构 | linked current/historical documentation | none | repository policy / full suite | prototype | Development-only; not runtime payload by default |
+<!-- INDEXED:frontend/src/features/characters/index.ts -->
+| `frontend/src/features/characters/index.ts` | Web frontend | Maintains Characters and V2 cards configuration or execution behavior. | none | ../../characters/CharacterExperience; ./ProfileCardDialogView; ./useCharacterDirectory; ../../ui/avatar; ../../types | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/characters/ProfileCardDialogView.tsx -->
+| `frontend/src/features/characters/ProfileCardDialogView.tsx` | Web frontend | Defines ProfileCardDialog for the Characters and V2 cards domain. | ProfileCardDialog | react; ../../shared/api; ../../shared/formatters; ../../shared/Modal; ../../types; ../../ui/avatar | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/characters/useCharacterDirectory.ts -->
+| `frontend/src/features/characters/useCharacterDirectory.ts` | Web frontend | Defines useCharacterDirectory for the Characters and V2 cards domain. | useCharacterDirectory | react; ../../shared/api; ../../types | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/profile/index.ts -->
+| `frontend/src/features/profile/index.ts` | Web frontend | export { ProfileDialog } from "./ProfileDialog"; | none | ./ProfileDialog | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/profile/ProfileDialog.tsx -->
+| `frontend/src/features/profile/ProfileDialog.tsx` | Web frontend | Defines ProfileDialog for the Characters and V2 cards domain. | ProfileDialog | react; ../../shared/Modal; ../../shared/api; ../../shared/formatters; ../../types; ../../ui/styledConfirm | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
 <!-- INDEXED:scripts/generate-character-voice-reference.py -->
 | `scripts/generate-character-voice-reference.py` | Developer tooling | Generate stable Qwen3-TTS VoiceDesign references for Mindspace. | REFERENCE_TEXT; VOICE_CANDIDATES; parse_args; main | __future__; argparse; json; pathlib; time; soundfile; torch; qwen_tts | filesystem | repository policy / full suite | current | Developer tool; release only when allowlisted |
 <!-- INDEXED:scripts/precompute-qwen-character-voice.py -->
 | `scripts/precompute-qwen-character-voice.py` | Developer tooling | Convert one approved reference WAV into a reusable Qwen3-TTS Base profile. | DEFAULT_VOICE_NAME; VALIDATION_TEXTS; parse_args; sha256_file; speaker_embedding; main | __future__; argparse; hashlib; json; pathlib; librosa; numpy; qwen_tts | filesystem | repository policy / full suite | current | Developer tool; release only when allowlisted |
+<!-- INDEXED:src/mindspace_graph/adapters/profile_repository.py -->
+| `src/mindspace_graph/adapters/profile_repository.py` | Core backend | File-backed canonical profile repository. | DEFAULT_PROFILES; TARGET_FILES; JsonProfileRepository | __future__; json; re; shutil; copy; datetime; pathlib; threading | filesystem; database/state | repository policy / full suite | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/api_routes/characters_cards.py -->
 | `src/mindspace_graph/api_routes/characters_cards.py` | Core backend | Registers character library, V2 card, avatar, session and profile compatibility endpoints. | register_routes | __future__; asyncio; hashlib; io; json; zipfile; pathlib; typing | filesystem; database/state | tests/test_characters.py; tests/test_api.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/character_card.py -->
@@ -140,7 +174,7 @@
 <!-- INDEXED:tests/test_profile_bootstrap.py -->
 | `tests/test_profile_bootstrap.py` | Tests | Verifies test_bootstrap_is_server_enabled_only_in_first_three_turns_when_sparse; test_bootstrap_accepts_up_to_eight_fill_only_setup_patches; test_bootstrap_deterministically_drops_paraphrases_not_present_in_setup; test_bootstrap_rejects_overwrite_and_closes_on_fourth_round; test_prompt_never_exposes_profile_write_bootstrap_to_the_chat_model. | profiles; request; test_bootstrap_is_server_enabled_only_in_first_three_turns_when_sparse; test_bootstrap_accepts_up_to_eight_fill_only_setup_patches; test_bootstrap_deterministically_drops_paraphrases_not_present_in_setup; test_bootstrap_rejects_overwrite_and_closes_on_fourth_round; test_prompt_never_exposes_profile_write_bootstrap_to_the_chat_model | __future__; copy; mindspace_graph.adapters.file_storage; mindspace_graph.models; mindspace_graph.policies; mindspace_graph.profile_bootstrap; mindspace_graph.prompting | none | direct test file | current | Development-only; not runtime payload by default |
 
-## Chat and durable runs (10)
+## Chat and durable runs (18)
 
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
@@ -156,10 +190,26 @@
 | `frontend/src/chat/MessageList.tsx` | Web frontend | Defines MessageListProps; MessageList for the Chat and durable runs domain. | MessageListProps; MessageList | react; ../chat-contract; ../types; ../ui/avatar; ./ExecutionInspector | UI/rendering | frontend/src/MessageList.test.tsx | current | Web public; no Core secrets |
 <!-- INDEXED:frontend/src/chat/useConversation.test.tsx -->
 | `frontend/src/chat/useConversation.test.tsx` | Web frontend | Verifies recovers a durable active run through the same resumable SSE path. | none | @testing-library/react; vitest; ../chat-contract; ../types; ./useConversation | UI/rendering | direct test file | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/chat/chatRuntimeBridge.ts -->
+| `frontend/src/features/chat/chatRuntimeBridge.ts` | Web frontend | Defines clearPersistedChatRun; restoreSessionMessages; getProviderToolCapability; createModelAttemptInspectorEvent; createModelSummaryInspectorEvent for the Chat and durable runs domain. | clearPersistedChatRun; restoreSessionMessages; getProviderToolCapability; createModelAttemptInspectorEvent; createModelSummaryInspectorEvent | ../../chat-contract; ../../shared/formatters; ../../types | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/chat/ChatWorkspace.tsx -->
+| `frontend/src/features/chat/ChatWorkspace.tsx` | Web frontend | Defines ChatNavigationViewModel; ChatConversationViewModel; ChatComposerViewModel; ChatOverlayViewModel; ChatWorkspace for the Chat and durable runs domain. | ChatNavigationViewModel; ChatConversationViewModel; ChatComposerViewModel; ChatOverlayViewModel; ChatWorkspace | react; ../../chat/Composer; ../../chat/MessageList; ../../shared/formatters; ../../types; ../../ui/avatar | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/chat/index.ts -->
+| `frontend/src/features/chat/index.ts` | Web frontend | export { Composer } from "../../chat/Composer"; | none | ../../chat/Composer; ../../chat/ExecutionInspector; ../../chat/MessageList; ../../chat/useConversation; ./useSessionDirectory; ./ChatWorkspace; ./useChatRuntime; ./useTurnComposer | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/chat/useChatRuntime.ts -->
+| `frontend/src/features/chat/useChatRuntime.ts` | Web frontend | Defines ChatRuntimeCallbacks; useChatRuntime for the Chat and durable runs domain. | ChatRuntimeCallbacks; useChatRuntime | react; ../../chat/useConversation; ../../types | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/chat/useConversationMaintenance.ts -->
+| `frontend/src/features/chat/useConversationMaintenance.ts` | Web frontend | Defines useConversationMaintenance for the Chat and durable runs domain. | useConversationMaintenance | react; ../../shared/api; ../../chat-contract; ../../types; ../../ui/styledConfirm | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/chat/useSessionDirectory.ts -->
+| `frontend/src/features/chat/useSessionDirectory.ts` | Web frontend | Defines useSessionDirectory for the Chat and durable runs domain. | useSessionDirectory | react; ../../shared/api; ../../shared/formatters; ../../types; ../../ui/styledConfirm | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/chat/useTurnComposer.ts -->
+| `frontend/src/features/chat/useTurnComposer.ts` | Web frontend | Defines TurnComposerEffects; useTurnComposer for the Chat and durable runs domain. | TurnComposerEffects; useTurnComposer | react; ../../chat-contract; ../../shared/formatters; ../../shared/turn; ../../types; ./useChatRuntime | none | repository policy / full suite | current | Web public; no Core secrets |
 <!-- INDEXED:frontend/src/MessageList.test.tsx -->
 | `frontend/src/MessageList.test.tsx` | Web frontend | Verifies keeps the product behavior where opening More immediately references the message. | none | @testing-library/react; @testing-library/user-event; vitest; ./chat/MessageList; ./types | UI/rendering | direct test file | current | Web public; no Core secrets |
+<!-- INDEXED:src/mindspace_graph/api_contracts/chat.py -->
+| `src/mindspace_graph/api_contracts/chat.py` | Core backend | Public HTTP contracts for chat endpoints. | ChatTurnCreateRequest | __future__; datetime; typing; pydantic; pydantic.json_schema; mindspace_graph; mindspace_graph.models | none | frontend/src/chat-contract.test.ts; frontend/src/chat/Composer.test.tsx; frontend/src/chat/ExecutionInspector.test.tsx; frontend/src/chat/useConversation.test.tsx | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/api_routes/chat_runs.py -->
-| `src/mindspace_graph/api_routes/chat_runs.py` | Core backend | Registers synchronous chat, streaming chat, durable run event replay, cancellation and interruption endpoints. | register_routes | __future__; fastapi; fastapi.responses; mindspace_graph.models; context | database/state | tests/test_chat_execution_state_machine.py; tests/test_api.py | current | Core protected release surface |
+| `src/mindspace_graph/api_routes/chat_runs.py` | Core backend | Registers synchronous chat, streaming chat, durable run event replay, cancellation and interruption endpoints. | register_routes | __future__; fastapi; fastapi.responses; mindspace_graph.api_contracts.chat; mindspace_graph.models; context | database/state | tests/test_chat_execution_state_machine.py; tests/test_api.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/conversation_runs.py -->
 | `src/mindspace_graph/conversation_runs.py` | Core backend | Persists durable conversation runs and ordered SSE envelopes, supports replay, join, completion and orphan recovery. | ConversationRunRepository; BufferedStreamRun; StreamEnvelopeFactory; decode_sse | __future__; asyncio; json; time; collections; collections.abc; dataclasses; datetime | database/state | tests/test_chat_execution_state_machine.py; tests/test_api.py | current | Core protected release surface |
 <!-- INDEXED:tests/test_chat_execution_state_machine.py -->
@@ -172,9 +222,9 @@
 <!-- INDEXED:src/mindspace_graph/graph.py -->
 | `src/mindspace_graph/graph.py` | Core backend | Builds the single-turn LangGraph and its conditional native-tool execution path. | build_graph | __future__; typing; langgraph.graph; mindspace_graph.nodes; mindspace_graph.ports; mindspace_graph.state | none | tests/test_graph.py; tests/test_capabilities.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/service.py -->
-| `src/mindspace_graph/service.py` | Core backend | Coordinates a conversation turn across profiles, retrieval, LangGraph execution, persistence, compaction and post-turn work. | RETRIEVAL_INDEX_ONLY_ROUNDS; NODE_LABELS; ProductContainer; ConversationService; build_container | __future__; asyncio; re; time; collections.abc; dataclasses; datetime; pathlib | database/state | tests/test_graph.py; tests/test_prompt_cache_layout.py; tests/test_chat_execution_state_machine.py | current | Core protected release surface |
+| `src/mindspace_graph/service.py` | Core backend | Coordinates a conversation turn across profiles, retrieval, LangGraph execution, persistence, compaction and post-turn work. | none | mindspace_graph.application.conversation; mindspace_graph.bootstrap | none | tests/test_graph.py; tests/test_prompt_cache_layout.py; tests/test_chat_execution_state_machine.py | current | Core protected release surface |
 
-## Core foundation (47)
+## Core foundation (62)
 
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
@@ -203,13 +253,23 @@
 <!-- INDEXED:src/mindspace_graph/adapters/__init__.py -->
 | `src/mindspace_graph/adapters/__init__.py` | Core backend | Concrete adapters for local demos and OpenAI-compatible model endpoints. | none | none | none | repository policy / full suite | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/adapters/file_storage.py -->
-| `src/mindspace_graph/adapters/file_storage.py` | Core backend | Atomic JSON repositories isolated inside this project's runtime directory. | DEFAULT_PROFILES; TARGET_FILES; JsonProfileRepository; JsonSessionRepository | __future__; hashlib; json; os; re; shutil; tempfile; copy | filesystem; database/state | tests/test_file_storage.py | current | Core protected release surface |
+| `src/mindspace_graph/adapters/file_storage.py` | Core backend | Compatibility exports for legacy file-storage repository imports. | none | mindspace_graph.adapters.profile_repository; mindspace_graph.adapters.session_repository; mindspace_graph.infrastructure.storage.json_io; mindspace_graph.infrastructure.storage.json_patch | database/state | tests/test_file_storage.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/adapters/json_audit.py -->
 | `src/mindspace_graph/adapters/json_audit.py` | Core backend | Append-only JSONL audit adapter. | JsonlAudit | __future__; json; datetime; pathlib; threading; typing | filesystem | repository policy / full suite | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/adapters/session_repository.py -->
+| `src/mindspace_graph/adapters/session_repository.py` | Core backend | File-backed chat session repository. | JsonSessionRepository | __future__; json; re; shutil; copy; datetime; pathlib; threading | filesystem; database/state | repository policy / full suite | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/admin_cli.py -->
 | `src/mindspace_graph/admin_cli.py` | Core backend | Offline maintenance commands for deterministic data repair. | main | __future__; argparse; json; pathlib; mindspace_graph.service; mindspace_graph.settings | database/state | repository policy / full suite | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/application/__init__.py -->
+| `src/mindspace_graph/application/__init__.py` | Core backend | Mindspace application services. | none | mindspace_graph.application.conversation | none | repository policy / full suite | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/application/conversation.py -->
+| `src/mindspace_graph/application/conversation.py` | Core backend | Conversation application service and durable streaming orchestration. | NODE_LABELS; ConversationService | __future__; asyncio; time; collections.abc; typing; uuid; mindspace_graph.cancellation; mindspace_graph.compaction | database/state | frontend/src/chat/useConversation.test.tsx | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/application/turn_preparation.py -->
+| `src/mindspace_graph/application/turn_preparation.py` | Core backend | Prepare client chat input with authoritative server-side turn state. | RETRIEVAL_INDEX_ONLY_ROUNDS; TurnPreparationService | __future__; re; collections.abc; datetime; typing; mindspace_graph.models; mindspace_graph.ports; mindspace_graph.role_runtime | database/state | repository policy / full suite | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/art_catalog.py -->
 | `src/mindspace_graph/art_catalog.py` | Core backend | Versioned art catalog and resumable optional-pack installer. | ArtPackPaused; ArtCatalogService | __future__; hashlib; ipaddress; json; shutil; socket; threading; zipfile | filesystem; network | tests/test_art_catalog.py | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/bootstrap.py -->
+| `src/mindspace_graph/bootstrap.py` | Core backend | Application composition root and concrete adapter assembly. | ProductContainer; build_container | __future__; dataclasses; pathlib; mindspace_graph.adapters.profile_repository; mindspace_graph.adapters.session_repository; mindspace_graph.adapters.in_memory; mindspace_graph.adapters.json_audit; mindspace_graph.adapters.local_retriever | database/state | desktop/bootstrap-core.test.cjs; tests/test_profile_bootstrap.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/cancellation.py -->
 | `src/mindspace_graph/cancellation.py` | Core backend | Thread-safe cancellation state shared by HTTP handlers and graph nodes. | GenerationCancelled; CancellationRegistry | __future__; threading | none | tests/test_cancellation.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/cli.py -->
@@ -224,6 +284,18 @@
 | `src/mindspace_graph/entity_registry.py` | Core backend | Deterministic entity identity and explicitly curated aliases. | normalize_entity; EntityRegistry | __future__; hashlib; re; unicodedata; typing; mindspace_graph.product_database | database/state | repository policy / full suite | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/gpt_sovits.py -->
 | `src/mindspace_graph/gpt_sovits.py` | Core backend | Deterministic GPT-SoVITS voice catalog and installed-file checks. | GPT_SOVITS_VOICES; voice_definition; voice_paths; voice_is_installed; public_voice_catalog | __future__; json; pathlib; typing | none | tests/test_gpt_sovits_catalog.py; tests/test_gpt_sovits_worker.py | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/infrastructure/__init__.py -->
+| `src/mindspace_graph/infrastructure/__init__.py` | Core backend | Shared infrastructure primitives for Mindspace adapters. | none | none | none | repository policy / full suite | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/infrastructure/storage/__init__.py -->
+| `src/mindspace_graph/infrastructure/storage/__init__.py` | Core backend | Storage infrastructure shared by concrete repositories. | none | mindspace_graph.infrastructure.storage.json_io; mindspace_graph.infrastructure.storage.json_patch; mindspace_graph.infrastructure.storage.metadata; mindspace_graph.infrastructure.storage.paths | none | repository policy / full suite | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/infrastructure/storage/json_io.py -->
+| `src/mindspace_graph/infrastructure/storage/json_io.py` | Core backend | Low-level JSON file operations shared by storage adapters. | atomic_json_write; read_json | __future__; json; os; tempfile; pathlib; typing | filesystem | repository policy / full suite | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/infrastructure/storage/json_patch.py -->
+| `src/mindspace_graph/infrastructure/storage/json_patch.py` | Core backend | JSON Pointer and Patch operations shared by file-backed repositories. | json_pointer_tokens; read_json_pointer; apply_json_patch | __future__; copy; typing | none | repository policy / full suite | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/infrastructure/storage/metadata.py -->
+| `src/mindspace_graph/infrastructure/storage/metadata.py` | Core backend | Metadata primitives shared by file-backed repositories. | utc_now_iso | __future__; datetime | none | repository policy / full suite | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/infrastructure/storage/paths.py -->
+| `src/mindspace_graph/infrastructure/storage/paths.py` | Core backend | Deterministic path helpers shared by file-backed repositories. | safe_json_stem; hashed_json_document_path; legacy_json_document_path | __future__; hashlib; pathlib; typing | database/state | desktop/app-paths.test.cjs | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/models.py -->
 | `src/mindspace_graph/models.py` | Core backend | Validated boundary models for one conversational turn. | ApiConfig; RetrievalSettings; ASRUncertainSegment; ASRInputEvidence; InputEvidence; VoiceInteractionContext; ActivityPromptContext; ScenePromptContext; ChatInteraction; ChatAttachment | __future__; hashlib; json; datetime; typing; uuid; pydantic | database/state | repository policy / full suite | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/nodes.py -->
@@ -231,11 +303,19 @@
 <!-- INDEXED:src/mindspace_graph/policies.py -->
 | `src/mindspace_graph/policies.py` | Core backend | Deterministic trust, retrieval, and JSON write policies. | MAX_PATCHES_PER_TURN; REVISION_KEYS; rank_with_temporal_decay; normalize_json_update; sanitize_profile_bootstrap; validate_json_update | __future__; json; math; re; datetime; typing; mindspace_graph.entity_registry; mindspace_graph.memory_registry | none | repository policy / full suite | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/ports.py -->
-| `src/mindspace_graph/ports.py` | Core backend | Ports isolate workflow decisions from storage, retrieval, and model vendors. | RetrieverPort; StructuredMemoryPort; ProfileRepositoryPort; SessionRepositoryPort; LanguageModelPort; RolePolicyPort; AuditPort; CancellationPort; EmotionPort; Dependencies | __future__; collections.abc; dataclasses; typing; mindspace_graph.context_ledger; mindspace_graph.entity_registry; mindspace_graph.models; mindspace_graph.product_database | database/state | desktop/service-ports.test.cjs | current | Core protected release surface |
+| `src/mindspace_graph/ports.py` | Core backend | Ports isolate workflow decisions from storage, retrieval, and model vendors. | RetrieverPort; ChatCorpusPort; StructuredMemoryPort; ProfileRepositoryPort; SessionRepositoryPort; LanguageModelPort; LanguageModelFactoryPort; RolePolicyPort; AuditPort; CancellationPort | __future__; collections.abc; dataclasses; typing; mindspace_graph.context_ledger; mindspace_graph.entity_registry; mindspace_graph.models; mindspace_graph.product_database | database/state | desktop/service-ports.test.cjs | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/product_database.py -->
 | `src/mindspace_graph/product_database.py` | Core backend | Shared SQLite unit-of-work and JSON document persistence. | ProductDatabase | __future__; json; sqlite3; collections.abc; contextlib; contextvars; datetime; pathlib | filesystem; database/state | repository policy / full suite | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/prompt_blocks.py -->
+| `src/mindspace_graph/prompt_blocks.py` | Core backend | Immutable prompt blocks and deterministic final-message compilation. | PromptBlock; PromptCompiler | __future__; dataclasses; typing | none | repository policy / full suite | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/prompt_contributors.py -->
+| `src/mindspace_graph/prompt_contributors.py` | Core backend | Concrete contributors for deterministic prompt-message assembly. | StaticPrefixContributor; PrefixContributor; RetrievalContributor; HistoryTimeIndexContributor; RecentHistoryContributor; DynamicTailContributor; build_static_prompt_messages; compile_prompt_messages | __future__; dataclasses; typing; mindspace_graph.prompt_blocks; mindspace_graph.prompt_templates | none | repository policy / full suite | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/prompt_event_templates.py -->
+| `src/mindspace_graph/prompt_event_templates.py` | Core backend | Pure text templates for dynamic prompt events and voice controls. | build_voice_enabled_control_line; build_qwen3_tts_control_lines; build_streaming_voice_control_lines; build_voice_disabled_control_line; build_voice_delivery_control_lines; build_direct_response_control_line; build_idle_continuation_control_line; build_continuous_companionship_control_line; build_initiative_control_line; build_unconfirmed_state_control_line | __future__ | none | repository policy / full suite | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/prompt_inspection.py -->
 | `src/mindspace_graph/prompt_inspection.py` | Core backend | Short-lived, read-only inspection of the exact messages sent to the main model. | PromptInspectionStore | __future__; hashlib; json; time; collections; copy; threading; typing | database/state | repository policy / full suite | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/prompt_templates.py -->
+| `src/mindspace_graph/prompt_templates.py` | Core backend | Pure model-visible prompt text templates without runtime dependencies. | build_persona_template; build_contract_template; build_authoritative_state_template; build_physical_time_control_lines; build_history_time_index_template; build_quick_interaction_template; build_reply_context_template; build_attachment_item_template; build_attachments_template; join_turn_data_templates | __future__ | none | repository policy / full suite | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/prompting.py -->
 | `src/mindspace_graph/prompting.py` | Core backend | Role-first prompt assembly kept separate from orchestration and model I/O. | PromptBuild; split_history_for_cache; resolve_initiative_request; build_prompt; build_messages | __future__; json; re; copy; dataclasses; datetime; typing; zoneinfo | none | repository policy / full suite | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/protocol.py -->
@@ -280,7 +360,7 @@
 <!-- INDEXED:desktop/preload.cjs -->
 | `desktop/preload.cjs` | Desktop Launcher | Exposes the narrow renderer IPC bridge for settings, updates, diagnostics, storage and window operations. | none | electron | Electron IPC | desktop/security-boundaries.test.cjs; desktop/settings-bridge.test.cjs | current | Launcher public; no protected Core source |
 
-## Desktop composition (26)
+## Desktop composition (31)
 
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
@@ -290,10 +370,14 @@
 | `desktop/app-paths.cjs` | Desktop Launcher | const fs = require("node:fs"); | module.exports | node:fs; node:path; ./storage-location.cjs | filesystem; environment | desktop/app-paths.test.cjs | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/bootstrap-core.cjs -->
 | `desktop/bootstrap-core.cjs` | Desktop Launcher | const fs = require("node:fs"); | module.exports | node:fs; node:path; extract-zip | filesystem | desktop/bootstrap-core.test.cjs | current | Launcher public; no protected Core source |
+<!-- INDEXED:desktop/companion-controller.cjs -->
+| `desktop/companion-controller.cjs` | Desktop Launcher | const fs = require("node:fs"); | module.exports; IPC companion:snapshot; IPC companion:action | node:fs; node:path; electron; ./companion-policy.cjs | filesystem; Electron IPC; environment | repository policy / full suite | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/companion-policy.cjs -->
 | `desktop/companion-policy.cjs` | Desktop Launcher | const DEFAULT_WIDTH = 336; | module.exports | none | none | desktop/companion-policy.test.cjs | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/component-manager.cjs -->
 | `desktop/component-manager.cjs` | Desktop Launcher | const crypto = require("node:crypto"); | module.exports | node:crypto; node:fs; node:path; ./gpt-sovits-catalog.cjs | filesystem; database/state | desktop/component-manager.test.cjs | current | Launcher public; no protected Core source |
+<!-- INDEXED:desktop/diagnostics-controller.cjs -->
+| `desktop/diagnostics-controller.cjs` | Desktop Launcher | const fs = require("node:fs"); | module.exports | node:fs; node:path | filesystem | repository policy / full suite | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/environment-registry.cjs -->
 | `desktop/environment-registry.cjs` | Desktop Launcher | const fs = require("node:fs"); | module.exports | node:fs; node:path | filesystem; environment | repository policy / full suite | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/external-navigation.cjs -->
@@ -305,7 +389,9 @@
 <!-- INDEXED:desktop/index.html -->
 | `desktop/index.html` | Desktop Launcher | <!doctype html> | none | none | UI/rendering | repository policy / full suite | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/main.cjs -->
-| `desktop/main.cjs` | Desktop Launcher | Composes Electron lifecycle, windows, preload security, service supervision, settings and update controllers. | IPC launcher:snapshot; IPC companion:snapshot; IPC companion:action; IPC launcher:service; IPC launcher:all; IPC launcher:open; IPC launcher:external; IPC launcher:maintenance; IPC launcher:select-root; IPC launcher:select-storage | electron; node:child_process; node:crypto; node:fs; node:path; extract-zip; ./component-manager.cjs; ./environment-registry.cjs | filesystem; network; Electron IPC; process execution; environment | desktop/desktop-architecture.test.cjs; desktop/security-boundaries.test.cjs | current | Launcher public; no protected Core source |
+| `desktop/main.cjs` | Desktop Launcher | Composes Electron lifecycle, windows, preload security, service supervision, settings and update controllers. | IPC launcher:snapshot; IPC launcher:service; IPC launcher:all; IPC launcher:open; IPC launcher:external; IPC launcher:maintenance; IPC launcher:shortcut; IPC runtime:diagnostics | electron; node:child_process; node:crypto; node:fs; node:path; extract-zip; ./component-manager.cjs; ./companion-controller.cjs | filesystem; network; Electron IPC; process execution; environment | desktop/desktop-architecture.test.cjs; desktop/security-boundaries.test.cjs | current | Launcher public; no protected Core source |
+<!-- INDEXED:desktop/onboarding-controller.cjs -->
+| `desktop/onboarding-controller.cjs` | Desktop Launcher | const { ONBOARDING_VERSION, deriveOnboardingSnapshot, normalizeVoicePreference, voicePreferenceFromProvider } = require("./onboarding-policy.cjs"); | module.exports; IPC launcher:onboarding | ./onboarding-policy.cjs | network; Electron IPC | repository policy / full suite | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/onboarding-policy.cjs -->
 | `desktop/onboarding-policy.cjs` | Desktop Launcher | const ONBOARDING_VERSION = 2; | module.exports | none | none | desktop/onboarding-policy.test.cjs | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/prepare-bootstrap.cjs -->
@@ -316,6 +402,8 @@
 | `desktop/process-check.cjs` | Desktop Launcher | const { spawn } = require("node:child_process"); | module.exports | node:child_process | process execution; environment | desktop/process-check.test.cjs | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/product-windows.cjs -->
 | `desktop/product-windows.cjs` | Desktop Launcher | const fs = require("node:fs"); | module.exports | node:fs; node:path; ./external-navigation.cjs | filesystem; environment | repository policy / full suite | current | Launcher public; no protected Core source |
+<!-- INDEXED:desktop/qwen-controller.cjs -->
+| `desktop/qwen-controller.cjs` | Desktop Launcher | const { spawn } = require("node:child_process"); | module.exports | node:child_process; node:fs; node:path; ./qwen-runtime-policy.cjs | filesystem; process execution; environment | repository policy / full suite | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/root-hint.json -->
 | `desktop/root-hint.json` | Desktop Launcher | Defines governed Desktop composition data with top-level keys: root. | root | none | none | repository policy / full suite | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/service-policy.cjs -->
@@ -330,6 +418,8 @@
 | `desktop/src/styles.css` | Desktop Launcher | Defines the Desktop composition visual stylesheet and responsive presentation rules. | none | none | UI/rendering | repository policy / full suite | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/src/vite-env.d.ts -->
 | `desktop/src/vite-env.d.ts` | Desktop Launcher | <reference types="vite/client" /> | none | none | filesystem | repository policy / full suite | current | Launcher public; no protected Core source |
+<!-- INDEXED:desktop/storage-controller.cjs -->
+| `desktop/storage-controller.cjs` | Desktop Launcher | const fs = require("node:fs"); | module.exports; IPC launcher:select-root; IPC launcher:select-storage; IPC launcher:migrate-recommended-storage | node:fs; node:path; ./app-paths.cjs; ./bootstrap-core.cjs; ./storage-location.cjs | Electron IPC; environment | repository policy / full suite | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/storage-location.cjs -->
 | `desktop/storage-location.cjs` | Desktop Launcher | const fs = require("node:fs"); | module.exports | node:fs; node:path | filesystem; database/state; environment | desktop/storage-location.test.cjs | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/tsconfig.json -->
@@ -348,7 +438,7 @@
 <!-- INDEXED:desktop/update-controller.cjs -->
 | `desktop/update-controller.cjs` | Desktop Launcher | Coordinates signed Core and Launcher update checks, progress, installation and recovery policies. | module.exports; IPC launcher:update | node:crypto; node:path; ./update-manager.cjs; ./launcher-updater.cjs | Electron IPC | desktop/update-manager.test.cjs; desktop/launcher-updater.test.cjs | current | Launcher public; no protected Core source |
 
-## Documentation governance (35)
+## Documentation governance (42)
 
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
@@ -356,6 +446,16 @@
 | `docs/APPLICATION_ALGORITHM_FOUNDATION.md` | Documentation | Documents “Mindspace 应用层算法根基（v1）” with prototype authority. | Mindspace 应用层算法根基（v1） | linked current/historical documentation | none | repository policy / full suite | prototype | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/APPLICATION_FULL_CHAIN.md -->
 | `docs/APPLICATION_FULL_CHAIN.md` | Documentation | Documents “Mindspace 0.9.0 全链路” with current authority. | Mindspace 0.9.0 全链路 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
+<!-- INDEXED:docs/ARCHITECTURE_BACKEND.md -->
+| `docs/ARCHITECTURE_BACKEND.md` | Documentation | Documents “Mindspace 后端架构” with current authority. | Mindspace 后端架构 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
+<!-- INDEXED:docs/ARCHITECTURE_DESKTOP.md -->
+| `docs/ARCHITECTURE_DESKTOP.md` | Documentation | Documents “Mindspace Desktop Architecture” with current authority. | Mindspace Desktop Architecture | linked current/historical documentation | database/state; Electron IPC; process execution | repository policy / full suite | current | Development-only; not runtime payload by default |
+<!-- INDEXED:docs/ARCHITECTURE_FRONTEND.md -->
+| `docs/ARCHITECTURE_FRONTEND.md` | Documentation | Documents “Mindspace 前端架构” with current authority. | Mindspace 前端架构 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
+<!-- INDEXED:docs/ARCHITECTURE_PROMPTS.md -->
+| `docs/ARCHITECTURE_PROMPTS.md` | Documentation | Documents “Mindspace Prompt 架构” with current authority. | Mindspace Prompt 架构 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
+<!-- INDEXED:docs/ARCHITECTURE_STORAGE.md -->
+| `docs/ARCHITECTURE_STORAGE.md` | Documentation | Documents “Mindspace 存储架构” with current authority. | Mindspace 存储架构 | linked current/historical documentation | database/state | repository policy / full suite | current | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/ARCHITECTURE.md -->
 | `docs/ARCHITECTURE.md` | Documentation | Documents “Mindspace 只读拆解与 LangGraph 映射” with historical authority. | Mindspace 只读拆解与 LangGraph 映射 | linked current/historical documentation | none | desktop/desktop-architecture.test.cjs | historical | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/ART_PREVIEW_PROVENANCE_0.7.0.md -->
@@ -404,6 +504,10 @@
 | `docs/MINDSPACE_0.8.3_CODE_AUDIT_STAGE_1.md` | Documentation | Documents “Mindspace 0.8.3 代码大审查：第一阶段” with report authority. | Mindspace 0.8.3 代码大审查：第一阶段 | linked current/historical documentation | database/state | repository policy / full suite | report | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/MINDSPACE_FUNCTION_MAP.md -->
 | `docs/MINDSPACE_FUNCTION_MAP.md` | Documentation | Documents “Mindspace 0.9.0 功能图” with current authority. | Mindspace 0.9.0 功能图 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
+<!-- INDEXED:docs/MODULAR_ARCHITECTURE.md -->
+| `docs/MODULAR_ARCHITECTURE.md` | Documentation | Documents “Mindspace 模块化单体边界” with current authority. | Mindspace 模块化单体边界 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
+<!-- INDEXED:docs/MODULAR_REFACTOR_VALIDATION_0.9.0.md -->
+| `docs/MODULAR_REFACTOR_VALIDATION_0.9.0.md` | Documentation | Documents “Mindspace 0.9.0 模块化重构验收报告” with report authority. | Mindspace 0.9.0 模块化重构验收报告 | linked current/historical documentation | network | repository policy / full suite | report | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/PACKAGING.md -->
 | `docs/PACKAGING.md` | Documentation | Documents “封装与分包方案” with current authority. | 封装与分包方案 | linked current/historical documentation | none | repository policy / full suite | current | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/PRODUCT_ARCHITECTURE.md -->
@@ -428,7 +532,7 @@
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
 <!-- INDEXED:frontend/src/characters/CharacterExperience.tsx -->
-| `frontend/src/characters/CharacterExperience.tsx` | Web frontend | Presents mode lobby, character picker/library and navigation into V7 creation or local chat. | ModeLobby; CharacterPicker; CharacterLibrary | react; ../api; ../types | UI/rendering | frontend/src/App.test.tsx; frontend/src/DestinyCanvas.test.tsx | current | Web public; no Core secrets |
+| `frontend/src/characters/CharacterExperience.tsx` | Web frontend | Presents mode lobby, character picker/library and navigation into V7 creation or local chat. | ModeLobby; CharacterPicker; CharacterLibrary | react; ../shared/api; ../types | UI/rendering | frontend/src/App.test.tsx; frontend/src/DestinyCanvas.test.tsx | current | Web public; no Core secrets |
 
 ## Frontend chat (3)
 
@@ -437,18 +541,18 @@
 <!-- INDEXED:frontend/src/chat/Composer.tsx -->
 | `frontend/src/chat/Composer.tsx` | Web frontend | Renders the composer, attachments, model switch, ASR/send action and multi-select interaction tags. | Composer | react; ../chat-contract; ../types | UI/rendering | frontend/src/chat/Composer.test.tsx | current | Web public; no Core secrets |
 <!-- INDEXED:frontend/src/chat/ExecutionInspector.tsx -->
-| `frontend/src/chat/ExecutionInspector.tsx` | Web frontend | Renders persisted RAG, provider and tool attempts without inventing cards for null executions. | ExecutionInspector | react; ../api; ../types | UI/rendering | frontend/src/chat/ExecutionInspector.test.tsx | current | Web public; no Core secrets |
+| `frontend/src/chat/ExecutionInspector.tsx` | Web frontend | Renders persisted RAG, provider and tool attempts without inventing cards for null executions. | ExecutionInspector | react; ../shared/api; ../types | UI/rendering | frontend/src/chat/ExecutionInspector.test.tsx | current | Web public; no Core secrets |
 <!-- INDEXED:frontend/src/chat/useConversation.ts -->
-| `frontend/src/chat/useConversation.ts` | Web frontend | Owns chat request submission, durable run recovery, SSE event reduction and message state transitions. | useConversation | react; ../api; ../chat-contract; ../types | none | frontend/src/chat/useConversation.test.tsx; frontend/src/chat-contract.test.ts | current | Web public; no Core secrets |
+| `frontend/src/chat/useConversation.ts` | Web frontend | Owns chat request submission, durable run recovery, SSE event reduction and message state transitions. | useConversation | react; ../shared/api; ../chat-contract; ../types | none | frontend/src/chat/useConversation.test.tsx; frontend/src/chat-contract.test.ts | current | Web public; no Core secrets |
 
 ## Frontend settings (1)
 
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
 <!-- INDEXED:frontend/src/settings/SettingsWorkspace.tsx -->
-| `frontend/src/settings/SettingsWorkspace.tsx` | Web frontend | Presents provider, model, appearance, voice and storage settings through the controlled settings bridge. | SettingsWorkspace | react; ../api; ../types; ../ui/styledConfirm; ../ui/avatar; ./Modal | UI/rendering | frontend/src/api.test.ts; desktop/settings-bridge.test.cjs | current | Web public; no Core secrets |
+| `frontend/src/settings/SettingsWorkspace.tsx` | Web frontend | Presents provider, model, appearance, voice and storage settings through the controlled settings bridge. | SettingsWorkspace | react; ../shared/api; ../shared/Field; ../types; ../ui/styledConfirm; ../ui/avatar; ./Modal | UI/rendering | frontend/src/api.test.ts; desktop/settings-bridge.test.cjs | current | Web public; no Core secrets |
 
-## Frontend shell (19)
+## Frontend shell (32)
 
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
@@ -465,15 +569,41 @@
 <!-- INDEXED:frontend/public/pcm-worklet.js -->
 | `frontend/public/pcm-worklet.js` | Web frontend | class MindspacePCMProcessor extends AudioWorkletProcessor { | none | none | none | repository policy / full suite | current | Web public; no Core secrets |
 <!-- INDEXED:frontend/src/App.tsx -->
-| `frontend/src/App.tsx` | Web frontend | Defines shouldSynthesizeStreamEvent; alignPCM16Chunk; shouldBufferQwenReplyForSinglePass; shouldAutomaticallyQueueSpeech; shouldFollowConversationScroll for the Frontend shell domain. | shouldSynthesizeStreamEvent; alignPCM16Chunk; shouldBufferQwenReplyForSinglePass; shouldAutomaticallyQueueSpeech; shouldFollowConversationScroll; companionContinuationPlan; voiceMergeDelay; shouldIgnoreASREvent; voiceReconnectDelay; shouldRetryMicrophoneStartup | react; ./DestinyCanvas; ./api; ./chat-contract; ./speech; ./characters/CharacterExperience; ./chat/Composer; ./chat/ExecutionInspector | UI/rendering | desktop/app-paths.test.cjs; frontend/src/App.test.tsx; tests/test_application_foundation.py | current | Web public; no Core secrets |
+| `frontend/src/App.tsx` | Web frontend | Defines shouldSynthesizeStreamEvent; shouldFollowConversationScroll for the Frontend shell domain. | shouldSynthesizeStreamEvent; shouldFollowConversationScroll | react; ./app/index; ./features/voice; ./features/profile; ./features/memory; ./features/knowledge; ./shared/formatters; ./features/characters | UI/rendering | desktop/app-paths.test.cjs; frontend/src/App.test.tsx; tests/test_application_foundation.py | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/app/AppProviders.tsx -->
+| `frontend/src/app/AppProviders.tsx` | Web frontend | Defines AppProviders for the Frontend shell domain. | AppProviders | react | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/app/AppShell.tsx -->
+| `frontend/src/app/AppShell.tsx` | Web frontend | Defines AppShell for the Frontend shell domain. | AppShell | react | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/app/index.ts -->
+| `frontend/src/app/index.ts` | Web frontend | export { useApplicationData } from "./useApplicationData"; | none | ./useApplicationData; ./useAppNavigation; ./useModalCoordinator | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/app/useApplicationData.ts -->
+| `frontend/src/app/useApplicationData.ts` | Web frontend | Defines useApplicationData for the Frontend shell domain. | useApplicationData | react; ../shared/api; ../features/characters; ../features/settings; ../types | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/app/useAppNavigation.ts -->
+| `frontend/src/app/useAppNavigation.ts` | Web frontend | Defines useAppNavigation for the Frontend shell domain. | useAppNavigation | react; ../features/characters; ./viewState | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/app/useModalCoordinator.ts -->
+| `frontend/src/app/useModalCoordinator.ts` | Web frontend | Defines useModalCoordinator for the Frontend shell domain. | useModalCoordinator | react; ../features/characters; ../ui/styledConfirm; ./viewState | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/app/viewState.ts -->
+| `frontend/src/app/viewState.ts` | Web frontend | Defines ModalName; appViewFromHash for the Frontend shell domain. | ModalName; appViewFromHash | ../features/characters | none | repository policy / full suite | current | Web public; no Core secrets |
 <!-- INDEXED:frontend/src/css-governance.allowlist.json -->
 | `frontend/src/css-governance.allowlist.json` | Web frontend | Defines governed Frontend shell data with top-level keys: version; override_groups. | version; override_groups | none | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/scenes/index.ts -->
+| `frontend/src/features/scenes/index.ts` | Web frontend | export { ScenePickerPage, sceneAssetPath } from "../../SceneExperience"; | none | ../../SceneExperience; ./useConversationScene | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/scenes/useConversationScene.ts -->
+| `frontend/src/features/scenes/useConversationScene.ts` | Web frontend | Defines useConversationScene for the Frontend shell domain. | useConversationScene | react; ../../shared/api; ../../types | none | repository policy / full suite | current | Web public; no Core secrets |
 <!-- INDEXED:frontend/src/main.tsx -->
-| `frontend/src/main.tsx` | Web frontend | Maintains Frontend shell configuration or execution behavior. | none | react; react-dom/client; ./App | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
+| `frontend/src/main.tsx` | Web frontend | Maintains Frontend shell configuration or execution behavior. | none | react-dom/client; ./app/AppProviders; ./app/AppRouter; ./app/AppShell | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
 <!-- INDEXED:frontend/src/redesign.overrides.css -->
 | `frontend/src/redesign.overrides.css` | Web frontend | MINDSPACE PRODUCT OVERRIDE AUTHORITY | none | none | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
 <!-- INDEXED:frontend/src/SceneExperience.tsx -->
-| `frontend/src/SceneExperience.tsx` | Web frontend | Defines sceneAssetPath; ScenePickerPage for the Frontend shell domain. | sceneAssetPath; ScenePickerPage | react; ./api; ./types | UI/rendering | frontend/src/SceneExperience.test.tsx | current | Web public; no Core secrets |
+| `frontend/src/SceneExperience.tsx` | Web frontend | Defines sceneAssetPath; ScenePickerPage for the Frontend shell domain. | sceneAssetPath; ScenePickerPage | react; ./shared/api; ./types | UI/rendering | frontend/src/SceneExperience.test.tsx | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/shared/Field.tsx -->
+| `frontend/src/shared/Field.tsx` | Web frontend | Defines Field for the Frontend shell domain. | Field | ./formatters | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/shared/formatters.ts -->
+| `frontend/src/shared/formatters.ts` | Web frontend | export const asRecord = (value: unknown): Record<string, unknown> => | asRecord; bool; num; str; friendlyValue; formatTime | none | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/shared/Modal.tsx -->
+| `frontend/src/shared/Modal.tsx` | Web frontend | Defines Modal for the Frontend shell domain. | Modal | react | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/shared/turn.ts -->
+| `frontend/src/shared/turn.ts` | Web frontend | Defines TurnSend for the Frontend shell domain. | TurnSend | ../types | none | repository policy / full suite | current | Web public; no Core secrets |
 <!-- INDEXED:frontend/src/speech.ts -->
 | `frontend/src/speech.ts` | Web frontend | const SENTENCE_BOUNDARY = /(?:[。！？!?；;]+\|…{2,}\|\.{3,}\|\n+)/g; | normalizeSpeechSegment; hasSpeakableContent; stripLeadingTtsFiller; SpeechSegmenter; segmentSpeechText; estimateDeliveredPrefix | none | none | frontend/src/speech.test.ts | current | Web public; no Core secrets |
 <!-- INDEXED:frontend/src/styles.css -->
@@ -496,7 +626,7 @@
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
 <!-- INDEXED:frontend/src/api.ts -->
-| `frontend/src/api.ts` | Web frontend | Provides the typed API/SSE client, durable run stream access and desktop-settings transport switch. | apiV1Request; openChatStream; openRunEventStream; cancelRunRequest | ./types | network | frontend/src/api.test.ts | current | Web public; no Core secrets |
+| `frontend/src/api.ts` | Web frontend | Provides the typed API/SSE client, durable run stream access and desktop-settings transport switch. | apiV1Request; openChatStream; openRunEventStream; cancelRunRequest | ./shared/api | none | frontend/src/api.test.ts | current | Web public; no Core secrets |
 
 ## Legacy compatibility (1)
 
@@ -505,7 +635,7 @@
 <!-- INDEXED:src/mindspace_graph/api_routes/legacy_routes.py -->
 | `src/mindspace_graph/api_routes/legacy_routes.py` | Core backend | Keeps explicit legacy and 410 route contracts isolated from current product route modules. | register_routes | __future__; fastapi; context | none | tests/test_api_route_contract.py | current | Core protected release surface |
 
-## Memory and retrieval (21)
+## Memory and retrieval (26)
 
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
@@ -513,6 +643,14 @@
 | `docs/DEVELOPER_MEMORY_RAG_PROMPT.md` | Documentation | Documents “Mindspace 0.4.5 记忆、召回、上下文与 Prompt 开发者手册” with historical authority. | Mindspace 0.4.5 记忆、召回、上下文与 Prompt 开发者手册 | linked current/historical documentation | none | repository policy / full suite | historical | Development-only; not runtime payload by default |
 <!-- INDEXED:docs/structured-json-memory.md -->
 | `docs/structured-json-memory.md` | Documentation | Documents “JSON 字段标签记忆” with prototype authority. | JSON 字段标签记忆 | linked current/historical documentation | none | repository policy / full suite | prototype | Development-only; not runtime payload by default |
+<!-- INDEXED:frontend/src/features/knowledge/index.ts -->
+| `frontend/src/features/knowledge/index.ts` | Web frontend | export { KnowledgeDialog } from "./KnowledgeDialog"; | none | ./KnowledgeDialog | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/knowledge/KnowledgeDialog.tsx -->
+| `frontend/src/features/knowledge/KnowledgeDialog.tsx` | Web frontend | Defines KnowledgeDialog for the Memory and retrieval domain. | KnowledgeDialog | react; ../../shared/Modal; ../../shared/Field; ../../shared/api; ../../shared/formatters; ../../types; ../../ui/styledConfirm | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/memory/index.ts -->
+| `frontend/src/features/memory/index.ts` | Web frontend | export { MemoryDialog } from "./MemoryDialog"; | none | ./MemoryDialog | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/memory/MemoryDialog.tsx -->
+| `frontend/src/features/memory/MemoryDialog.tsx` | Web frontend | Defines MemoryDialog for the Memory and retrieval domain. | MemoryDialog | react; ../../shared/Modal; ../../shared/api; ../../shared/formatters; ../../types; ../../ui/styledConfirm | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
 <!-- INDEXED:src/mindspace_graph/adapters/in_memory.py -->
 | `src/mindspace_graph/adapters/in_memory.py` | Core backend | Deterministic adapters used by tests and the zero-configuration demo. | InMemoryRetriever; InMemoryProfileRepository; InMemorySessionRepository; DeterministicLanguageModel; RegexRolePolicy; InMemoryAudit; demo_dependencies | __future__; json; re; collections.abc; copy; dataclasses; datetime; typing | none | repository policy / full suite | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/adapters/local_retriever.py -->
@@ -521,6 +659,8 @@
 | `src/mindspace_graph/adapters/structured_memory.py` | Core backend | Deterministic JSON-tagged memory without model-authored classifications. | StructuredMemoryStore | __future__; hashlib; json; re; copy; datetime; pathlib; threading | filesystem; database/state | tests/test_structured_memory.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/api_routes/memory_knowledge.py -->
 | `src/mindspace_graph/api_routes/memory_knowledge.py` | Core backend | Registers memory, knowledge, entity and retrieval maintenance endpoints against the shared API context. | register_routes | __future__; json; typing; fastapi; pydantic; mindspace_graph.event_memory; mindspace_graph.memory_registry; context | database/state | tests/test_api.py; tests/test_memory_registry.py; tests/test_structured_memory.py | current | Core protected release surface |
+<!-- INDEXED:src/mindspace_graph/application/retrieval_warmup.py -->
+| `src/mindspace_graph/application/retrieval_warmup.py` | Core backend | Background retrieval-index warmup coordination for committed chat turns. | RetrievalWarmupCoordinator | __future__; asyncio; time; mindspace_graph.models; mindspace_graph.ports | none | tests/test_retrieval_warmup.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/compaction.py -->
 | `src/mindspace_graph/compaction.py` | Core backend | Low-priority context compaction kept outside the conversational graph. | COMPACTION_SYSTEM_PROMPT; build_compaction_messages; parse_compaction_output; ContextCompactionService | __future__; asyncio; json; re; collections.abc; typing; mindspace_graph.context_ledger; mindspace_graph.models | database/state | tests/test_context_compaction.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/event_memory.py -->
@@ -544,7 +684,7 @@
 <!-- INDEXED:tests/test_local_retriever.py -->
 | `tests/test_local_retriever.py` | Tests | Verifies test_parent_child_chunking_expands_retrieved_context; test_stored_vectors_are_not_recomputed_and_knowledge_file_is_cached; test_chat_retrieval_reuses_history_loaded_by_graph. | test_parent_child_chunking_expands_retrieved_context; RecordingEmbeddingModel; test_stored_vectors_are_not_recomputed_and_knowledge_file_is_cached; test_chat_retrieval_reuses_history_loaded_by_graph | __future__; json; numpy; mindspace_graph.adapters.file_storage; mindspace_graph.adapters.local_retriever | none | direct test file | current | Development-only; not runtime payload by default |
 <!-- INDEXED:tests/test_memory_registry.py -->
-| `tests/test_memory_registry.py` | Tests | Verifies test_registry_has_unique_codes_locations_and_complete_business_metadata; test_memory_center_update_delete_and_restore_keep_profile_and_index_aligned. | test_registry_has_unique_codes_locations_and_complete_business_metadata; test_memory_center_update_delete_and_restore_keep_profile_and_index_aligned | __future__; mindspace_graph.adapters.file_storage; mindspace_graph.adapters.structured_memory; mindspace_graph.memory_registry; mindspace_graph.memory_service; mindspace_graph.models | none | direct test file | current | Development-only; not runtime payload by default |
+| `tests/test_memory_registry.py` | Tests | Verifies test_registry_has_unique_codes_locations_and_complete_business_metadata; test_read_json_pointer_returns_none_when_an_intermediate_node_is_missing; test_memory_center_update_delete_and_restore_keep_supported_profile_and_index_aligned. | test_registry_has_unique_codes_locations_and_complete_business_metadata; test_read_json_pointer_returns_none_when_an_intermediate_node_is_missing; test_memory_center_update_delete_and_restore_keep_supported_profile_and_index_aligned | __future__; mindspace_graph.adapters.file_storage; mindspace_graph.adapters.structured_memory; mindspace_graph.infrastructure.storage.json_patch; mindspace_graph.memory_registry; mindspace_graph.memory_service; mindspace_graph.models | none | direct test file | current | Development-only; not runtime payload by default |
 <!-- INDEXED:tests/test_memory_update.py -->
 | `tests/test_memory_update.py` | Tests | Verifies test_memory_extraction_gate_skips_acknowledgements_and_time_questions; test_memory_extraction_gate_accepts_user_preferences_and_agent_self_questions; test_memory_plan_parser_accepts_fenced_json; test_memory_plan_parser_recovers_unique_target_and_current_evidence. | test_memory_extraction_gate_skips_acknowledgements_and_time_questions; test_memory_extraction_gate_accepts_user_preferences_and_agent_self_questions; test_memory_plan_parser_accepts_fenced_json; test_memory_plan_parser_recovers_unique_target_and_current_evidence | mindspace_graph.memory_update | none | direct test file | current | Development-only; not runtime payload by default |
 <!-- INDEXED:tests/test_retrieval_warmup.py -->
@@ -578,7 +718,7 @@
 <!-- INDEXED:src/mindspace_graph/adapters/openai_compatible.py -->
 | `src/mindspace_graph/adapters/openai_compatible.py` | Core backend | Implements OpenAI-compatible streaming, structured output compatibility ladders, native tool calls and provider attempt diagnostics. | EmptyVisibleContentError; OpenAICompatibleLanguageModel | __future__; json; collections.abc; threading; time; typing; httpx; mindspace_graph.models | network | tests/test_openai_compatible.py | current | Core protected release surface |
 
-## Repository governance (37)
+## Repository governance (38)
 
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
@@ -648,6 +788,8 @@
 | `scripts/verify-cjs-syntax.mjs` | Developer tooling | Maintains Repository governance configuration or execution behavior. | none | node:child_process; node:fs; node:path; node:url | process execution | repository policy / full suite | current | Developer tool; release only when allowlisted |
 <!-- INDEXED:scripts/verify-current-doc-paths.mjs -->
 | `scripts/verify-current-doc-paths.mjs` | Developer tooling | Checks path-like references in current authority documents and fails when a maintained target moved or disappeared. | CLI verification | node:fs; node:path; node:url | filesystem | CI governance job; repository policy | current | Developer tool; release only when allowlisted |
+<!-- INDEXED:scripts/verify-frontend-boundaries.mjs -->
+| `scripts/verify-frontend-boundaries.mjs` | Developer tooling | usr/bin/env node | none | node:fs; node:path; node:url | filesystem | repository policy / full suite | current | Developer tool; release only when allowlisted |
 <!-- INDEXED:scripts/verify-powershell-syntax.ps1 -->
 | `scripts/verify-powershell-syntax.ps1` | Developer tooling | $ErrorActionPreference = "Stop" | none | none | none | repository policy / full suite | current | Developer tool; release only when allowlisted |
 <!-- INDEXED:scripts/verify-repository-policy.mjs -->
@@ -657,7 +799,7 @@
 <!-- INDEXED:scripts/verify.ps1 -->
 | `scripts/verify.ps1` | Developer tooling | [CmdletBinding()] | none | none | none | repository policy / full suite | current | Developer tool; release only when allowlisted |
 
-## Settings and provider (8)
+## Settings and provider (12)
 
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
@@ -665,20 +807,28 @@
 | `desktop/secret-store.cjs` | Desktop Launcher | const fs = require("node:fs"); | module.exports | node:fs; node:path | filesystem | repository policy / full suite | current | Launcher public code; OS-encrypted secret boundary |
 <!-- INDEXED:desktop/settings-bridge.test.cjs -->
 | `desktop/settings-bridge.test.cjs` | Desktop Launcher | Verifies desktop save applies Core first, encrypts secrets, and survives store restart; Core failure leaves the prior encrypted secret unchanged; secure-store failure reports a retryable partial state without replacing the old secret; explicit clear is distinct from an omitted or empty secret; desktop GET reports secure persistence immediately after save. | none | node:assert/strict; node:fs; node:os; node:path; node:test; ./secret-store.cjs | filesystem | direct test file | current | Launcher public; no protected Core source |
+<!-- INDEXED:frontend/src/features/settings/DiagnosticsDialogView.tsx -->
+| `frontend/src/features/settings/DiagnosticsDialogView.tsx` | Web frontend | Defines DiagnosticsDialog for the Settings and provider domain. | DiagnosticsDialog | react; ../../shared/api; ../../shared/formatters; ../../shared/Modal; ../../types; ../../ui/styledConfirm | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/settings/index.ts -->
+| `frontend/src/features/settings/index.ts` | Web frontend | export { Modal } from "../../shared/Modal"; | none | ../../shared/Modal; ../../shared/Field; ../../settings/SettingsWorkspace; ./DiagnosticsDialogView; ./useModelSelection; ./useSettingsSynchronization; ../../types | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/settings/useModelSelection.ts -->
+| `frontend/src/features/settings/useModelSelection.ts` | Web frontend | Defines useModelSelection for the Settings and provider domain. | useModelSelection | react; ../../shared/api; ../../types | none | repository policy / full suite | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/settings/useSettingsSynchronization.ts -->
+| `frontend/src/features/settings/useSettingsSynchronization.ts` | Web frontend | Defines useSettingsSynchronization for the Settings and provider domain. | useSettingsSynchronization | react; ../../shared/api; ../../types | none | repository policy / full suite | current | Web public; no Core secrets |
 <!-- INDEXED:frontend/src/settings/Modal.tsx -->
-| `frontend/src/settings/Modal.tsx` | Web frontend | Defines Modal for the Settings and provider domain. | Modal | react | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
+| `frontend/src/settings/Modal.tsx` | Web frontend | Compatibility entrypoint for settings code that has not moved to shared UI yet. | none | ../shared/Modal | UI/rendering | repository policy / full suite | current | Web public; no Core secrets |
 <!-- INDEXED:src/mindspace_graph/api_routes/system_settings.py -->
 | `src/mindspace_graph/api_routes/system_settings.py` | Core backend | Registers product settings, provider connection tests, model discovery and public configuration endpoints. | register_routes | __future__; typing; uuid; httpx; fastapi; fastapi.responses; context | database/state; network | tests/test_api.py; tests/test_product_config_secrets.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/product_config.py -->
-| `src/mindspace_graph/product_config.py` | Core backend | Runtime-editable product configuration with redacted public snapshots. | ProductConfigStore | __future__; json; copy; pathlib; threading; typing; mindspace_graph.adapters.file_storage; mindspace_graph.capabilities | filesystem | tests/test_product_config_secrets.py | current | Core protected release surface |
+| `src/mindspace_graph/product_config.py` | Core backend | Runtime-editable product configuration with redacted public snapshots. | ProductConfigStore | __future__; json; copy; pathlib; threading; typing; mindspace_graph.infrastructure.storage.json_io; mindspace_graph.capabilities | filesystem | tests/test_product_config_secrets.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/settings.py -->
 | `src/mindspace_graph/settings.py` | Core backend | Environment-driven product settings with safe local defaults. | AppSettings | __future__; os; dataclasses; pathlib | filesystem; environment | desktop/settings-bridge.test.cjs; tests/test_settings.py | current | Core protected release surface |
 <!-- INDEXED:tests/test_product_config_secrets.py -->
-| `tests/test_product_config_secrets.py` | Tests | Verifies test_environment_secrets_survive_public_save_without_persistence; test_legacy_plaintext_secrets_are_used_once_and_atomically_scrubbed; test_launcher_secret_wins_over_legacy_plaintext_while_disk_is_scrubbed; test_runtime_secret_patch_is_process_only_and_public_fields_persist; test_atomic_public_save_failure_preserves_disk_and_runtime_state. | test_environment_secrets_survive_public_save_without_persistence; test_legacy_plaintext_secrets_are_used_once_and_atomically_scrubbed; test_launcher_secret_wins_over_legacy_plaintext_while_disk_is_scrubbed; test_runtime_secret_patch_is_process_only_and_public_fields_persist; test_atomic_public_save_failure_preserves_disk_and_runtime_state; test_settings_get_and_patch_never_expose_or_persist_secrets; test_launcher_environment_secret_reaches_model_adapter_without_disk_copy | __future__; json; pytest; fastapi.testclient; mindspace_graph.product_config; mindspace_graph.api; mindspace_graph.settings | filesystem | direct test file | current | Development-only; not runtime payload by default |
+| `tests/test_product_config_secrets.py` | Tests | Verifies test_environment_secrets_survive_public_save_without_persistence; test_legacy_plaintext_secrets_are_used_once_and_atomically_scrubbed; test_launcher_secret_wins_over_legacy_plaintext_while_disk_is_scrubbed; test_runtime_secret_patch_is_process_only_and_public_fields_persist; test_atomic_public_save_failure_preserves_disk_and_runtime_state. | test_environment_secrets_survive_public_save_without_persistence; test_legacy_plaintext_secrets_are_used_once_and_atomically_scrubbed; test_launcher_secret_wins_over_legacy_plaintext_while_disk_is_scrubbed; test_runtime_secret_patch_is_process_only_and_public_fields_persist; test_atomic_public_save_failure_preserves_disk_and_runtime_state; test_settings_get_and_patch_never_expose_or_persist_secrets; test_launcher_environment_secret_reaches_model_adapter_without_disk_copy | __future__; json; pytest; fastapi.testclient; mindspace_graph.product_config; mindspace_graph.api; mindspace_graph.models; mindspace_graph.settings | filesystem | direct test file | current | Development-only; not runtime payload by default |
 <!-- INDEXED:tests/test_settings.py -->
 | `tests/test_settings.py` | Tests | Verifies test_home_only_core_start_reopens_the_existing_home_data; test_explicit_runtime_directory_still_has_priority. | test_home_only_core_start_reopens_the_existing_home_data; test_explicit_runtime_directory_still_has_priority | __future__; mindspace_graph.settings | none | direct test file | current | Development-only; not runtime payload by default |
 
-## V7 destiny (7)
+## V7 destiny (8)
 
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
@@ -687,7 +837,9 @@
 <!-- INDEXED:frontend/src/DestinyCanvas.test.tsx -->
 | `frontend/src/DestinyCanvas.test.tsx` | Web frontend | Verifies /; runs 8 directions, 96 cards and twelve V7 selections before entering local chat; keeps the persistent uploaded avatar URL while preserving crop adjustments; keeps the V7 resume key when a temporary journey restore request fails; keeps the V7 resume key when the definition endpoint is unavailable. | none | @testing-library/react; @testing-library/user-event; vitest; ./DestinyCanvas | UI/rendering | direct test file | current | Web public; no Core secrets |
 <!-- INDEXED:frontend/src/DestinyCanvas.tsx -->
-| `frontend/src/DestinyCanvas.tsx` | Web frontend | Defines mergeUploadedAvatar; DestinyCanvas; DrawWorkshop for the V7 destiny domain. | mergeUploadedAvatar; DestinyCanvas; DrawWorkshop | react; ./api | UI/rendering | frontend/src/DestinyCanvas.test.tsx | current | Web public; no Core secrets |
+| `frontend/src/DestinyCanvas.tsx` | Web frontend | Defines mergeUploadedAvatar; DestinyCanvas; DrawWorkshop for the V7 destiny domain. | mergeUploadedAvatar; DestinyCanvas; DrawWorkshop | react; ./shared/api | UI/rendering | frontend/src/DestinyCanvas.test.tsx | current | Web public; no Core secrets |
+<!-- INDEXED:frontend/src/features/destiny/index.ts -->
+| `frontend/src/features/destiny/index.ts` | Web frontend | export { DrawWorkshop } from "../../DestinyCanvas"; | none | ../../DestinyCanvas | none | repository policy / full suite | current | Web public; no Core secrets |
 <!-- INDEXED:src/mindspace_graph/api_routes/destiny_routes.py -->
 | `src/mindspace_graph/api_routes/destiny_routes.py` | Core backend | Registers V7 journey, avatar, archetype, 6+6 card batch, selection, synthesis and commit endpoints. | register_routes | __future__; json; pathlib; typing; uuid; fastapi; mindspace_graph.destiny; context | filesystem; database/state | tests/test_destiny.py; tests/test_api_route_contract.py | current | Core protected release surface |
 <!-- INDEXED:src/mindspace_graph/destiny.py -->
@@ -750,7 +902,7 @@
 <!-- INDEXED:scripts/test-desktop-installer.ps1 -->
 | `scripts/test-desktop-installer.ps1` | Developer tooling | [CmdletBinding()] | none | none | filesystem; process execution | repository policy / full suite | current | Developer tool; release only when allowlisted |
 <!-- INDEXED:tests/test_application_foundation.py -->
-| `tests/test_application_foundation.py` | Tests | Verifies test_shared_transaction_rolls_back_every_canonical_store; test_regenerate_withdraws_old_memory_context_and_indexes_atomically; test_alias_identity_removes_opposing_value_without_model_judgment; test_profile_schema_rejects_incomplete_advanced_document; test_profile_gender_defaults_and_validation_are_explicit. | test_shared_transaction_rolls_back_every_canonical_store; test_regenerate_withdraws_old_memory_context_and_indexes_atomically; test_alias_identity_removes_opposing_value_without_model_judgment; test_profile_schema_rejects_incomplete_advanced_document; test_profile_gender_defaults_and_validation_are_explicit; test_bm25_plus_and_rrf_keep_independent_rank_evidence; test_openai_usage_extracts_standard_cached_tokens; test_role_audit_writes_one_bounded_continuity_digest_for_next_turn | copy; pytest; mindspace_graph.adapters.file_storage; mindspace_graph.adapters.openai_compatible; mindspace_graph.adapters.structured_memory; mindspace_graph.context_ledger; mindspace_graph.entity_registry; mindspace_graph.models | database/state | direct test file | current | Development-only; not runtime payload by default |
+| `tests/test_application_foundation.py` | Tests | Verifies test_shared_transaction_rolls_back_every_canonical_store; test_regenerate_withdraws_old_memory_context_and_indexes_atomically; test_alias_identity_resolves_to_the_same_entity_without_duplication; test_profile_schema_migrates_legacy_user_fields_to_compact_v13_document; test_profile_gender_defaults_and_validation_are_explicit. | test_shared_transaction_rolls_back_every_canonical_store; test_regenerate_withdraws_old_memory_context_and_indexes_atomically; test_alias_identity_resolves_to_the_same_entity_without_duplication; test_profile_schema_migrates_legacy_user_fields_to_compact_v13_document; test_profile_gender_defaults_and_validation_are_explicit; test_bm25_plus_and_rrf_keep_independent_rank_evidence; test_openai_usage_extracts_standard_cached_tokens; test_role_audit_writes_one_bounded_continuity_digest_for_next_turn | json; copy; pytest; mindspace_graph.adapters.file_storage; mindspace_graph.adapters.openai_compatible; mindspace_graph.adapters.structured_memory; mindspace_graph.context_ledger; mindspace_graph.entity_registry | filesystem; database/state | direct test file | current | Development-only; not runtime payload by default |
 <!-- INDEXED:tests/test_art_catalog.py -->
 | `tests/test_art_catalog.py` | Tests | Verifies test_builtin_art_manifest_v2_and_approved_expansion_are_valid; test_pack_extraction_rolls_back_corrupt_replacement; test_pack_rejects_zip_path_traversal; test_pack_pause_state_preserves_partial_bytes_for_resume. | sha256; test_builtin_art_manifest_v2_and_approved_expansion_are_valid; test_pack_extraction_rolls_back_corrupt_replacement; test_pack_rejects_zip_path_traversal; test_pack_pause_state_preserves_partial_bytes_for_resume | __future__; hashlib; json; zipfile; pathlib; pytest; mindspace_graph.art_catalog | filesystem | direct test file | current | Development-only; not runtime payload by default |
 <!-- INDEXED:tests/test_cancellation.py -->
@@ -778,7 +930,7 @@
 <!-- INDEXED:tests/test_r18_private_library.py -->
 | `tests/test_r18_private_library.py` | Tests | Verifies test_private_library_reads_a_sealed_docx_from_memory_only; test_node_packager_and_core_unsealer_share_one_envelope_format; test_tampered_private_library_is_rejected. | test_private_library_reads_a_sealed_docx_from_memory_only; test_node_packager_and_core_unsealer_share_one_envelope_format; test_tampered_private_library_is_rejected | __future__; io; subprocess; zipfile; pathlib; mindspace_graph.r18_private_library | process execution | direct test file | current | Development-only; not runtime payload by default |
 <!-- INDEXED:tests/test_roleplay.py -->
-| `tests/test_roleplay.py` | Tests | Verifies test_profile_v12_migrates_missing_roleplay_sections_without_overwriting; test_profile_v11_migration_preserves_existing_character_content; test_raw_assistant_prose_is_never_returned_by_chat_retrieval; test_acknowledgement_and_bare_scene_transition_skip_raw_chat_retrieval; test_presentation_auto_defaults_to_dialogue_and_routes_explicit_action_to_scene. | request; profiles; test_profile_v12_migrates_missing_roleplay_sections_without_overwriting; test_profile_v11_migration_preserves_existing_character_content; test_raw_assistant_prose_is_never_returned_by_chat_retrieval; test_acknowledgement_and_bare_scene_transition_skip_raw_chat_retrieval; test_presentation_auto_defaults_to_dialogue_and_routes_explicit_action_to_scene; test_roleplay_temperature_is_dynamic_and_never_raises_user_setting; test_presentation_override_and_scene_continuation_are_observable; test_dialogue_projection_drops_only_legacy_stage_openers_and_preserves_normal_parentheses | __future__; json; mindspace_graph.adapters.file_storage; mindspace_graph.adapters.local_retriever; mindspace_graph.models; mindspace_graph.prompting; mindspace_graph.r18_director; mindspace_graph.roleplay | filesystem; database/state | direct test file | current | Development-only; not runtime payload by default |
+| `tests/test_roleplay.py` | Tests | Verifies test_profile_v13_initializes_roleplay_sections_without_overwriting; test_legacy_profile_migration_preserves_existing_character_content; test_raw_assistant_prose_is_never_returned_by_chat_retrieval; test_acknowledgement_and_bare_scene_transition_skip_raw_chat_retrieval; test_presentation_auto_defaults_to_dialogue_and_routes_explicit_action_to_scene. | request; profiles; test_profile_v13_initializes_roleplay_sections_without_overwriting; test_legacy_profile_migration_preserves_existing_character_content; test_raw_assistant_prose_is_never_returned_by_chat_retrieval; test_acknowledgement_and_bare_scene_transition_skip_raw_chat_retrieval; test_presentation_auto_defaults_to_dialogue_and_routes_explicit_action_to_scene; test_roleplay_temperature_is_dynamic_and_never_raises_user_setting; test_presentation_override_and_scene_continuation_are_observable; test_dialogue_projection_drops_only_legacy_stage_openers_and_preserves_normal_parentheses | __future__; json; mindspace_graph.adapters.file_storage; mindspace_graph.adapters.local_retriever; mindspace_graph.models; mindspace_graph.prompting; mindspace_graph.r18_director; mindspace_graph.roleplay | filesystem; database/state | direct test file | current | Development-only; not runtime payload by default |
 <!-- INDEXED:tests/test_shared_chapters.py -->
 | `tests/test_shared_chapters.py` | Tests | Verifies test_journals_and_moments_are_character_isolated_and_narrative_only; test_journal_uses_character_first_person_and_complete_user_anchored_rounds; test_journal_invalid_perspective_falls_back_but_counts_attempt; test_activity_actions_are_revisioned_idempotent_and_character_bound; test_conversation_scene_is_session_scoped_and_inherits_character_default. | make_app; test_journals_and_moments_are_character_isolated_and_narrative_only; test_journal_uses_character_first_person_and_complete_user_anchored_rounds; test_journal_invalid_perspective_falls_back_but_counts_attempt; test_activity_actions_are_revisioned_idempotent_and_character_bound; test_conversation_scene_is_session_scoped_and_inherits_character_default; test_archived_character_session_scene_returns_controlled_gone_response; test_activity_context_is_resolved_server_side_for_chat; test_prompt_inspector_marks_scene_as_ephemeral_system_layer; test_confirmed_continuity_migration_is_idempotent | __future__; copy; pytest; fastapi.testclient; mindspace_graph.adapters.in_memory; mindspace_graph.api; mindspace_graph.models; mindspace_graph.settings | database/state | direct test file | current | Development-only; not runtime payload by default |
 <!-- INDEXED:tests/test_stage1_hardening.py -->
@@ -786,7 +938,7 @@
 <!-- INDEXED:tests/test_streaming_protocol.py -->
 | `tests/test_streaming_protocol.py` | Tests | Verifies test_incremental_response_parser_handles_every_chunk_boundary; test_incremental_response_parser_never_leaks_json_update; test_incremental_response_parser_accepts_plain_leading_reply_without_leaking_json; test_protocol_parser_recovers_plain_leading_response; test_protocol_parser_recovers_plain_response_that_starts_with_voice_directive. | test_incremental_response_parser_handles_every_chunk_boundary; test_incremental_response_parser_never_leaks_json_update; test_incremental_response_parser_accepts_plain_leading_reply_without_leaking_json; test_protocol_parser_recovers_plain_leading_response; test_protocol_parser_recovers_plain_response_that_starts_with_voice_directive; test_protocol_parser_accepts_fenced_json_and_dangling_response_close; test_model_terminator_is_removed_from_stream_and_final_response | __future__; mindspace_graph.protocol | none | direct test file | current | Development-only; not runtime payload by default |
 
-## Version and release (59)
+## Version and release (60)
 
 | Path | Layer | Precise responsibility | Public entry / exports | Dependencies / direction | Data / side effects | Tests / gates | Status | Encryption / release boundary |
 |---|---|---|---|---|---|---|---|---|
@@ -820,6 +972,8 @@
 | `desktop/release-targets.test.cjs` | Desktop Launcher | Verifies Core builder and updater consume one positive target allowlist. | none | node:assert/strict; node:fs; node:path; node:test | filesystem | direct test file | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/runtime-assets.test.cjs -->
 | `desktop/runtime-assets.test.cjs` | Desktop Launcher | Verifies packaged GPT-SoVITS catalog is generated from the Core authority. | none | node:assert/strict; node:fs; node:path; node:test | filesystem | direct test file | current | Launcher public; no protected Core source |
+<!-- INDEXED:desktop/runtime-controller.cjs -->
+| `desktop/runtime-controller.cjs` | Desktop Launcher | const { spawn, spawnSync } = require("node:child_process"); | module.exports; IPC launcher:component; IPC runtime:action; IPC runtime:snapshot; IPC runtime:install; IPC runtime:cancel; IPC runtime:retry; IPC runtime:repair; IPC runtime:source; IPC runtime:proxy | node:child_process; node:fs; node:path | filesystem; Electron IPC; process execution; environment | repository policy / full suite | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/runtime-manager.cjs -->
 | `desktop/runtime-manager.cjs` | Desktop Launcher | const crypto = require("node:crypto"); | module.exports | node:crypto; node:fs; node:os; node:path; node:child_process; ./update-manager.cjs | filesystem; network; process execution; environment | desktop/runtime-manager.test.cjs | current | Launcher public; no protected Core source |
 <!-- INDEXED:desktop/runtime-manager.test.cjs -->

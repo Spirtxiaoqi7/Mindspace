@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 import mindspace_graph.product_config as product_config_module
 from mindspace_graph.api import create_app
+from mindspace_graph.models import ChatRequest
 from mindspace_graph.product_config import ProductConfigStore
 from mindspace_graph.settings import AppSettings
 
@@ -160,7 +161,7 @@ def test_atomic_public_save_failure_preserves_disk_and_runtime_state(tmp_path, m
     def fail_atomic_save(*_args, **_kwargs) -> None:
         raise OSError("injected atomic save failure")
 
-    monkeypatch.setattr(product_config_module, "_atomic_json", fail_atomic_save)
+    monkeypatch.setattr(product_config_module, "atomic_json_write", fail_atomic_save)
 
     with pytest.raises(OSError, match="injected atomic save failure"):
         store.update({"llm": {"api_key": "replacement-secret", "model": "replacement-model"}})
@@ -220,7 +221,15 @@ def test_launcher_environment_secret_reaches_model_adapter_without_disk_copy(tmp
 
     settings = AppSettings.from_env()
     app = create_app(settings)
-    adapter_config = app.state.container.conversation._role_audit_api()
+    container = app.state.container
+    character_id = str(container.characters.default()["character_id"])
+    adapter_config = container.conversation.turn_preparation.prepare(
+        ChatRequest(
+            message="验证启动器密钥进入模型请求配置",
+            session_id="launcher-secret-session",
+            character_id=character_id,
+        )
+    ).api
 
     assert adapter_config.api_key == "launcher-adapter-secret"
     assert settings.asr_api_key == "launcher-asr-adapter-secret"

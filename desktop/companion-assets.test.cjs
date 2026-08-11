@@ -15,11 +15,13 @@ const modelFile = path.join(
 
 test("deferred companion release does not claim missing Live2D resources", () => {
   const mainProcess = fs.readFileSync(path.join(desktopRoot, "main.cjs"), "utf8");
+  const companion = fs.readFileSync(path.join(desktopRoot, "companion-controller.cjs"), "utf8");
 
   assert.equal(fs.existsSync(modelFile), false);
-  assert.match(mainProcess, /available:\s*false/);
-  assert.match(mainProcess, /if \(action !== "snapshot"\)/);
-  assert.match(mainProcess, /COMPANION_RELEASE\.message/);
+  assert.match(companion, /available:\s*false/);
+  assert.match(companion, /if \(actionName !== "snapshot"\)/);
+  assert.match(companion, /COMPANION_RELEASE\.message/);
+  assert.match(mainProcess, /createCompanionController/);
 });
 
 test("desktop package excludes the deferred companion runtime", () => {

@@ -1,0 +1,98 @@
+[importlinter]
+root_package = mindspace_graph
+
+[importlinter:contract:no-package-cycles]
+name = Mindspace package dependencies must remain acyclic
+type = acyclic_siblings
+ancestors =
+    mindspace_graph
+depth = 1
+
+[importlinter:contract:adapters-cannot-import-api]
+name = Adapters must not import API routes
+type = forbidden
+source_modules =
+    mindspace_graph.adapters
+forbidden_modules =
+    mindspace_graph.api_routes
+allow_indirect_imports = true
+
+[importlinter:contract:api-cannot-grow-adapter-dependencies]
+name = API routes must not directly access adapters
+type = forbidden
+source_modules =
+    mindspace_graph.api_routes
+forbidden_modules =
+    mindspace_graph.adapters
+allow_indirect_imports = true
+
+[importlinter:contract:prompt-core-isolation]
+name = Prompt and tool protocol must remain infrastructure independent
+type = forbidden
+source_modules =
+    mindspace_graph.prompting
+    mindspace_graph.prompt_blocks
+    mindspace_graph.prompt_contributors
+    mindspace_graph.prompt_event_templates
+    mindspace_graph.prompt_templates
+    mindspace_graph.tool_chain
+forbidden_modules =
+    mindspace_graph.api_routes
+    mindspace_graph.adapters
+    mindspace_graph.api
+    mindspace_graph.server
+    mindspace_graph.service
+allow_indirect_imports = true
+
+[importlinter:contract:api-contracts-cannot-import-routes-or-adapters]
+name = Public API contracts may depend on internal models but not routes or infrastructure
+type = forbidden
+source_modules =
+    mindspace_graph.api_contracts
+forbidden_modules =
+    mindspace_graph.adapters
+    mindspace_graph.api
+    mindspace_graph.api_routes
+    mindspace_graph.bootstrap
+    mindspace_graph.server
+    mindspace_graph.service
+allow_indirect_imports = true
+
+[importlinter:contract:application-cannot-import-entrypoints-or-adapters]
+name = Application services must depend on ports instead of concrete adapters or entrypoints
+type = forbidden
+source_modules =
+    mindspace_graph.application
+forbidden_modules =
+    mindspace_graph.adapters
+    mindspace_graph.api
+    mindspace_graph.api_routes
+    mindspace_graph.bootstrap
+    mindspace_graph.server
+    mindspace_graph.service
+allow_indirect_imports = true
+
+[importlinter:contract:ports-cannot-import-outer-layers]
+name = Ports must not import entrypoints or adapters
+type = forbidden
+source_modules =
+    mindspace_graph.ports
+forbidden_modules =
+    mindspace_graph.api
+    mindspace_graph.server
+    mindspace_graph.api_routes
+    mindspace_graph.adapters
+    mindspace_graph.service
+allow_indirect_imports = true
+
+[importlinter:contract:adapter-independence]
+name = Concrete adapters must remain independent
+type = independence
+modules =
+    mindspace_graph.adapters.in_memory
+    mindspace_graph.adapters.json_audit
+    mindspace_graph.adapters.local_retriever
+    mindspace_graph.adapters.openai_compatible
+    mindspace_graph.adapters.profile_repository
+    mindspace_graph.adapters.session_repository
+    mindspace_graph.adapters.structured_memory

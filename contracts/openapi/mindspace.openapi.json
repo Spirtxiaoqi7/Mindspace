@@ -1,0 +1,7122 @@
+{
+  "components": {
+    "schemas": {
+      "ASRCorrectionRequest": {
+        "properties": {
+          "corrected_text": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Corrected Text",
+            "type": "string"
+          },
+          "raw_text": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Raw Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "raw_text",
+          "corrected_text"
+        ],
+        "title": "ASRCorrectionRequest",
+        "type": "object"
+      },
+      "ASRInputEvidence": {
+        "description": "Ephemeral recognition evidence accompanying an already confirmed utterance.",
+        "properties": {
+          "confirmed_text": {
+            "default": "",
+            "maxLength": 10000,
+            "title": "Confirmed Text",
+            "type": "string"
+          },
+          "decision_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 12,
+            "title": "Decision Reasons",
+            "type": "array"
+          },
+          "quality": {
+            "default": "accepted",
+            "enum": [
+              "accepted",
+              "uncertain"
+            ],
+            "title": "Quality",
+            "type": "string"
+          },
+          "uncertain_segments": {
+            "items": {
+              "$ref": "#/components/schemas/ASRUncertainSegment"
+            },
+            "maxItems": 8,
+            "title": "Uncertain Segments",
+            "type": "array"
+          }
+        },
+        "title": "ASRInputEvidence",
+        "type": "object"
+      },
+      "ASRUncertainSegment": {
+        "description": "A non-authoritative ASR alternative that must never become stored user text.",
+        "properties": {
+          "reason": {
+            "default": "low_confidence",
+            "maxLength": 100,
+            "title": "Reason",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "ASRUncertainSegment",
+        "type": "object"
+      },
+      "ASRVocabularyTestRequest": {
+        "properties": {
+          "text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "ASRVocabularyTestRequest",
+        "type": "object"
+      },
+      "ASRVocabularyUpdateRequest": {
+        "properties": {
+          "entries": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 500,
+            "title": "Entries",
+            "type": "array"
+          }
+        },
+        "title": "ASRVocabularyUpdateRequest",
+        "type": "object"
+      },
+      "ActivityAction": {
+        "properties": {
+          "action": {
+            "enum": [
+              "select_scene",
+              "draw_question",
+              "answer_question",
+              "choose_story",
+              "complete",
+              "cancel",
+              "resume"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "action_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          }
+        },
+        "required": [
+          "action_id",
+          "expected_revision",
+          "action"
+        ],
+        "title": "ActivityAction",
+        "type": "object"
+      },
+      "ActivityPromptContext": {
+        "description": "Server-resolved activity state; clients may send only its session id.",
+        "properties": {
+          "activity_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Activity Id",
+            "type": "string"
+          },
+          "activity_session_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Activity Session Id",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Description",
+            "type": "string"
+          },
+          "eligible_for_json_evidence": {
+            "const": false,
+            "default": false,
+            "title": "Eligible For Json Evidence",
+            "type": "boolean"
+          },
+          "phase": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Phase",
+            "type": "string"
+          },
+          "rules": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 12,
+            "title": "Rules",
+            "type": "array"
+          },
+          "state": {
+            "additionalProperties": true,
+            "title": "State",
+            "type": "object"
+          },
+          "status": {
+            "default": "active",
+            "enum": [
+              "active",
+              "completed",
+              "interrupted"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "visibility": {
+            "const": "ephemeral_activity_session",
+            "default": "ephemeral_activity_session",
+            "title": "Visibility",
+            "type": "string"
+          }
+        },
+        "required": [
+          "activity_session_id",
+          "activity_id",
+          "title"
+        ],
+        "title": "ActivityPromptContext",
+        "type": "object"
+      },
+      "ActivityStart": {
+        "properties": {
+          "character_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Character Id",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "character_id"
+        ],
+        "title": "ActivityStart",
+        "type": "object"
+      },
+      "ApiConfig": {
+        "description": "OpenAI-compatible endpoint configuration kept outside prompt text.",
+        "properties": {
+          "api_key": {
+            "default": "",
+            "title": "Api Key",
+            "type": "string"
+          },
+          "base_url": {
+            "default": "https://api.deepseek.com",
+            "title": "Base Url",
+            "type": "string"
+          },
+          "max_tokens": {
+            "default": 2000,
+            "maximum": 8192.0,
+            "minimum": 64.0,
+            "title": "Max Tokens",
+            "type": "integer"
+          },
+          "model": {
+            "default": "deepseek-chat",
+            "title": "Model",
+            "type": "string"
+          },
+          "temperature": {
+            "default": 0.7,
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "Temperature",
+            "type": "number"
+          }
+        },
+        "title": "ApiConfig",
+        "type": "object"
+      },
+      "Body_import_character_api_v1_characters_import_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_character_api_v1_characters_import_post",
+        "type": "object"
+      },
+      "Body_transcribe_api_v1_audio_asr_post": {
+        "properties": {
+          "audio_file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "Audio File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "audio_file"
+        ],
+        "title": "Body_transcribe_api_v1_audio_asr_post",
+        "type": "object"
+      },
+      "Body_upload_avatar_api_v1_avatar_upload__role__post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_avatar_api_v1_avatar_upload__role__post",
+        "type": "object"
+      },
+      "Body_upload_custom_scene_api_v1_scenes_custom_post": {
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_custom_scene_api_v1_scenes_custom_post",
+        "type": "object"
+      },
+      "Body_upload_destiny_avatar_api_v1_destiny_avatars_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_destiny_avatar_api_v1_destiny_avatars_post",
+        "type": "object"
+      },
+      "Body_upload_knowledge_api_v1_knowledge_upload_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_knowledge_api_v1_knowledge_upload_post",
+        "type": "object"
+      },
+      "Body_upload_tts_reference_api_v1_audio_tts_reference_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "title": "File",
+            "type": "string"
+          },
+          "transcript": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transcript"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_tts_reference_api_v1_audio_tts_reference_post",
+        "type": "object"
+      },
+      "CharacterRestoreRequest": {
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "version_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id",
+          "expected_revision"
+        ],
+        "title": "CharacterRestoreRequest",
+        "type": "object"
+      },
+      "ChatAttachment": {
+        "properties": {
+          "attachment_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Attachment Id",
+            "type": "string"
+          },
+          "content": {
+            "default": "",
+            "maxLength": 20000,
+            "title": "Content",
+            "type": "string"
+          },
+          "media_type": {
+            "default": "text/plain",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Media Type",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "size": {
+            "default": 0,
+            "maximum": 1048576.0,
+            "minimum": 0.0,
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "attachment_id",
+          "name"
+        ],
+        "title": "ChatAttachment",
+        "type": "object"
+      },
+      "ChatInteraction": {
+        "properties": {
+          "action": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Action",
+            "type": "string"
+          },
+          "category": {
+            "enum": [
+              "daily",
+              "touch",
+              "kiss",
+              "custom"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "level": {
+            "default": 0,
+            "maximum": 99.0,
+            "minimum": 0.0,
+            "title": "Level",
+            "type": "integer"
+          },
+          "sensitivity": {
+            "default": "normal",
+            "enum": [
+              "normal",
+              "intimate"
+            ],
+            "title": "Sensitivity",
+            "type": "string"
+          },
+          "target": {
+            "default": "",
+            "maxLength": 40,
+            "title": "Target",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "category",
+          "action"
+        ],
+        "title": "ChatInteraction",
+        "type": "object"
+      },
+      "ChatResponse": {
+        "properties": {
+          "assistant_message_id": {
+            "default": "",
+            "title": "Assistant Message Id",
+            "type": "string"
+          },
+          "completed_at": {
+            "title": "Completed At",
+            "type": "string"
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "llm_call_count": {
+            "default": 0,
+            "title": "Llm Call Count",
+            "type": "integer"
+          },
+          "model": {
+            "$ref": "#/components/schemas/ModelDiagnostics"
+          },
+          "model_usage": {
+            "items": {
+              "$ref": "#/components/schemas/ModelUsage"
+            },
+            "title": "Model Usage",
+            "type": "array"
+          },
+          "presentation_mode": {
+            "default": "dialogue",
+            "enum": [
+              "dialogue",
+              "scene"
+            ],
+            "title": "Presentation Mode",
+            "type": "string"
+          },
+          "reply": {
+            "default": "",
+            "title": "Reply",
+            "type": "string"
+          },
+          "retrieval_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Retrieval Counts",
+            "type": "object"
+          },
+          "round": {
+            "title": "Round",
+            "type": "integer"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "success",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tool_execution": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Execution"
+          },
+          "trace": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Trace",
+            "type": "array"
+          },
+          "writeback_applied": {
+            "default": false,
+            "title": "Writeback Applied",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "session_id",
+          "round",
+          "status"
+        ],
+        "title": "ChatResponse",
+        "type": "object"
+      },
+      "ChatTurnCreateRequest": {
+        "description": "Public chat input with server-resolved fields hidden from OpenAPI.\n\nThe hidden fields remain typed compatibility inputs so older clients keep\ntheir existing validation and idempotency behavior. ConversationService\nstill replaces every one of them with authoritative server state.",
+        "properties": {
+          "activity_session_id": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Activity Session Id",
+            "type": "string"
+          },
+          "adult_mode": {
+            "default": false,
+            "title": "Adult Mode",
+            "type": "boolean"
+          },
+          "attachments": {
+            "items": {
+              "$ref": "#/components/schemas/ChatAttachment"
+            },
+            "maxItems": 5,
+            "title": "Attachments",
+            "type": "array"
+          },
+          "character_id": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Character Id",
+            "type": "string"
+          },
+          "character_name": {
+            "default": "AI助手",
+            "title": "Character Name",
+            "type": "string"
+          },
+          "client_sent_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Sent At"
+          },
+          "client_timezone": {
+            "default": "UTC",
+            "title": "Client Timezone",
+            "type": "string"
+          },
+          "client_utc_offset_minutes": {
+            "default": 0,
+            "maximum": 840.0,
+            "minimum": -840.0,
+            "title": "Client Utc Offset Minutes",
+            "type": "integer"
+          },
+          "initiative": {
+            "default": false,
+            "title": "Initiative",
+            "type": "boolean"
+          },
+          "initiative_sequence": {
+            "default": 0,
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Initiative Sequence",
+            "type": "integer"
+          },
+          "initiative_sequence_limit": {
+            "default": 0,
+            "maximum": 50.0,
+            "minimum": 0.0,
+            "title": "Initiative Sequence Limit",
+            "type": "integer"
+          },
+          "initiative_trigger": {
+            "default": "none",
+            "enum": [
+              "none",
+              "manual",
+              "idle_continuation",
+              "continuous_companionship"
+            ],
+            "title": "Initiative Trigger",
+            "type": "string"
+          },
+          "input_evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InputEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "interaction_mode": {
+            "default": "text",
+            "enum": [
+              "text",
+              "voice"
+            ],
+            "title": "Interaction Mode",
+            "type": "string"
+          },
+          "interactions": {
+            "items": {
+              "$ref": "#/components/schemas/ChatInteraction"
+            },
+            "maxItems": 12,
+            "title": "Interactions",
+            "type": "array"
+          },
+          "message": {
+            "default": "",
+            "maxLength": 10000,
+            "title": "Message",
+            "type": "string"
+          },
+          "mode": {
+            "default": "primary",
+            "enum": [
+              "primary",
+              "regenerate"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "presentation_mode": {
+            "default": "auto",
+            "enum": [
+              "auto",
+              "dialogue",
+              "scene"
+            ],
+            "title": "Presentation Mode",
+            "type": "string"
+          },
+          "r18_style_id": {
+            "default": "high_intensity",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "R18 Style Id",
+            "type": "string"
+          },
+          "reply_length_preference": {
+            "default": "",
+            "maxLength": 300,
+            "title": "Reply Length Preference",
+            "type": "string"
+          },
+          "reply_to_message_id": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Reply To Message Id",
+            "type": "string"
+          },
+          "retrieval": {
+            "$ref": "#/components/schemas/RetrievalSettings"
+          },
+          "round": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Round",
+            "type": "integer"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "string"
+          },
+          "user_name": {
+            "default": "用户",
+            "title": "User Name",
+            "type": "string"
+          },
+          "user_persona": {
+            "default": "",
+            "title": "User Persona",
+            "type": "string"
+          },
+          "voice_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VoiceInteractionContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "voice_delivery": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VoiceDeliveryState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "ChatTurnCreateRequest",
+        "type": "object"
+      },
+      "ClearDataRequest": {
+        "properties": {
+          "confirmation": {
+            "title": "Confirmation",
+            "type": "string"
+          },
+          "scope": {
+            "enum": [
+              "knowledge",
+              "sessions",
+              "all"
+            ],
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "confirmation"
+        ],
+        "title": "ClearDataRequest",
+        "type": "object"
+      },
+      "DestinySeed": {
+        "properties": {
+          "adult_character": {
+            "default": true,
+            "title": "Adult Character",
+            "type": "boolean"
+          },
+          "ai_gender": {
+            "default": "不指定",
+            "enum": [
+              "女",
+              "男",
+              "不指定"
+            ],
+            "title": "Ai Gender",
+            "type": "string"
+          },
+          "ai_name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Ai Name",
+            "type": "string"
+          },
+          "appearance_expectation": {
+            "default": "",
+            "maxLength": 1200,
+            "title": "Appearance Expectation",
+            "type": "string"
+          },
+          "avatar": {
+            "additionalProperties": true,
+            "title": "Avatar",
+            "type": "object"
+          },
+          "character_expectation": {
+            "maxLength": 2400,
+            "minLength": 1,
+            "title": "Character Expectation",
+            "type": "string"
+          },
+          "relationship": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Relationship",
+            "type": "string"
+          },
+          "relationship_context": {
+            "default": "",
+            "maxLength": 2400,
+            "title": "Relationship Context",
+            "type": "string"
+          },
+          "user_alias": {
+            "default": "",
+            "maxLength": 80,
+            "title": "User Alias",
+            "type": "string"
+          },
+          "user_name": {
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "User Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ai_name",
+          "user_name",
+          "relationship",
+          "character_expectation"
+        ],
+        "title": "DestinySeed",
+        "type": "object"
+      },
+      "DestinySelectionRequest": {
+        "properties": {
+          "card_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Card Id",
+            "type": "string"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          }
+        },
+        "required": [
+          "card_id"
+        ],
+        "title": "DestinySelectionRequest",
+        "type": "object"
+      },
+      "EntityAliasRequest": {
+        "properties": {
+          "alias": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Alias",
+            "type": "string"
+          }
+        },
+        "required": [
+          "alias"
+        ],
+        "title": "EntityAliasRequest",
+        "type": "object"
+      },
+      "EntityMergeRequest": {
+        "properties": {
+          "source_entity_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Source Entity Id",
+            "type": "string"
+          },
+          "target_entity_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Target Entity Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_entity_id",
+          "target_entity_id"
+        ],
+        "title": "EntityMergeRequest",
+        "type": "object"
+      },
+      "EntityRequest": {
+        "properties": {
+          "entity_type": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "scope": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Scope",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "scope",
+          "entity_type"
+        ],
+        "title": "EntityRequest",
+        "type": "object"
+      },
+      "EventMemoryRequest": {
+        "properties": {
+          "category": {
+            "pattern": "^(user_related|ai_related|relationship_related)$",
+            "title": "Category",
+            "type": "string"
+          },
+          "character_id": {
+            "default": "",
+            "maxLength": 64,
+            "title": "Character Id",
+            "type": "string"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due At"
+          },
+          "group": {
+            "pattern": "^(pending|subject)$",
+            "title": "Group",
+            "type": "string"
+          },
+          "importance": {
+            "default": 2,
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Importance",
+            "type": "integer"
+          },
+          "summary": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 20,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group",
+          "category",
+          "title",
+          "summary"
+        ],
+        "title": "EventMemoryRequest",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "InputEvidence": {
+        "description": "Transport-only evidence. It is intentionally excluded from durable user content.",
+        "properties": {
+          "asr": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ASRInputEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "InputEvidence",
+        "type": "object"
+      },
+      "InterruptRequest": {
+        "properties": {
+          "request_id": {
+            "minLength": 1,
+            "title": "Request Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id"
+        ],
+        "title": "InterruptRequest",
+        "type": "object"
+      },
+      "JournalCreate": {
+        "properties": {
+          "activity_session_id": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Activity Session Id",
+            "type": "string"
+          },
+          "content": {
+            "default": "",
+            "maxLength": 12000,
+            "title": "Content",
+            "type": "string"
+          },
+          "cover_asset_id": {
+            "default": "journal-cover-paper",
+            "maxLength": 120,
+            "title": "Cover Asset Id",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Session Id",
+            "type": "string"
+          },
+          "source": {
+            "default": "user_written",
+            "enum": [
+              "user_written",
+              "assistant_draft",
+              "activity_summary",
+              "template"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "source_message_count": {
+            "default": 0,
+            "maximum": 64.0,
+            "minimum": 0.0,
+            "title": "Source Message Count",
+            "type": "integer"
+          },
+          "source_round_end": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Round End"
+          },
+          "source_round_start": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Round Start"
+          },
+          "status": {
+            "default": "draft",
+            "enum": [
+              "draft",
+              "saved",
+              "archived"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "default": "",
+            "maxLength": 120,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "title": "JournalCreate",
+        "type": "object"
+      },
+      "JournalGenerateRequest": {
+        "properties": {
+          "activity_session_id": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Activity Session Id",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "title": "JournalGenerateRequest",
+        "type": "object"
+      },
+      "JournalUpdate": {
+        "properties": {
+          "content": {
+            "anyOf": [
+              {
+                "maxLength": 12000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "cover_asset_id": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Asset Id"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "draft",
+                  "saved",
+                  "archived"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "JournalUpdate",
+        "type": "object"
+      },
+      "KnowledgeRequest": {
+        "properties": {
+          "source": {
+            "default": "manual",
+            "maxLength": 200,
+            "title": "Source",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 500000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "KnowledgeRequest",
+        "type": "object"
+      },
+      "MemoryKeyRequest": {
+        "properties": {
+          "memory_key": {
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Memory Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "memory_key"
+        ],
+        "title": "MemoryKeyRequest",
+        "type": "object"
+      },
+      "MemoryRebuildRequest": {
+        "properties": {
+          "confirmation": {
+            "default": "",
+            "title": "Confirmation",
+            "type": "string"
+          },
+          "dry_run": {
+            "default": true,
+            "title": "Dry Run",
+            "type": "boolean"
+          }
+        },
+        "title": "MemoryRebuildRequest",
+        "type": "object"
+      },
+      "MemoryValueRequest": {
+        "properties": {
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "value"
+        ],
+        "title": "MemoryValueRequest",
+        "type": "object"
+      },
+      "ModelCallRecord": {
+        "properties": {
+          "elapsed_ms": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Elapsed Ms",
+            "type": "number"
+          },
+          "error": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Error",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "generation",
+              "task_review",
+              "final_generation",
+              "protocol_repair",
+              "memory_extract"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "success",
+              "degraded",
+              "denied",
+              "skipped"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "status"
+        ],
+        "title": "ModelCallRecord",
+        "type": "object"
+      },
+      "ModelDiagnostics": {
+        "properties": {
+          "call_summary": {
+            "items": {
+              "$ref": "#/components/schemas/ModelCallRecord"
+            },
+            "title": "Call Summary",
+            "type": "array"
+          },
+          "provider_attempts": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderHttpAttempt"
+            },
+            "title": "Provider Attempts",
+            "type": "array"
+          },
+          "total_calls": {
+            "default": 0,
+            "maximum": 5.0,
+            "minimum": 0.0,
+            "title": "Total Calls",
+            "type": "integer"
+          },
+          "total_http_attempts": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Total Http Attempts",
+            "type": "integer"
+          }
+        },
+        "title": "ModelDiagnostics",
+        "type": "object"
+      },
+      "ModelUsage": {
+        "properties": {
+          "cache_source": {
+            "default": "unreported",
+            "title": "Cache Source",
+            "type": "string"
+          },
+          "cached_tokens": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Cached Tokens",
+            "type": "integer"
+          },
+          "completion_tokens": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Completion Tokens",
+            "type": "integer"
+          },
+          "finish_reason": {
+            "default": "",
+            "title": "Finish Reason",
+            "type": "string"
+          },
+          "model": {
+            "default": "",
+            "title": "Model",
+            "type": "string"
+          },
+          "prompt_tokens": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Prompt Tokens",
+            "type": "integer"
+          },
+          "provider": {
+            "default": "openai-compatible",
+            "title": "Provider",
+            "type": "string"
+          },
+          "request_kind": {
+            "default": "generation",
+            "enum": [
+              "generation",
+              "repair",
+              "compaction",
+              "role_audit",
+              "task_review",
+              "final_generation",
+              "emotion_post",
+              "memory_extract",
+              "character_generate",
+              "destiny_archetypes",
+              "destiny_cards",
+              "destiny_synthesis",
+              "destiny_synthesis_repair"
+            ],
+            "title": "Request Kind",
+            "type": "string"
+          },
+          "requested_max_tokens": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Requested Max Tokens",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "title": "ModelUsage",
+        "type": "object"
+      },
+      "MomentCreate": {
+        "properties": {
+          "activity_session_id": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Activity Session Id",
+            "type": "string"
+          },
+          "art_asset_id": {
+            "default": "moment-heart-keepsake",
+            "maxLength": 120,
+            "title": "Art Asset Id",
+            "type": "string"
+          },
+          "event_type": {
+            "default": "shared_moment",
+            "maxLength": 64,
+            "title": "Event Type",
+            "type": "string"
+          },
+          "evidence_refs": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "journal_entry_id": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Journal Entry Id",
+            "type": "string"
+          },
+          "session_id": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Session Id",
+            "type": "string"
+          },
+          "source": {
+            "default": "user_confirmed",
+            "enum": [
+              "user_confirmed",
+              "activity_completion",
+              "journal",
+              "profile_migration"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "status": {
+            "default": "candidate",
+            "enum": [
+              "candidate",
+              "saved",
+              "archived"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "summary": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Summary",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "summary"
+        ],
+        "title": "MomentCreate",
+        "type": "object"
+      },
+      "MomentUpdate": {
+        "properties": {
+          "art_asset_id": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Art Asset Id"
+          },
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "candidate",
+                  "saved",
+                  "archived"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "MomentUpdate",
+        "type": "object"
+      },
+      "ProfileRestoreRequest": {
+        "properties": {
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          },
+          "version_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id"
+        ],
+        "title": "ProfileRestoreRequest",
+        "type": "object"
+      },
+      "ProviderHttpAttempt": {
+        "description": "One real HTTP request issued to an LLM provider.",
+        "properties": {
+          "attempt": {
+            "minimum": 1.0,
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "compatibility_variant": {
+            "default": "",
+            "maxLength": 80,
+            "title": "Compatibility Variant",
+            "type": "string"
+          },
+          "elapsed_ms": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Elapsed Ms",
+            "type": "number"
+          },
+          "error": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Error",
+            "type": "string"
+          },
+          "http_status": {
+            "anyOf": [
+              {
+                "maximum": 599.0,
+                "minimum": 100.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http Status"
+          },
+          "request_kind": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Request Kind",
+            "type": "string"
+          },
+          "retry_reason": {
+            "default": "",
+            "maxLength": 160,
+            "title": "Retry Reason",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "success",
+              "http_error",
+              "transport_error",
+              "empty",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt",
+          "request_kind",
+          "status"
+        ],
+        "title": "ProviderHttpAttempt",
+        "type": "object"
+      },
+      "RetrievalSettings": {
+        "properties": {
+          "bm25_enabled": {
+            "default": true,
+            "title": "Bm25 Enabled",
+            "type": "boolean"
+          },
+          "candidate_multiplier": {
+            "default": 4,
+            "maximum": 12.0,
+            "minimum": 2.0,
+            "title": "Candidate Multiplier",
+            "type": "integer"
+          },
+          "chat_enabled": {
+            "default": true,
+            "title": "Chat Enabled",
+            "type": "boolean"
+          },
+          "chat_exact_boost": {
+            "default": 0.1,
+            "maximum": 0.25,
+            "minimum": 0.0,
+            "title": "Chat Exact Boost",
+            "type": "number"
+          },
+          "chat_k": {
+            "default": 3,
+            "maximum": 30.0,
+            "minimum": 1.0,
+            "title": "Chat K",
+            "type": "integer"
+          },
+          "chat_session_boost": {
+            "default": 0.15,
+            "maximum": 0.25,
+            "minimum": 0.0,
+            "title": "Chat Session Boost",
+            "type": "number"
+          },
+          "decay_hours": {
+            "default": 168,
+            "maximum": 8760.0,
+            "minimum": 1.0,
+            "title": "Decay Hours",
+            "type": "number"
+          },
+          "decay_rounds": {
+            "default": 20,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Decay Rounds",
+            "type": "number"
+          },
+          "deferred_reason": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Deferred Reason",
+            "type": "string"
+          },
+          "fairness_enabled": {
+            "default": true,
+            "title": "Fairness Enabled",
+            "type": "boolean"
+          },
+          "history_k": {
+            "default": 3,
+            "maximum": 30.0,
+            "minimum": 1.0,
+            "title": "History K",
+            "type": "integer"
+          },
+          "knowledge_character_boost": {
+            "default": 0.08,
+            "maximum": 0.25,
+            "minimum": 0.0,
+            "title": "Knowledge Character Boost",
+            "type": "number"
+          },
+          "knowledge_enabled": {
+            "default": true,
+            "title": "Knowledge Enabled",
+            "type": "boolean"
+          },
+          "knowledge_k": {
+            "default": 2,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Knowledge K",
+            "type": "integer"
+          },
+          "knowledge_source_boost": {
+            "default": 0.05,
+            "maximum": 0.25,
+            "minimum": 0.0,
+            "title": "Knowledge Source Boost",
+            "type": "number"
+          },
+          "knowledge_user_boost": {
+            "default": 0.08,
+            "maximum": 0.25,
+            "minimum": 0.0,
+            "title": "Knowledge User Boost",
+            "type": "number"
+          },
+          "low_exposure_ratio": {
+            "default": 0.2,
+            "maximum": 0.5,
+            "minimum": 0.0,
+            "title": "Low Exposure Ratio",
+            "type": "number"
+          },
+          "max_total_boost": {
+            "default": 0.25,
+            "maximum": 0.5,
+            "minimum": 0.0,
+            "title": "Max Total Boost",
+            "type": "number"
+          },
+          "memory_family_limit": {
+            "default": 2,
+            "maximum": 10.0,
+            "minimum": 1.0,
+            "title": "Memory Family Limit",
+            "type": "integer"
+          },
+          "rag_enabled": {
+            "default": true,
+            "title": "Rag Enabled",
+            "type": "boolean"
+          },
+          "ready": {
+            "default": true,
+            "title": "Ready",
+            "type": "boolean"
+          },
+          "reranker_enabled": {
+            "default": false,
+            "title": "Reranker Enabled",
+            "type": "boolean"
+          },
+          "reranker_top_n": {
+            "default": 12,
+            "maximum": 50.0,
+            "minimum": 1.0,
+            "title": "Reranker Top N",
+            "type": "integer"
+          },
+          "rrf_k": {
+            "default": 60,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Rrf K",
+            "type": "integer"
+          },
+          "similarity_threshold": {
+            "default": 0.5,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Similarity Threshold",
+            "type": "number"
+          },
+          "starvation_boost": {
+            "default": 0.12,
+            "maximum": 0.5,
+            "minimum": 0.0,
+            "title": "Starvation Boost",
+            "type": "number"
+          },
+          "starvation_rounds": {
+            "default": 6,
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Starvation Rounds",
+            "type": "integer"
+          },
+          "structured_memory_enabled": {
+            "default": true,
+            "title": "Structured Memory Enabled",
+            "type": "boolean"
+          },
+          "temporal_enabled": {
+            "default": true,
+            "title": "Temporal Enabled",
+            "type": "boolean"
+          },
+          "vector_enabled": {
+            "default": true,
+            "title": "Vector Enabled",
+            "type": "boolean"
+          }
+        },
+        "title": "RetrievalSettings",
+        "type": "object"
+      },
+      "ScenePromptContext": {
+        "description": "Server-resolved visual scene for the current conversation.",
+        "properties": {
+          "asset_id": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Asset Id",
+            "type": "string"
+          },
+          "eligible_for_json_evidence": {
+            "const": false,
+            "default": false,
+            "title": "Eligible For Json Evidence",
+            "type": "boolean"
+          },
+          "location": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Location",
+            "type": "string"
+          },
+          "scene_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Scene Id",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "visibility": {
+            "const": "ephemeral_conversation_scene",
+            "default": "ephemeral_conversation_scene",
+            "title": "Visibility",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scene_id",
+          "title",
+          "location",
+          "asset_id"
+        ],
+        "title": "ScenePromptContext",
+        "type": "object"
+      },
+      "SceneSelectionUpdate": {
+        "properties": {
+          "expected_revision": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "scene_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Scene Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scene_id"
+        ],
+        "title": "SceneSelectionUpdate",
+        "type": "object"
+      },
+      "SessionCreateRequest": {
+        "properties": {
+          "character_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Character Id",
+            "type": "string"
+          },
+          "session_id": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Session Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "character_id"
+        ],
+        "title": "SessionCreateRequest",
+        "type": "object"
+      },
+      "TTSRequest": {
+        "properties": {
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "speed": {
+            "default": 1,
+            "maximum": 2.0,
+            "minimum": 0.5,
+            "title": "Speed",
+            "type": "number"
+          },
+          "text": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "voice_cue": {
+            "default": "neutral",
+            "maxLength": 32,
+            "title": "Voice Cue",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "TTSRequest",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "VoiceDeliveryState": {
+        "description": "Ephemeral voice-only evidence about what audio likely reached the user.",
+        "properties": {
+          "assistant_message_id": {
+            "default": "",
+            "title": "Assistant Message Id",
+            "type": "string"
+          },
+          "current_segment_id": {
+            "default": "",
+            "title": "Current Segment Id",
+            "type": "string"
+          },
+          "delivery_status": {
+            "enum": [
+              "playing",
+              "completed",
+              "interrupted",
+              "cancelled"
+            ],
+            "title": "Delivery Status",
+            "type": "string"
+          },
+          "full_text_visible": {
+            "default": true,
+            "title": "Full Text Visible",
+            "type": "boolean"
+          },
+          "heard_text": {
+            "default": "",
+            "maxLength": 10000,
+            "title": "Heard Text",
+            "type": "string"
+          },
+          "interruption_cause": {
+            "default": "",
+            "maxLength": 100,
+            "title": "Interruption Cause",
+            "type": "string"
+          },
+          "mode": {
+            "const": "voice",
+            "default": "voice",
+            "title": "Mode",
+            "type": "string"
+          },
+          "played_audio_ms": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Played Audio Ms",
+            "type": "integer"
+          },
+          "position_confidence": {
+            "default": 0,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Position Confidence",
+            "type": "number"
+          },
+          "run_id": {
+            "default": "",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "unheard_text": {
+            "default": "",
+            "maxLength": 10000,
+            "title": "Unheard Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "delivery_status"
+        ],
+        "title": "VoiceDeliveryState",
+        "type": "object"
+      },
+      "VoiceInteractionContext": {
+        "description": "User-selected presentation context for one live voice session.\n\nThe scene is transport-only context. It may shape the current response, but\nit is never authoritative profile evidence and must not become durable\nconversation history by itself.",
+        "properties": {
+          "mode": {
+            "default": "call",
+            "enum": [
+              "call",
+              "face_to_face"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "scene": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Scene",
+            "type": "string"
+          }
+        },
+        "title": "VoiceInteractionContext",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Mindspace Graph",
+    "version": "0.9.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/activities": {
+      "get": {
+        "operationId": "list_activities_api_v1_activities_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Activities"
+      }
+    },
+    "/api/v1/activities/{activity_id}/sessions": {
+      "post": {
+        "operationId": "start_activity_api_v1_activities__activity_id__sessions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "activity_id",
+            "required": true,
+            "schema": {
+              "title": "Activity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActivityStart"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Start Activity"
+      }
+    },
+    "/api/v1/activity-sessions/{activity_session_id}": {
+      "get": {
+        "operationId": "get_activity_session_api_v1_activity_sessions__activity_session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "activity_session_id",
+            "required": true,
+            "schema": {
+              "title": "Activity Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Activity Session"
+      }
+    },
+    "/api/v1/activity-sessions/{activity_session_id}/actions": {
+      "post": {
+        "operationId": "apply_activity_action_api_v1_activity_sessions__activity_session_id__actions_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "activity_session_id",
+            "required": true,
+            "schema": {
+              "title": "Activity Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActivityAction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apply Activity Action"
+      }
+    },
+    "/api/v1/art/catalog": {
+      "get": {
+        "operationId": "art_catalog_api_v1_art_catalog_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Art Catalog"
+      }
+    },
+    "/api/v1/art/packs": {
+      "get": {
+        "operationId": "art_packs_api_v1_art_packs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Art Packs"
+      }
+    },
+    "/api/v1/art/packs/{pack_id}/install": {
+      "post": {
+        "operationId": "install_art_pack_api_v1_art_packs__pack_id__install_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pack_id",
+            "required": true,
+            "schema": {
+              "title": "Pack Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Install Art Pack"
+      }
+    },
+    "/api/v1/art/packs/{pack_id}/pause": {
+      "post": {
+        "operationId": "pause_art_pack_api_v1_art_packs__pack_id__pause_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pack_id",
+            "required": true,
+            "schema": {
+              "title": "Pack Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Pause Art Pack"
+      }
+    },
+    "/api/v1/art/packs/{pack_id}/resume": {
+      "post": {
+        "operationId": "resume_art_pack_api_v1_art_packs__pack_id__resume_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pack_id",
+            "required": true,
+            "schema": {
+              "title": "Pack Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Art Pack"
+      }
+    },
+    "/api/v1/audio/asr": {
+      "post": {
+        "operationId": "transcribe_api_v1_audio_asr_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Request-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_transcribe_api_v1_audio_asr_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Transcribe"
+      }
+    },
+    "/api/v1/audio/asr/corrections": {
+      "get": {
+        "operationId": "get_asr_correction_history_api_v1_audio_asr_corrections_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Asr Correction History"
+      },
+      "post": {
+        "operationId": "add_asr_correction_api_v1_audio_asr_corrections_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ASRCorrectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Asr Correction"
+      }
+    },
+    "/api/v1/audio/asr/vocabulary": {
+      "get": {
+        "operationId": "get_asr_vocabulary_api_v1_audio_asr_vocabulary_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Asr Vocabulary"
+      },
+      "put": {
+        "operationId": "put_asr_vocabulary_api_v1_audio_asr_vocabulary_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ASRVocabularyUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Asr Vocabulary"
+      }
+    },
+    "/api/v1/audio/asr/vocabulary/test": {
+      "post": {
+        "operationId": "test_asr_vocabulary_api_v1_audio_asr_vocabulary_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ASRVocabularyTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Test Asr Vocabulary"
+      }
+    },
+    "/api/v1/audio/diagnostics": {
+      "get": {
+        "description": "Return operational voice state without audio, transcript, or credentials.",
+        "operationId": "audio_diagnostics_api_v1_audio_diagnostics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Audio Diagnostics"
+      }
+    },
+    "/api/v1/audio/status": {
+      "get": {
+        "operationId": "audio_status_api_v1_audio_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Audio Status"
+      }
+    },
+    "/api/v1/audio/tts": {
+      "post": {
+        "operationId": "synthesize_api_v1_audio_tts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TTSRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Synthesize"
+      }
+    },
+    "/api/v1/audio/tts/qwen3/voices": {
+      "get": {
+        "operationId": "list_qwen3_tts_voices_api_v1_audio_tts_qwen3_voices_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Qwen3 Tts Voices"
+      }
+    },
+    "/api/v1/audio/tts/reference": {
+      "delete": {
+        "operationId": "clear_tts_reference_api_v1_audio_tts_reference_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Clear Tts Reference"
+      },
+      "post": {
+        "operationId": "upload_tts_reference_api_v1_audio_tts_reference_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_tts_reference_api_v1_audio_tts_reference_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Tts Reference"
+      }
+    },
+    "/api/v1/audio/tts/reference/transcribe": {
+      "post": {
+        "operationId": "transcribe_tts_reference_api_v1_audio_tts_reference_transcribe_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Transcribe Tts Reference"
+      }
+    },
+    "/api/v1/audio/tts/stream": {
+      "post": {
+        "operationId": "stream_synthesize_api_v1_audio_tts_stream_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TTSRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Synthesize"
+      }
+    },
+    "/api/v1/audio/tts/voice/select": {
+      "post": {
+        "operationId": "select_tts_voice_api_v1_audio_tts_voice_select_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Select Tts Voice"
+      }
+    },
+    "/api/v1/audio/tts/voices": {
+      "get": {
+        "operationId": "list_tts_voices_api_v1_audio_tts_voices_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Tts Voices"
+      }
+    },
+    "/api/v1/avatar/config": {
+      "get": {
+        "operationId": "avatar_config_api_v1_avatar_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Avatar Config"
+      },
+      "put": {
+        "operationId": "put_avatar_config_api_v1_avatar_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Avatar Config"
+      }
+    },
+    "/api/v1/avatar/upload/{role}": {
+      "post": {
+        "operationId": "upload_avatar_api_v1_avatar_upload__role__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "role",
+            "required": true,
+            "schema": {
+              "enum": [
+                "user",
+                "assistant"
+              ],
+              "title": "Role",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_avatar_api_v1_avatar_upload__role__post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Avatar"
+      }
+    },
+    "/api/v1/character-drafts": {
+      "delete": {
+        "operationId": "legacy_character_drafts_collection_delete",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legacy_path",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Legacy Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Legacy Character Drafts"
+      },
+      "get": {
+        "operationId": "legacy_character_drafts_collection_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legacy_path",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Legacy Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Legacy Character Drafts"
+      },
+      "patch": {
+        "operationId": "legacy_character_drafts_collection_patch",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legacy_path",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Legacy Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Legacy Character Drafts"
+      },
+      "post": {
+        "operationId": "legacy_character_drafts_collection_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legacy_path",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Legacy Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Legacy Character Drafts"
+      },
+      "put": {
+        "operationId": "legacy_character_drafts_collection_put",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "legacy_path",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Legacy Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Legacy Character Drafts"
+      }
+    },
+    "/api/v1/character-drafts/{legacy_path}": {
+      "delete": {
+        "operationId": "legacy_character_drafts_path_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "legacy_path",
+            "required": true,
+            "schema": {
+              "title": "Legacy Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Legacy Character Drafts"
+      },
+      "get": {
+        "operationId": "legacy_character_drafts_path_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "legacy_path",
+            "required": true,
+            "schema": {
+              "title": "Legacy Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Legacy Character Drafts"
+      },
+      "patch": {
+        "operationId": "legacy_character_drafts_path_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "legacy_path",
+            "required": true,
+            "schema": {
+              "title": "Legacy Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Legacy Character Drafts"
+      },
+      "post": {
+        "operationId": "legacy_character_drafts_path_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "legacy_path",
+            "required": true,
+            "schema": {
+              "title": "Legacy Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Legacy Character Drafts"
+      },
+      "put": {
+        "operationId": "legacy_character_drafts_path_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "legacy_path",
+            "required": true,
+            "schema": {
+              "title": "Legacy Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Legacy Character Drafts"
+      }
+    },
+    "/api/v1/characters": {
+      "get": {
+        "operationId": "list_characters_api_v1_characters_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Archived",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Characters"
+      },
+      "post": {
+        "operationId": "create_character_api_v1_characters_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Character"
+      }
+    },
+    "/api/v1/characters/fate-options": {
+      "get": {
+        "operationId": "legacy_fate_options_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Legacy Fate Options"
+      },
+      "post": {
+        "operationId": "legacy_fate_options_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Legacy Fate Options"
+      }
+    },
+    "/api/v1/characters/import": {
+      "post": {
+        "operationId": "import_character_api_v1_characters_import_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_character_api_v1_characters_import_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Import Character"
+      }
+    },
+    "/api/v1/characters/options": {
+      "get": {
+        "operationId": "legacy_character_options_api_v1_characters_options_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Legacy Character Options"
+      }
+    },
+    "/api/v1/characters/{character_id}": {
+      "get": {
+        "operationId": "get_character_api_v1_characters__character_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Character"
+      },
+      "put": {
+        "operationId": "update_character_api_v1_characters__character_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Character"
+      }
+    },
+    "/api/v1/characters/{character_id}/activity-sessions": {
+      "get": {
+        "operationId": "list_activity_sessions_api_v1_characters__character_id__activity_sessions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_finished",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Include Finished",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Activity Sessions"
+      }
+    },
+    "/api/v1/characters/{character_id}/archive": {
+      "post": {
+        "operationId": "archive_character_api_v1_characters__character_id__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Archive Character"
+      }
+    },
+    "/api/v1/characters/{character_id}/card": {
+      "get": {
+        "operationId": "get_character_card_api_v1_characters__character_id__card_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Character Card"
+      }
+    },
+    "/api/v1/characters/{character_id}/chapters/summary": {
+      "get": {
+        "operationId": "shared_chapter_summary_api_v1_characters__character_id__chapters_summary_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Shared Chapter Summary"
+      }
+    },
+    "/api/v1/characters/{character_id}/clone": {
+      "post": {
+        "operationId": "clone_character_api_v1_characters__character_id__clone_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clone Character"
+      }
+    },
+    "/api/v1/characters/{character_id}/export": {
+      "get": {
+        "operationId": "export_character_api_v1_characters__character_id__export_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Character"
+      }
+    },
+    "/api/v1/characters/{character_id}/history": {
+      "get": {
+        "operationId": "character_history_api_v1_characters__character_id__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Character History"
+      }
+    },
+    "/api/v1/characters/{character_id}/journal": {
+      "get": {
+        "operationId": "list_journal_api_v1_characters__character_id__journal_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Archived",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Journal"
+      },
+      "post": {
+        "operationId": "create_journal_api_v1_characters__character_id__journal_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JournalCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Journal"
+      }
+    },
+    "/api/v1/characters/{character_id}/journal/generate": {
+      "post": {
+        "operationId": "generate_journal_api_v1_characters__character_id__journal_generate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JournalGenerateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Journal"
+      }
+    },
+    "/api/v1/characters/{character_id}/journal/{entry_id}": {
+      "delete": {
+        "operationId": "delete_journal_api_v1_characters__character_id__journal__entry_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "title": "Entry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Journal"
+      },
+      "put": {
+        "operationId": "update_journal_api_v1_characters__character_id__journal__entry_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "entry_id",
+            "required": true,
+            "schema": {
+              "title": "Entry Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JournalUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Journal"
+      }
+    },
+    "/api/v1/characters/{character_id}/moments": {
+      "get": {
+        "operationId": "list_moments_api_v1_characters__character_id__moments_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_archived",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Archived",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Moments"
+      },
+      "post": {
+        "operationId": "create_moment_api_v1_characters__character_id__moments_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MomentCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Moment"
+      }
+    },
+    "/api/v1/characters/{character_id}/moments/{moment_id}": {
+      "put": {
+        "operationId": "update_moment_api_v1_characters__character_id__moments__moment_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "moment_id",
+            "required": true,
+            "schema": {
+              "title": "Moment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MomentUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Moment"
+      }
+    },
+    "/api/v1/characters/{character_id}/restore": {
+      "post": {
+        "operationId": "restore_character_api_v1_characters__character_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "character_id",
+            "required": true,
+            "schema": {
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CharacterRestoreRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restore Character"
+      }
+    },
+    "/api/v1/chat": {
+      "post": {
+        "operationId": "chat_api_v1_chat_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Request-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatTurnCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Chat"
+      }
+    },
+    "/api/v1/chat/chunks": {
+      "get": {
+        "operationId": "list_chat_chunks_api_v1_chat_chunks_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "session_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Chat Chunks"
+      }
+    },
+    "/api/v1/chat/stream": {
+      "post": {
+        "operationId": "chat_stream_api_v1_chat_stream_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Request-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatTurnCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Chat Stream"
+      }
+    },
+    "/api/v1/config": {
+      "get": {
+        "operationId": "public_config_api_v1_config_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Public Config"
+      }
+    },
+    "/api/v1/data/clear": {
+      "post": {
+        "operationId": "clear_data_api_v1_data_clear_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClearDataRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear Data"
+      }
+    },
+    "/api/v1/destiny/avatars": {
+      "post": {
+        "description": "Store a journey-local avatar without touching global avatar settings.",
+        "operationId": "upload_destiny_avatar_api_v1_destiny_avatars_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_destiny_avatar_api_v1_destiny_avatars_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Destiny Avatar"
+      }
+    },
+    "/api/v1/destiny/avatars/{filename}": {
+      "delete": {
+        "operationId": "discard_destiny_avatar_api_v1_destiny_avatars__filename__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "filename",
+            "required": true,
+            "schema": {
+              "title": "Filename",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discard Destiny Avatar"
+      }
+    },
+    "/api/v1/destiny/definition": {
+      "get": {
+        "operationId": "destiny_definition_api_v1_destiny_definition_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Destiny Definition"
+      }
+    },
+    "/api/v1/destiny/journeys": {
+      "post": {
+        "operationId": "create_destiny_journey_api_v1_destiny_journeys_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DestinySeed"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Destiny Journey"
+      }
+    },
+    "/api/v1/destiny/journeys/{journey_id}": {
+      "get": {
+        "operationId": "get_destiny_journey_api_v1_destiny_journeys__journey_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "title": "Journey Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Destiny Journey"
+      }
+    },
+    "/api/v1/destiny/journeys/{journey_id}/archetypes": {
+      "post": {
+        "operationId": "generate_destiny_archetypes_api_v1_destiny_journeys__journey_id__archetypes_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "title": "Journey Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "use_default",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Use Default",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expected Revision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Destiny Archetypes"
+      }
+    },
+    "/api/v1/destiny/journeys/{journey_id}/cards": {
+      "post": {
+        "operationId": "generate_destiny_cards_api_v1_destiny_journeys__journey_id__cards_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "title": "Journey Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "use_default",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Use Default",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expected Revision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Generate Destiny Cards"
+      }
+    },
+    "/api/v1/destiny/journeys/{journey_id}/cards/{archetype_id}": {
+      "post": {
+        "operationId": "legacy_generate_destiny_cards_api_v1_destiny_journeys__journey_id__cards__archetype_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "title": "Journey Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "archetype_id",
+            "required": true,
+            "schema": {
+              "title": "Archetype Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Legacy Generate Destiny Cards"
+      }
+    },
+    "/api/v1/destiny/journeys/{journey_id}/commit": {
+      "post": {
+        "operationId": "commit_destiny_journey_api_v1_destiny_journeys__journey_id__commit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "title": "Journey Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expected Revision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Commit Destiny Journey"
+      }
+    },
+    "/api/v1/destiny/journeys/{journey_id}/rewind/archetypes": {
+      "post": {
+        "operationId": "rewind_destiny_archetypes_api_v1_destiny_journeys__journey_id__rewind_archetypes_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "title": "Journey Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expected Revision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rewind Destiny Archetypes"
+      }
+    },
+    "/api/v1/destiny/journeys/{journey_id}/selections": {
+      "delete": {
+        "operationId": "clear_destiny_selections_api_v1_destiny_journeys__journey_id__selections_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "title": "Journey Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expected Revision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear Destiny Selections"
+      }
+    },
+    "/api/v1/destiny/journeys/{journey_id}/selections/{slot_id}": {
+      "delete": {
+        "operationId": "unselect_destiny_card_api_v1_destiny_journeys__journey_id__selections__slot_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "title": "Journey Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "slot_id",
+            "required": true,
+            "schema": {
+              "title": "Slot Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expected Revision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Unselect Destiny Card"
+      },
+      "put": {
+        "operationId": "select_destiny_card_api_v1_destiny_journeys__journey_id__selections__slot_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "title": "Journey Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "slot_id",
+            "required": true,
+            "schema": {
+              "title": "Slot Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DestinySelectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Select Destiny Card"
+      }
+    },
+    "/api/v1/destiny/journeys/{journey_id}/synthesize": {
+      "post": {
+        "operationId": "synthesize_destiny_journey_api_v1_destiny_journeys__journey_id__synthesize_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "journey_id",
+            "required": true,
+            "schema": {
+              "title": "Journey Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expected_revision",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Expected Revision"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Synthesize Destiny Journey"
+      }
+    },
+    "/api/v1/diagnostics": {
+      "get": {
+        "operationId": "diagnostics_api_v1_diagnostics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Diagnostics"
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "operationId": "health_api_v1_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/api/v1/interrupt": {
+      "post": {
+        "operationId": "interrupt_api_v1_interrupt_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterruptRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Interrupt"
+      }
+    },
+    "/api/v1/knowledge": {
+      "get": {
+        "operationId": "list_knowledge_api_v1_knowledge_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "query",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 200,
+              "title": "Query",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Knowledge"
+      },
+      "post": {
+        "operationId": "add_knowledge_api_v1_knowledge_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Knowledge"
+      }
+    },
+    "/api/v1/knowledge/stats": {
+      "get": {
+        "operationId": "knowledge_stats_api_v1_knowledge_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Knowledge Stats"
+      }
+    },
+    "/api/v1/knowledge/upload": {
+      "post": {
+        "operationId": "upload_knowledge_api_v1_knowledge_upload_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_knowledge_api_v1_knowledge_upload_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Knowledge"
+      }
+    },
+    "/api/v1/knowledge/{chunk_id}": {
+      "delete": {
+        "operationId": "delete_knowledge_api_v1_knowledge__chunk_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "chunk_id",
+            "required": true,
+            "schema": {
+              "title": "Chunk Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Knowledge"
+      }
+    },
+    "/api/v1/memory/entities": {
+      "get": {
+        "operationId": "list_entities_api_v1_memory_entities_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "scope",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scope"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Entities"
+      },
+      "post": {
+        "operationId": "create_entity_api_v1_memory_entities_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Entity"
+      }
+    },
+    "/api/v1/memory/entities/merge": {
+      "post": {
+        "operationId": "merge_entities_api_v1_memory_entities_merge_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntityMergeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Merge Entities"
+      }
+    },
+    "/api/v1/memory/entities/{entity_id}/aliases": {
+      "post": {
+        "operationId": "add_entity_alias_api_v1_memory_entities__entity_id__aliases_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "entity_id",
+            "required": true,
+            "schema": {
+              "title": "Entity Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EntityAliasRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Add Entity Alias"
+      }
+    },
+    "/api/v1/memory/events": {
+      "get": {
+        "operationId": "event_memories_api_v1_memory_events_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "character_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 64,
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Event Memories"
+      },
+      "post": {
+        "operationId": "create_event_memory_api_v1_memory_events_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventMemoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Event Memory"
+      }
+    },
+    "/api/v1/memory/events/{event_id}": {
+      "delete": {
+        "operationId": "delete_event_memory_api_v1_memory_events__event_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "character_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 64,
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Event Memory"
+      },
+      "put": {
+        "operationId": "update_event_memory_api_v1_memory_events__event_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventMemoryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Event Memory"
+      }
+    },
+    "/api/v1/memory/events/{event_id}/complete": {
+      "post": {
+        "operationId": "complete_event_memory_api_v1_memory_events__event_id__complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "character_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 64,
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete Event Memory"
+      }
+    },
+    "/api/v1/memory/items": {
+      "get": {
+        "operationId": "memory_items_api_v1_memory_items_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_history",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include History",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "character_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 64,
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Memory Items"
+      }
+    },
+    "/api/v1/memory/items/{memory_key}": {
+      "delete": {
+        "operationId": "delete_memory_item_api_v1_memory_items__memory_key__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "memory_key",
+            "required": true,
+            "schema": {
+              "title": "Memory Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Memory Item"
+      },
+      "put": {
+        "operationId": "update_memory_item_api_v1_memory_items__memory_key__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "memory_key",
+            "required": true,
+            "schema": {
+              "title": "Memory Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryValueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Memory Item"
+      }
+    },
+    "/api/v1/memory/rebuild": {
+      "post": {
+        "operationId": "rebuild_memory_api_v1_memory_rebuild_post",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "character_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 64,
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryRebuildRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Rebuild Memory"
+      }
+    },
+    "/api/v1/memory/registry": {
+      "get": {
+        "operationId": "memory_registry_api_v1_memory_registry_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Memory Registry"
+      }
+    },
+    "/api/v1/memory/restore": {
+      "post": {
+        "operationId": "restore_memory_item_api_v1_memory_restore_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restore Memory Item"
+      }
+    },
+    "/api/v1/memory/structured": {
+      "get": {
+        "operationId": "structured_memory_api_v1_memory_structured_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Structured Memory"
+      }
+    },
+    "/api/v1/models/available": {
+      "get": {
+        "operationId": "get_available_models_api_v1_models_available_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Available Models"
+      }
+    },
+    "/api/v1/profiles/{name}": {
+      "get": {
+        "operationId": "get_profile_api_v1_profiles__name__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "character_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 64,
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Profile"
+      },
+      "put": {
+        "operationId": "put_profile_api_v1_profiles__name__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "character_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 64,
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Profile"
+      }
+    },
+    "/api/v1/profiles/{name}/card": {
+      "get": {
+        "operationId": "profile_card_api_v1_profiles__name__card_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "character_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 64,
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Profile Card"
+      }
+    },
+    "/api/v1/profiles/{name}/history": {
+      "get": {
+        "operationId": "profile_history_api_v1_profiles__name__history_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "character_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 64,
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Profile History"
+      }
+    },
+    "/api/v1/profiles/{name}/restore": {
+      "post": {
+        "operationId": "restore_profile_api_v1_profiles__name__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "character_id",
+            "required": false,
+            "schema": {
+              "default": "",
+              "maxLength": 64,
+              "title": "Character Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileRestoreRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Restore Profile"
+      }
+    },
+    "/api/v1/runs/{run_id}": {
+      "get": {
+        "operationId": "get_run_status_api_v1_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Run Status"
+      }
+    },
+    "/api/v1/runs/{run_id}/cancel": {
+      "post": {
+        "operationId": "cancel_run_api_v1_runs__run_id__cancel_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Cancel Run"
+      }
+    },
+    "/api/v1/runs/{run_id}/prompt-inspection": {
+      "get": {
+        "operationId": "prompt_inspection_api_v1_runs__run_id__prompt_inspection_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "reveal",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Reveal",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Prompt Inspection"
+      }
+    },
+    "/api/v1/runs/{run_id}/stream": {
+      "get": {
+        "operationId": "resume_chat_stream_api_v1_runs__run_id__stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "last-event-id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Last-Event-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Chat Stream"
+      }
+    },
+    "/api/v1/scenes": {
+      "get": {
+        "operationId": "list_scenes_api_v1_scenes_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Scenes"
+      }
+    },
+    "/api/v1/scenes/custom": {
+      "post": {
+        "operationId": "upload_custom_scene_api_v1_scenes_custom_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_custom_scene_api_v1_scenes_custom_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Upload Custom Scene"
+      }
+    },
+    "/api/v1/sessions": {
+      "get": {
+        "operationId": "list_sessions_api_v1_sessions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Sessions"
+      },
+      "post": {
+        "operationId": "create_session_api_v1_sessions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Session"
+      }
+    },
+    "/api/v1/sessions/{session_id}": {
+      "delete": {
+        "operationId": "delete_session_api_v1_sessions__session_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Session"
+      },
+      "get": {
+        "operationId": "get_session_api_v1_sessions__session_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session"
+      }
+    },
+    "/api/v1/sessions/{session_id}/clear": {
+      "post": {
+        "operationId": "clear_session_api_v1_sessions__session_id__clear_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear Session"
+      }
+    },
+    "/api/v1/sessions/{session_id}/context-diagnostics": {
+      "get": {
+        "operationId": "context_diagnostics_api_v1_sessions__session_id__context_diagnostics_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Context Diagnostics"
+      }
+    },
+    "/api/v1/sessions/{session_id}/messages/{message_id}": {
+      "delete": {
+        "operationId": "delete_message_api_v1_sessions__session_id__messages__message_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "title": "Message Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Message"
+      }
+    },
+    "/api/v1/sessions/{session_id}/rounds/{round_num}": {
+      "delete": {
+        "operationId": "delete_round_api_v1_sessions__session_id__rounds__round_num__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "round_num",
+            "required": true,
+            "schema": {
+              "title": "Round Num",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Round"
+      }
+    },
+    "/api/v1/sessions/{session_id}/scene": {
+      "get": {
+        "operationId": "get_session_scene_api_v1_sessions__session_id__scene_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Session Scene"
+      },
+      "put": {
+        "operationId": "set_session_scene_api_v1_sessions__session_id__scene_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SceneSelectionUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Set Session Scene"
+      }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "operationId": "get_settings_api_v1_settings_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Settings"
+      },
+      "patch": {
+        "operationId": "put_settings_api_v1_settings_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Settings"
+      },
+      "put": {
+        "operationId": "put_settings_api_v1_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Settings"
+      }
+    },
+    "/api/v1/settings/test": {
+      "post": {
+        "operationId": "test_settings_api_v1_settings_test_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Test Settings"
+      }
+    }
+  }
+}

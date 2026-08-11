@@ -635,11 +635,11 @@ def test_initiative_chat_returns_only_the_assistant_message_publicly(tmp_path):
     assert client.get("/api/v1/sessions/initiative-api").json()["messages"] == []
 
 
-def test_memory_registry_and_user_memory_crud_are_executable(tmp_path):
+def test_memory_registry_and_supported_profile_memory_crud_are_executable(tmp_path):
     app = create_app(make_settings(tmp_path))
     client = TestClient(app)
     container = app.state.container
-    request = ChatRequest(message="我喜欢草莓", session_id="memory-api", round=1)
+    request = ChatRequest(message="角色说话很温柔", session_id="memory-api", round=1)
     bundle = container.profiles.load_bundle()
     receipt = container.profiles.apply_json_update(
         JsonUpdatePlan(
@@ -648,10 +648,10 @@ def test_memory_registry_and_user_memory_crud_are_executable(tmp_path):
             trigger="current_user",
             patches=[
                 JsonPatch(
-                    target="user_profile",
+                    target="ai_profile",
                     op="add",
-                    path="/stable_preferences/likes/-",
-                    value="草莓",
+                    path="/personality/core_traits/-",
+                    value="温柔",
                     evidence_ids=["current_user"],
                 )
             ],
@@ -668,7 +668,7 @@ def test_memory_registry_and_user_memory_crud_are_executable(tmp_path):
     registry = client.get("/api/v1/memory/registry")
     listed = client.get("/api/v1/memory/items")
     memory_key = listed.json()["items"][0]["memory_key"]
-    updated = client.put(f"/api/v1/memory/items/{memory_key}", json={"value": "蓝莓"})
+    updated = client.put(f"/api/v1/memory/items/{memory_key}", json={"value": "果断"})
     updated_key = updated.json()["item"]["memory_key"]
     deleted = client.delete(f"/api/v1/memory/items/{updated_key}")
     history = client.get("/api/v1/memory/items?include_history=true")
@@ -676,13 +676,13 @@ def test_memory_registry_and_user_memory_crud_are_executable(tmp_path):
 
     assert registry.status_code == 200
     assert len(registry.json()["fields"]) >= 40
-    assert listed.json()["items"][0]["value"] == "草莓"
+    assert listed.json()["items"][0]["value"] == "温柔"
     assert updated.status_code == 200
-    assert updated.json()["item"]["value"] == "蓝莓"
+    assert updated.json()["item"]["value"] == "果断"
     assert deleted.status_code == 200
     assert any(item["status"] == "invalidated" for item in history.json()["items"])
     assert restored.status_code == 200
-    assert restored.json()["item"]["value"] == "蓝莓"
+    assert restored.json()["item"]["value"] == "果断"
 
 
 def test_mock_audio_endpoints_are_executable(tmp_path):
@@ -769,6 +769,15 @@ def test_settings_profiles_knowledge_and_destructive_confirmations(tmp_path):
     assert client.get("/api/v1/settings").json()["llm"]["mode"] == "openai"
 
     profile = client.get("/api/v1/profiles/user").json()
+    assert set(profile) == {
+        "schema_version",
+        "profile_type",
+        "revision",
+        "identity",
+        "custom_profile",
+        "updated_at",
+    }
+    assert set(profile["identity"]) == {"preferred_name", "gender"}
     profile["identity"]["preferred_name"] = "小林"
     profile["identity"]["gender"] = "女"
     updated = client.put("/api/v1/profiles/user", json=profile)

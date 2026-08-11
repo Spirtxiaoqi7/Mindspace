@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from mindspace_graph.audio import AudioService
 from mindspace_graph.destiny import DestinyService
-from mindspace_graph.service import ProductContainer
+from mindspace_graph.bootstrap import ProductContainer
 from mindspace_graph.settings import AppSettings
 
 

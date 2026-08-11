@@ -10,7 +10,7 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
-from mindspace_graph.adapters.file_storage import JsonProfileRepository
+from mindspace_graph.adapters.profile_repository import JsonProfileRepository
 from mindspace_graph.adapters.structured_memory import StructuredMemoryStore
 from mindspace_graph.entity_registry import EntityRegistry
 from mindspace_graph.memory_registry import DEFAULT_MEMORY_REGISTRY, MemoryField, MemoryRegistry

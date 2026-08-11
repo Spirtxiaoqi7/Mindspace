@@ -31,6 +31,7 @@ def test_first_fifteen_rounds_index_only_then_round_sixteen_enables_rag(tmp_path
             return original_prewarm(**kwargs)
 
         container.knowledge.prewarm = tracked_prewarm  # type: ignore[method-assign]
+        warmup = container.conversation.retrieval_warmup
         for round_num in range(1, 16):
             response = await container.conversation.invoke(
                 ChatRequest(
@@ -45,9 +46,11 @@ def test_first_fifteen_rounds_index_only_then_round_sixteen_enables_rag(tmp_path
             assert response.retrieval_counts == {"knowledge": 0, "chat": 0, "history": 0}
             assert "retrieve_chat_deferred" in response.trace
             if round_num == 1:
-                warmups = list(container.conversation._retrieval_warmups.values())
-                assert len(warmups) == 1
-                await asyncio.gather(*warmups)
+                for _attempt in range(100):
+                    if warmup.is_ready(session_id, character_id):
+                        break
+                    await asyncio.sleep(0.01)
+                assert warmup.is_ready(session_id, character_id)
         assert observed_message_counts == [2]
         assert len(container.sessions.load_all(session_id)) == 30
         assert len(container.sessions.list_chunks(session_id)) == 15
@@ -81,7 +84,7 @@ def test_client_cannot_force_cold_retrieval_ready(tmp_path) -> None:
     container = build_container(settings)
     character_id = str(container.characters.default()["character_id"])
 
-    resolved = container.conversation._server_request(
+    resolved = container.conversation.turn_preparation.prepare(
         ChatRequest(
             message="你好",
             session_id="cold-session",

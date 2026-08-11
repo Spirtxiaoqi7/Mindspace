@@ -15,8 +15,8 @@ from uuid import uuid4
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response, StreamingResponse
 
-from mindspace_graph.adapters.file_storage import _atomic_json
 from mindspace_graph.art_catalog import ArtPackPaused
+from mindspace_graph.infrastructure.storage.json_io import atomic_json_write
 from mindspace_graph.shared_chapters import (
     JournalCreate,
     JournalUpdate,
@@ -214,7 +214,10 @@ def register_routes(app: FastAPI, context: ApiContext) -> None:
                 user_alias=str(payload.get("user_alias") or ""),
                 relationship_label=str(payload.get("relationship_label") or ""),
             )
-            container.memory_service.rebuild(dry_run=False)
+            container.memory_service.rebuild(
+                dry_run=False,
+                character_id=str(record["character_id"]),
+            )
             return {"success": True, "character": record}
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -223,7 +226,10 @@ def register_routes(app: FastAPI, context: ApiContext) -> None:
     async def update_character(character_id: str, payload: dict[str, Any]):
         try:
             record = container.characters.update(character_id, payload)
-            container.memory_service.rebuild(dry_run=False)
+            container.memory_service.rebuild(
+                dry_run=False,
+                character_id=str(record["character_id"]),
+            )
             container.audit.record(
                 "user_direct_character_edit",
                 {"character_id": character_id, "revision": record["revision"]},
@@ -276,7 +282,10 @@ def register_routes(app: FastAPI, context: ApiContext) -> None:
     async def restore_character(character_id: str, payload: CharacterRestoreRequest):
         try:
             record = container.characters.restore(character_id, payload.version_id, payload.expected_revision)
-            container.memory_service.rebuild(dry_run=False)
+            container.memory_service.rebuild(
+                dry_run=False,
+                character_id=str(record["character_id"]),
+            )
             return {"success": True, "character": record}
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -364,7 +373,10 @@ def register_routes(app: FastAPI, context: ApiContext) -> None:
             decoded = json.loads(data.decode("utf-8"))
             if isinstance(decoded, dict) and decoded.get("spec") == "chara_card_v2":
                 record = container.characters.create(card=decoded, source="imported")
-                container.memory_service.rebuild(dry_run=False)
+                container.memory_service.rebuild(
+                    dry_run=False,
+                    character_id=str(record["character_id"]),
+                )
                 return {"success": True, "character": record}
         except (UnicodeDecodeError, json.JSONDecodeError):
             pass
@@ -436,7 +448,10 @@ def register_routes(app: FastAPI, context: ApiContext) -> None:
                     str(record["character_id"]),
                     {"revision": record["revision"], "avatar": avatar},
                 )
-            container.memory_service.rebuild(dry_run=False)
+            container.memory_service.rebuild(
+                dry_run=False,
+                character_id=str(record["character_id"]),
+            )
             return {"success": True, "character": record}
         except (
             KeyError,
@@ -555,7 +570,7 @@ def register_routes(app: FastAPI, context: ApiContext) -> None:
             if isinstance(payload.get(role), dict):
                 current[role].update(payload[role])
         current = _normalize_avatar_config(current)
-        _atomic_json(avatar_config_path, current)
+        atomic_json_write(avatar_config_path, current)
         return {"success": True, "config": current}
 
     @app.post("/api/v1/avatar/upload/{role}")
@@ -575,7 +590,7 @@ def register_routes(app: FastAPI, context: ApiContext) -> None:
         current = _read_avatar_config(avatar_config_path)
         current[role]["src"] = f"/api/v1/avatar/files/{filename}"
         current = _normalize_avatar_config(current)
-        _atomic_json(avatar_config_path, current)
+        atomic_json_write(avatar_config_path, current)
         return {"success": True, "src": current[role]["src"], "config": current}
 
 

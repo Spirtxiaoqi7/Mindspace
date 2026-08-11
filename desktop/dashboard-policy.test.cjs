@@ -22,6 +22,7 @@ test("launcher dashboard groups components instead of flattening the homepage", 
 test("character voices use grouped dropdowns and separate download from activation", () => {
   const source = fs.readFileSync(path.join(__dirname, "src", "main.tsx"), "utf8");
   const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
+  const voice = fs.readFileSync(path.join(__dirname, "voice-controller.cjs"), "utf8");
   assert.match(source, /作品分类/);
   assert.match(source, /人物音色/);
   assert.match(source, /单独下载/);
@@ -30,32 +31,37 @@ test("character voices use grouped dropdowns and separate download from activati
   assert.match(source, /speedBps/);
   assert.match(source, /item\.category !== "voice"/);
   assert.doesNotMatch(source, /className="voice-grid"/);
-  assert.match(main, /action === "install"/);
-  assert.match(main, /尚未下载，请先点击“单独下载”/);
+  assert.match(voice, /action === "install"/);
+  assert.match(voice, /尚未下载，请先点击“单独下载”/);
+  assert.match(main, /createVoiceController/);
 });
 
 test("voice providers stay switchable after onboarding and the wizard can go back", () => {
   const source = fs.readFileSync(path.join(__dirname, "src", "main.tsx"), "utf8");
   const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
+  const voice = fs.readFileSync(path.join(__dirname, "voice-controller.cjs"), "utf8");
   assert.match(source, /dashboardVoiceOptions/);
   for (const provider of ["gpt-sovits", "cosyvoice", "qwen3-vllm", "siliconflow"]) {
     assert.match(source, new RegExp(provider));
   }
   assert.match(source, /返回上一步/);
   assert.match(source, /之前填写和保存的状态都已保留/);
-  assert.match(main, /action === "provider"/);
-  assert.match(main, /previousProvider !== selected && serviceSupervisor\.hasChild\(targetService\)/);
-  assert.match(main, /return observedTtsProvider \|\| "browser"/);
+  assert.match(voice, /action === "provider"/);
+  assert.match(voice, /previousProvider !== selected && supervisor\.hasChild\(targetService\)/);
+  assert.match(voice, /return observedProvider \|\| "browser"/);
+  assert.match(main, /createVoiceController/);
 });
 
 test("diagnostics are redacted and exposed through a dedicated IPC contract", () => {
   const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
+  const diagnostics = fs.readFileSync(path.join(__dirname, "diagnostics-controller.cjs"), "utf8");
   const preload = fs.readFileSync(path.join(__dirname, "preload.cjs"), "utf8");
-  assert.match(main, /function redactDiagnosticText/);
-  assert.match(main, /\[REDACTED\]/);
-  assert.match(main, /\\\.install\\\.log/);
-  assert.match(main, /diagnosticLogs\.add/);
+  assert.match(diagnostics, /function redactDiagnosticText/);
+  assert.match(diagnostics, /\[REDACTED\]/);
+  assert.match(diagnostics, /\\\.install\\\.log/);
+  assert.match(diagnostics, /diagnosticLogs\.add/);
   assert.match(main, /runtime:diagnostics/);
+  assert.match(main, /createDiagnosticsController/);
   assert.match(preload, /diagnostics: \(\) => ipcRenderer\.invoke\("runtime:diagnostics"\)/);
 });
 

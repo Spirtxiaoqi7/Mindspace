@@ -420,12 +420,12 @@ def test_gender_identity_is_the_first_high_priority_system_content():
 
 def test_reply_length_is_only_added_from_explicit_user_setting():
     bundle = profiles()
-    bundle.user_profile["communication_preferences"]["response_length"] = "固定两百字"
+    bundle.user_profile["custom_profile"] = "我喜欢自然简洁的聊天，但没有指定固定篇幅。"
     natural = build_prompt(request(1), bundle, [], [], [])
     natural_text = "\n".join(item["content"] for item in natural.messages)
 
     assert "【用户设定的回复篇幅】" not in natural_text
-    assert "固定两百字" not in natural_text
+    assert "我喜欢自然简洁的聊天，但没有指定固定篇幅。" in natural_text
     assert "target_characters" not in natural_text
     assert "minimum_content_beats" not in natural_text
 

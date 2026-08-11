@@ -4,7 +4,18 @@
 
 ## Current
 
-`APPLICATION_FULL_CHAIN.md`、`CODE_READING_GUIDE.md`、`MINDSPACE_FUNCTION_MAP.md`、`ONLINE_UPDATE_RELEASE.md`、`PACKAGING.md`、`READ_ONLY_CAPABILITIES.md`、`RUNTIME_RUNBOOK.md`、`VERIFICATION.md`、`VERSIONING_AND_GENERATED_ASSETS.md`、`LOCAL_REPORT_POLICY.md`、`DEVELOPMENT_WORKFLOW_0.9.0.md`、`DEPRECATION_REGISTER_0.9.0.md`。
+`APPLICATION_FULL_CHAIN.md`、`CODE_READING_GUIDE.md`、`MINDSPACE_FUNCTION_MAP.md`、`ARCHITECTURE_FRONTEND.md`、`ARCHITECTURE_BACKEND.md`、`ARCHITECTURE_STORAGE.md`、`ARCHITECTURE_PROMPTS.md`、`ARCHITECTURE_DESKTOP.md`、`MODULAR_ARCHITECTURE.md`、`ONLINE_UPDATE_RELEASE.md`、`PACKAGING.md`、`READ_ONLY_CAPABILITIES.md`、`RUNTIME_RUNBOOK.md`、`VERIFICATION.md`、`VERSIONING_AND_GENERATED_ASSETS.md`、`LOCAL_REPORT_POLICY.md`、`DEVELOPMENT_WORKFLOW_0.9.0.md`、`DEPRECATION_REGISTER_0.9.0.md`。
+
+## Architecture and maintenance navigation
+
+- [Frontend architecture](ARCHITECTURE_FRONTEND.md)
+- [Backend architecture](ARCHITECTURE_BACKEND.md)
+- [Storage architecture](ARCHITECTURE_STORAGE.md)
+- [Prompt architecture](ARCHITECTURE_PROMPTS.md)
+- [Desktop architecture](ARCHITECTURE_DESKTOP.md)
+- [Modular architecture and dependency boundaries](MODULAR_ARCHITECTURE.md)
+- [Codebase architecture index](CODEBASE_INDEX_0.9.0.md)
+- [Per-file maintenance index](CODEBASE_FILE_INDEX_0.9.0.md)
 
 ## Historical
 
@@ -16,10 +27,10 @@
 
 ## Report
 
-`MINDSPACE_0.8.3_CODE_AUDIT_STAGE_1.md`。
+`MINDSPACE_0.8.3_CODE_AUDIT_STAGE_1.md`、`MODULAR_REFACTOR_VALIDATION_0.9.0.md`。
 
 ## Generated
 
-`CODEBASE_INDEX_0.9.0.md`、`CODEBASE_FILE_INDEX_0.9.0.md`。两者由 `scripts/generate-codebase-index.mjs` 根据版本契约生成并执行严格 completeness check，不得手工编辑。
+[CODEBASE_INDEX_0.9.0.md](CODEBASE_INDEX_0.9.0.md)、[CODEBASE_FILE_INDEX_0.9.0.md](CODEBASE_FILE_INDEX_0.9.0.md) 和 `contracts/openapi/mindspace.openapi.json`。前两者由 `scripts/generate-codebase-index.mjs` 生成；OpenAPI 快照由 `scripts/export-api-contracts.py` 生成。生成物不得手工编辑。
 
 新增文档必须先登记状态。Historical/prototype/report/generated 文档必须在文件顶部显示状态横幅，不能被根 README 当作当前 runbook 链接。

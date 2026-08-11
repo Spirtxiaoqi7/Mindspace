@@ -13,8 +13,9 @@ from threading import RLock
 from typing import Any
 from uuid import uuid4
 
-from mindspace_graph.adapters.file_storage import JsonSessionRepository, _atomic_json
+from mindspace_graph.infrastructure.storage.json_io import atomic_json_write
 from mindspace_graph.models import RetrievalSettings, RetrievedChunk
+from mindspace_graph.ports import ChatCorpusPort
 from mindspace_graph.retrieval_fusion import (
     BM25Plus,
     CrossEncoderReranker,
@@ -42,7 +43,7 @@ class LocalKnowledgeRetriever:
     def __init__(
         self,
         path: Path,
-        sessions: JsonSessionRepository,
+        sessions: ChatCorpusPort,
         embedding_model_path: Path | None = None,
         memory_store: Any | None = None,
         reranker_model_path: Path | None = None,
@@ -61,7 +62,7 @@ class LocalKnowledgeRetriever:
         self._records_stamp: tuple[int, int] | None = None
         self._lock = RLock()
         if not path.exists():
-            _atomic_json(path, [])
+            atomic_json_write(path, [])
 
     def prewarm(
         self,
@@ -605,7 +606,7 @@ class LocalKnowledgeRetriever:
             )
             created.append(chunk_id)
         with self._lock:
-            _atomic_json(self.path, records)
+            atomic_json_write(self.path, records)
         return created
 
     def list_knowledge(self, query: str = "") -> list[dict]:
@@ -627,13 +628,13 @@ class LocalKnowledgeRetriever:
             retained = [item for item in records if item.get("chunk_id") != chunk_id]
             if len(retained) == len(records):
                 return False
-            _atomic_json(self.path, retained)
+            atomic_json_write(self.path, retained)
             return True
 
     def clear(self) -> int:
         with self._lock:
             count = len(self._load())
-            _atomic_json(self.path, [])
+            atomic_json_write(self.path, [])
             return count
 
     def stats(self) -> dict[str, int]:

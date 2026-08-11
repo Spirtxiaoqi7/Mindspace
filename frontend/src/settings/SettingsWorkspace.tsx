@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { getAudioStatus, rawRequest, request } from "../api";
+import { getAudioStatus, rawRequest, request } from "../shared/api";
+import { Field } from "../shared/Field";
 import type { ASRVocabularyEntry, ASRVocabularySnapshot, AvatarConfig, AvatarEntry, ProductSettings, Role } from "../types";
 import { styledConfirm } from "../ui/styledConfirm";
 import { avatarStyle, DEFAULT_AVATARS, normalizeAvatarConfig } from "../ui/avatar";
@@ -42,12 +43,6 @@ async function normalizeReferenceAudio(file: File) {
   const rendered = await offline.startRendering();
   const name = `${file.name.replace(/\.[^.]+$/, "") || "reference"}.wav`;
   return new File([encodeMonoWav(rendered.getChannelData(0), sampleRate)], name, { type: "audio/wav" });
-}
-
-export function Field({ label, value, type = "text", onChange, min, max, step, placeholder }: { label: string; value: unknown; type?: string; onChange: (value: unknown) => void; min?: number; max?: number; step?: number; placeholder?: string }) {
-  if (type === "checkbox") return <label className="toggle-field"><span>{label}</span><input type="checkbox" checked={bool(value)} onChange={(event) => onChange(event.target.checked)} /><i /></label>;
-  if (type === "textarea") return <label className="field wide"><span>{label}</span><textarea value={str(value)} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} rows={4} /></label>;
-  return <label className="field"><span>{label}</span><input type={type} value={str(value)} placeholder={placeholder} min={min} max={max} step={step} onChange={(event) => onChange(type === "number" ? Number(event.target.value) : event.target.value)} /></label>;
 }
 
 function SelectField({ label, value, options, onChange, disabled = false }: { label: string; value: unknown; options: [string, string][]; onChange: (value: string) => void; disabled?: boolean }) {

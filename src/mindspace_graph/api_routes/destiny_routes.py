@@ -176,7 +176,10 @@ def register_routes(app: FastAPI, context: ApiContext) -> None:
             ):
                 record = destiny.commit(journey_id, expected_revision=expected_revision)
                 record = promote_destiny_avatar(record)
-                container.memory_service.rebuild(dry_run=False)
+                container.memory_service.rebuild(
+                    dry_run=False,
+                    character_id=str(record["character_id"]),
+                )
             return {"success": True, "character": record}
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc

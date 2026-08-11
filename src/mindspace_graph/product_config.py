@@ -8,7 +8,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
-from mindspace_graph.adapters.file_storage import _atomic_json
+from mindspace_graph.infrastructure.storage.json_io import atomic_json_write
 from mindspace_graph.capabilities import DEFAULT_CAPABILITY_SETTINGS
 from mindspace_graph.gpt_sovits import GPT_SOVITS_VOICES
 from mindspace_graph.settings import AppSettings
@@ -149,7 +149,7 @@ class ProductConfigStore:
     def _persist_public(self) -> None:
         persisted = deepcopy(self._config)
         _extract_secret_fields(persisted)
-        _atomic_json(self.path, persisted)
+        atomic_json_write(self.path, persisted)
 
     def _defaults(self) -> dict[str, Any]:
         return {

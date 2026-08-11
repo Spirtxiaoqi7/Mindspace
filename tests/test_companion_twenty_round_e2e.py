@@ -220,9 +220,11 @@ def test_twenty_round_companion_end_to_end(tmp_path) -> None:
                 assert response.retrieval_counts["chat"] <= 3
                 assert response.retrieval_counts["history"] <= 3
             if round_num == 1:
-                warmups = list(container.conversation._retrieval_warmups.values())
-                assert len(warmups) == 1
-                await asyncio.gather(*warmups)
+                await container.conversation.retrieval_warmup.drain()
+                assert container.conversation.retrieval_warmup.is_ready(
+                    session_id,
+                    character_id,
+                )
                 adult_memory_off = container.knowledge.search_chat(
                     "成人私密标记",
                     session_id,

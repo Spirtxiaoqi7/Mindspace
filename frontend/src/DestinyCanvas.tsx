@@ -9,7 +9,7 @@ import {
   type PointerEvent,
   type WheelEvent,
 } from "react";
-import { apiV1Request, HttpError } from "./api";
+import { apiV1Request, HttpError } from "./shared/api";
 import "./destiny-canvas.css";
 
 type Willingness = "low" | "neutral" | "normal" | "high";
