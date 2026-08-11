@@ -32,7 +32,9 @@ test("0.3.4 data and models migrate without copying virtual environments", (cont
   const paths = ensureAppPaths(appPaths({ getPath: () => local }, { LOCALAPPDATA: local }));
   const report = migrateLegacyLayout({ paths, legacyRoots: [legacy], version: "0.4.0-test" });
   assert.equal(report.migrated.length, 1);
-  assert.equal(fs.existsSync(path.join(paths.data, "data", "session.json")), true);
+  assert.equal(fs.existsSync(path.join(paths.data, "session.json")), true);
+  assert.equal(fs.existsSync(path.join(paths.data, "data")), false);
+  assert.equal(fs.existsSync(path.join(paths.home, "config", "settings.json")), true);
   assert.equal(fs.existsSync(path.join(paths.models, "embedding", "model.bin")), true);
   assert.equal(fs.existsSync(path.join(paths.environment, ".venv")), false);
 });

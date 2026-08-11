@@ -84,11 +84,10 @@ class AppSettings:
         # Desktop Launcher normally sends MINDSPACE_RUNTIME_DIR explicitly.
         # Keep a safe home-derived fallback as well: a manual or recovered Core
         # process that only receives MINDSPACE_HOME must reopen that install's
-        # existing data directory, never manufacture default profiles under
-        # application/core/runtime.
+        # existing runtime root. Product stores append data/config/logs below it.
         configured_home = os.environ.get("MINDSPACE_HOME", "").strip()
         default_runtime = (
-            Path(configured_home).expanduser().resolve() / "data" if configured_home else project_root / "runtime"
+            Path(configured_home).expanduser().resolve() if configured_home else project_root / "runtime"
         )
         return cls(
             app_name=os.environ.get("MINDSPACE_APP_NAME", "Mindspace Graph"),

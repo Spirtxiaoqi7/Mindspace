@@ -374,7 +374,7 @@ function createRuntimeManager(options) {
       MINDSPACE_ENVIRONMENT: paths.environment,
       MINDSPACE_MODEL_ROOT: paths.models,
       MINDSPACE_DATA_ROOT: paths.data,
-      MINDSPACE_RUNTIME_DIR: paths.data,
+      MINDSPACE_RUNTIME_DIR: paths.home,
       MINDSPACE_PWSH: componentFor("powershell") ? markerFor(componentFor("powershell"), true)?.executable || "" : "",
       MINDSPACE_UV: componentFor("uv") ? markerFor(componentFor("uv"), true)?.executable || "" : "",
       UV_PYTHON_INSTALL_DIR: paths.python,

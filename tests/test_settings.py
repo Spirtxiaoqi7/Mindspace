@@ -9,7 +9,7 @@ def test_home_only_core_start_reopens_the_existing_home_data(monkeypatch, tmp_pa
 
     settings = AppSettings.from_env()
 
-    assert settings.runtime_dir == (tmp_path / "Mindspace" / "data").resolve()
+    assert settings.runtime_dir == (tmp_path / "Mindspace").resolve()
 
 
 def test_explicit_runtime_directory_still_has_priority(monkeypatch, tmp_path):

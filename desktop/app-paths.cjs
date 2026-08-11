@@ -67,10 +67,9 @@ function migrateLegacyLayout({ paths, legacyRoots = [], version = "0.4.0" }) {
   const migrated = [];
   for (const root of sources) {
     const runtime = path.join(root, "runtime");
-    let copiedData = false;
-    for (const folder of ["config", "data"]) {
-      copiedData = copyMissing(path.join(runtime, folder), path.join(paths.data, folder)) || copiedData;
-    }
+    const copiedConfig = copyMissing(path.join(runtime, "config"), path.join(paths.home, "config"));
+    const copiedRuntimeData = copyMissing(path.join(runtime, "data"), paths.data);
+    const copiedData = copiedConfig || copiedRuntimeData;
     const copiedModels = copyMissing(path.join(root, "assets", "models"), paths.models);
     if (copiedData || copiedModels) migrated.push({ root, data: copiedData, models: copiedModels });
   }

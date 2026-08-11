@@ -18,7 +18,7 @@ const environment = {
   MINDSPACE_ENVIRONMENT: path.join(home, "environment"),
   MINDSPACE_MODEL_ROOT: path.join(home, "models"),
   MINDSPACE_DATA_ROOT: path.join(home, "data"),
-  MINDSPACE_RUNTIME_DIR: path.join(home, "data"),
+  MINDSPACE_RUNTIME_DIR: home,
   MINDSPACE_CORE_PYTHON: python,
   MINDSPACE_PWSH: pwsh,
   MINDSPACE_UV: uv,

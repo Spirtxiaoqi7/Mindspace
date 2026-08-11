@@ -127,7 +127,7 @@ function createServiceSupervisor(dependencies) {
       ...base,
       MINDSPACE_HOME: currentLayout().home,
       MINDSPACE_ENVIRONMENT: currentLayout().environment,
-      MINDSPACE_MODEL_ROOT: modelRoot(), MINDSPACE_DATA_ROOT: runtimeDataRoot(), MINDSPACE_RUNTIME_DIR: runtimeDataRoot(),
+      MINDSPACE_MODEL_ROOT: modelRoot(), MINDSPACE_DATA_ROOT: runtimeDataRoot(), MINDSPACE_RUNTIME_DIR: currentLayout().home,
       ...environmentForPorts(portRegistry),
       MINDSPACE_SERVICE_IDENTITY_ROOT: serviceIdentityRoot(),
       MINDSPACE_LLM_MODE: llm.mode, MINDSPACE_LLM_BASE_URL: llm.base_url, MINDSPACE_LLM_API_KEY: llm.api_key, MINDSPACE_LLM_MODEL: llm.model,
