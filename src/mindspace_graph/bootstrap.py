@@ -14,6 +14,7 @@ from mindspace_graph.adapters.openai_compatible import OpenAICompatibleLanguageM
 from mindspace_graph.adapters.structured_memory import StructuredMemoryStore
 from mindspace_graph.application.conversation import ConversationService
 from mindspace_graph.art_catalog import ArtCatalogService
+from mindspace_graph.static_paths import BUILTIN_ART_MANIFEST
 from mindspace_graph.asr_vocabulary import ASRVocabularyStore
 from mindspace_graph.cancellation import CancellationRegistry
 from mindspace_graph.capabilities import ReadOnlyCapabilityService
@@ -144,7 +145,7 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
         ),
     )
     art_catalog = ArtCatalogService(
-        Path(__file__).resolve().parent / "web" / "archive" / "manifest.json",
+        BUILTIN_ART_MANIFEST,
         settings.runtime_dir / "data" / "assets" / "packs",
     )
     dependencies = Dependencies(

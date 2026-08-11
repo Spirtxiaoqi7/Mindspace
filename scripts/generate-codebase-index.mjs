@@ -134,7 +134,7 @@ function domainOf(item) {
 }
 
 function statusOf(item, source) {
-  if (outputPaths.includes(item) || item === "payload.json" || item === "uv.lock" || item.endsWith("package-lock.json") || item === "docs/release-history.json" || item === "desktop/assets/gpt-sovits-voices.json" || item === "src/mindspace_graph/web/index.html") return "generated";
+  if (outputPaths.includes(item) || item === "payload.json" || item === "uv.lock" || item.endsWith("package-lock.json") || item === "docs/release-history.json" || item === "desktop/assets/gpt-sovits-voices.json" || item === "src/mindspace_graph/static/app/index.html") return "generated";
   if (item.includes("run_082_")) return "deprecated";
   const marker = source.match(/^> (?:文档)?状态：([a-z]+)/m)?.[1];
   if (marker) return marker;
@@ -142,7 +142,7 @@ function statusOf(item, source) {
 }
 
 function boundaryOf(item) {
-  if (item.startsWith("src/mindspace_graph/web/") || item.startsWith("frontend/")) return "Web public; no Core secrets";
+  if (item.startsWith("src/mindspace_graph/static/app/") || item.startsWith("frontend/")) return "Web public; no Core secrets";
   if (item.startsWith("desktop/")) return item.includes("secret") ? "Launcher public code; OS-encrypted secret boundary" : "Launcher public; no protected Core source";
   if (item.startsWith("src/mindspace_graph/") || item.startsWith("vendor/")) return "Core protected release surface";
   if (item.startsWith("scripts/")) return "Developer tool; release only when allowlisted";

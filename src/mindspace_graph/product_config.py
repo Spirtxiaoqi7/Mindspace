@@ -11,6 +11,7 @@ from typing import Any
 from mindspace_graph.infrastructure.storage.json_io import atomic_json_write
 from mindspace_graph.capabilities import DEFAULT_CAPABILITY_SETTINGS
 from mindspace_graph.gpt_sovits import GPT_SOVITS_VOICES
+from mindspace_graph.llm_providers import infer_provider_id
 from mindspace_graph.settings import AppSettings
 
 _SECRET_FIELDS = (
@@ -106,6 +107,9 @@ class ProductConfigStore:
                 self._config["audio"]["tts_qwen3_vllm_task_type"] = "CustomVoice"
                 self._config["audio"]["tts_qwen3_vllm_voice"] = "serena"
             loaded_schema_version = str(self._config.get("schema_version") or "")
+            loaded_llm = loaded.get("llm", {}) if isinstance(loaded, dict) else {}
+            if "provider" not in loaded_llm:
+                self._config["llm"]["provider"] = infer_provider_id(self._config["llm"]["base_url"])
             if loaded_schema_version == "1.0.0":
                 # 250 ms was the old fixed endpoint and truncated hesitant Chinese.
                 # Migrate only that exact legacy default; explicit custom values stay intact.
@@ -115,6 +119,8 @@ class ProductConfigStore:
                 # 1.2 adds a user-owned, persistent voice entry choice and scene.
                 # Missing values were already filled by _merge_known above.
                 self._config["schema_version"] = "1.2.0"
+            if loaded_schema_version in {"1.0.0", "1.1.0", "1.2.0"}:
+                self._config["schema_version"] = "1.3.0"
             # 350 ms (and the frontend's former 160 ms punctuation shortcut)
             # committed natural Chinese pauses too early. Migrate only the exact
             # shipped default; longer user-selected windows remain untouched.
@@ -153,9 +159,10 @@ class ProductConfigStore:
 
     def _defaults(self) -> dict[str, Any]:
         return {
-            "schema_version": "1.2.0",
+            "schema_version": "1.3.0",
             "llm": {
                 "mode": self.settings.llm_mode,
+                "provider": infer_provider_id(self.settings.llm_base_url),
                 "base_url": self.settings.llm_base_url,
                 "model": self.settings.llm_model,
                 "temperature": 0.7,

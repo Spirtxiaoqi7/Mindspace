@@ -6,6 +6,7 @@ import {
   parseModelDiagnostics,
   providerToolCapability,
 } from "../../chat-contract";
+import type { ProviderToolCapabilityState } from "../../chat-contract";
 import { asRecord, num, str } from "../../shared/formatters";
 import type { InspectorEvent, Message, ProviderHttpAttempt } from "../../types";
 
@@ -14,7 +15,7 @@ export const clearPersistedChatRun = (runId: string) => clearActiveRun(runId);
 export const restoreSessionMessages = (sessionId: string, messages: Message[]) =>
   hydrateTurnRequestSnapshots(sessionId, messages);
 
-export const getProviderToolCapability = (baseUrl: string) => providerToolCapability(baseUrl);
+export const getProviderToolCapability = (state?: ProviderToolCapabilityState | null) => providerToolCapability(state);
 
 export function createModelAttemptInspectorEvent(
   value: unknown,

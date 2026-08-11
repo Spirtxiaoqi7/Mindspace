@@ -102,11 +102,8 @@ def build_post_history_template(
     interaction: str,
     turn_data: str,
     adult_mode: bool,
-    scene_state_json: str,
-    r18_requirement: str,
-    direct_output_required: bool,
+    adult_protocol: str,
     recent_adult_context: bool,
-    explicit_continuation: bool,
     reply_length_preference: str,
 ) -> str:
     opening_instruction = (
@@ -134,23 +131,7 @@ def build_post_history_template(
     if turn_data:
         lines.append(turn_data)
     if adult_mode:
-        lines.extend(
-            [
-                "【成人模式｜用户已明确开启】",
-                f"- 当前场景状态：{scene_state_json}；只有用户明确停止或关闭成人模式时退出 R18。",
-                "- 角色与用户的身体、动作和反应必须明确分开；性别只约束各自身体，不禁止准确描述对方。",
-                f"- {r18_requirement}",
-            ]
-        )
-        if direct_output_required:
-            lines.extend(
-                [
-                    "- 成人模式就是直白 R18，不保留日常、暧昧、试探或预热中间态。",
-                    "- 自然使用直白淫语、准确性器官词和性行为词，明确写正在发生的行为与双方反应。",
-                    "- 用户本轮输入和“@互动：目标”直接执行；不含糊代称，不隔着衣物拖延，"
-                    "不转移事务，不询问确认，不邀请用户再推进。",
-                ]
-            )
+        lines.append(adult_protocol)
     if not adult_mode and recent_adult_context:
         lines.extend(
             [
@@ -159,11 +140,6 @@ def build_post_history_template(
                 "- 从本轮起恢复普通表达；可以自然承接关系、情绪和刚才互动的后续，"
                 "但不继续露骨描写，除非用户再次开启成人模式。",
             ]
-        )
-    if explicit_continuation:
-        lines.append(
-            "- 当前用户输入是对正在发生互动的明确继续信号。承接已经确认的内容给出下一拍，"
-            "不要再次询问同一个选择，也不要停在“你想不想、你敢不敢、那我可要”上。"
         )
     if interaction_mode != "voice":
         if presentation_mode == "dialogue":
@@ -185,11 +161,4 @@ def build_post_history_template(
             "- 只输出角色正文，不输出状态检查、规则复述或模式名称。",
         ]
     )
-    if adult_mode and direct_output_required:
-        lines.extend(
-            [
-                "【本轮成人内容承接】",
-                "- 直接承接用户已经明确提出的互动，不复述要求，不停在询问、确认、承诺、邀请或预告上。",
-            ]
-        )
     return "\n".join(lines)

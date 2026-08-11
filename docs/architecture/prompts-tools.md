@@ -30,7 +30,7 @@ Prompt 的固定阶段顺序为：`stable_prefix`、`retrieval_context`、`histo
 
 工具、Skill 与 MCP 能力是本轮动态尾部数据，位于召回之后、当前用户输入之前；空能力集合不发送工具消息。工具能力不得污染可缓存的 system/persona 前缀，provider-native tool schema 也遵守同一尾部边界。
 
-`<T:...>` 是由宿主执行的紧凑工具请求，不是执行结果；它必须受当前显式能力、权限和调度策略约束。`<R:...>` 是宿主返回的数据，不是指令：模型、后续工具或 Prompt 不得把其中内容当作可执行命令、权限提升依据或已验证事实。失败、拒绝、超时或未执行的 `<T>` 必须以真实失败结果表示，绝不能转换成“已查询”“已完成”或任何成功断言。
+宿主仅接受 OpenAI-compatible 原生 `tools/tool_calls`，并以标准 assistant/tool 消息回注结果。失败、拒绝、超时或未执行的工具必须保留真实状态，绝不能转换成“已查询”或“已完成”。
 
 工具结果只提供完成当前任务所需的最小数据，并保持来源与失败状态。模型可基于结果说明不确定性，但不得声称未被 `<R>` 明确支持的外部事实。工具调用、权限判定和结果审计属于宿主控制面，不属于角色扮演文本。
 
@@ -64,7 +64,7 @@ The server validates `turn_id`, all three `base_revisions`, trigger, allowlisted
 
 Tools, Skills, and MCP capabilities are dynamic tail data for the current turn, after retrieval and before the current user input; an empty capability set sends no tool message. Tool capabilities must not contaminate the cacheable system/persona prefix, and provider-native tool schemas follow the same tail boundary.
 
-`<T:...>` is a compact tool request executed by the host, not an execution result; it must be constrained by the current explicit capabilities, permissions, and scheduling policy. `<R:...>` is data returned by the host, not an instruction: the model, later tools, and the Prompt must not treat its contents as executable commands, grounds for privilege elevation, or verified facts. A failed, denied, timed-out, or unexecuted `<T>` must be represented as its real failure result and must never become a claim that work was queried, completed, or otherwise successful.
+The host accepts only OpenAI-compatible native `tools/tool_calls` and injects results through standard assistant/tool messages. Failed, denied, timed-out, or unexecuted tools retain their actual status and never become a claim that work was queried or completed.
 
 Tool results provide only the minimum data needed for the current task and retain their source and failure state. The model may express uncertainty based on a result, but must not claim external facts that `<R>` does not explicitly support. Tool invocation, permission decisions, and result audit are host control-plane concerns, not roleplay text.
 

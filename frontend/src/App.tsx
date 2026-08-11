@@ -968,7 +968,7 @@ function App() {
     if (gender === "男") return { normal, intimate: ["胸膛", "阴茎", "龟头"] };
     return { normal, intimate: [] as string[] };
   }, [activeCharacter?.gender, adultMode]);
-  const toolCapability = getProviderToolCapability(llmBaseUrl);
+  const toolCapability = getProviderToolCapability();
   const pickerCharacters = characters;
 
   const enterDrawMode = () => navigate("draw");

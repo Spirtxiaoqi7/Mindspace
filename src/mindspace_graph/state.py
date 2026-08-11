@@ -39,6 +39,7 @@ class TurnState(TypedDict, total=False):
     deletion_events: list[DeletionEvent]
     profile_bootstrap: ProfileBootstrap
     tool_hint: str
+    retrieval_decision: dict[str, Any]
     tool_instruction: ToolInstruction
     tool_result: ToolExecutionResult
     task_review_allowed: bool

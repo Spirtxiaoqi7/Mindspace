@@ -12,7 +12,6 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from mindspace_graph.models import ChatRequest, ProfileBundle
-from mindspace_graph.r18_director import build_style_packet, r18_quality_requirement
 from mindspace_graph.voice_render import extract_voice_cue
 
 _SCENE_TRANSITION = re.compile(
@@ -315,9 +314,6 @@ def build_roleplay_layer(
             "presentation": build_presentation_plan(request, history),
         }
     )
-    if request.adult_mode:
-        result["r18_director"] = build_style_packet(request, history)
-        result["r18_quality_requirement"] = r18_quality_requirement(result["r18_director"])
     return result
 
 

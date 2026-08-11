@@ -39,7 +39,7 @@ _EVENT_CANDIDATE = re.compile(
     re.IGNORECASE,
 )
 _EXTERNAL_REQUEST = re.compile(
-    r"(?:联网|上网|网络搜索|搜索|帮我查|查一下|查查|查询|"
+    r"(?:联网|上网|网络搜索|搜索|帮我查|查一下|查查|查找|查询|打开|GitHub|"
     r"天气|新闻|最新|实时|股价|汇率|比分|赛程|航班|路况)",
     re.IGNORECASE,
 )

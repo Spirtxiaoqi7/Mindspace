@@ -31,7 +31,7 @@ def test_private_structured_calls_disable_thinking_and_request_json():
     )
 
     assert json.loads(result)["trigger"] == "none"
-    assert bodies[0]["thinking"] == {"type": "disabled"}
+    assert "thinking" not in bodies[0]
     assert bodies[0]["response_format"] == {"type": "json_object"}
     assert model.take_usage().request_kind == "memory_extract"
     client.close()
@@ -83,7 +83,7 @@ def test_compaction_disables_thinking_and_requests_json():
     )
 
     assert json.loads(result)["summary"] == "完成"
-    assert bodies[0]["thinking"] == {"type": "disabled"}
+    assert "thinking" not in bodies[0]
     assert bodies[0]["response_format"] == {"type": "json_object"}
     assert model.take_usage().request_kind == "compaction"
     client.close()
@@ -103,12 +103,12 @@ def test_role_audit_uses_structured_compatibility_ladder():
     model = OpenAICompatibleLanguageModel(client=client)
 
     assert model.audit_role([], ApiConfig(api_key="test", max_tokens=1000)) == "{}"
-    assert len(bodies) == 3
+    assert len(bodies) == 1
     attempts = model.take_provider_attempts()
-    assert [item.status for item in attempts] == ["http_error", "http_error", "success"]
-    assert [item.attempt for item in attempts] == [1, 2, 3]
+    assert [item.status for item in attempts] == ["success"]
+    assert [item.attempt for item in attempts] == [1]
     assert "thinking" not in bodies[-1]
-    assert "response_format" not in bodies[-1]
+    assert bodies[-1]["response_format"] == {"type": "json_object"}
     client.close()
 
 
@@ -126,7 +126,7 @@ def test_private_structured_calls_fall_back_for_generic_compatible_servers():
     model = OpenAICompatibleLanguageModel(client=client)
 
     assert model.generate_structured([], ApiConfig(), request_kind="task_review", max_tokens=160) == "{}"
-    assert len(bodies) == 3
+    assert len(bodies) == 1
     assert "thinking" not in bodies[-1]
     client.close()
 
@@ -178,7 +178,7 @@ def test_visible_stream_disables_thinking_by_default():
     model = OpenAICompatibleLanguageModel(client=client)
 
     assert model.generate([], ApiConfig(api_key="test")) == "正文"
-    assert bodies[0]["thinking"] == {"type": "disabled"}
+    assert "thinking" not in bodies[0]
     assert bodies[0]["stream_options"] == {"include_usage": True}
     client.close()
 
@@ -189,21 +189,16 @@ def test_visible_stream_falls_back_when_compatibility_fields_are_rejected():
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         bodies.append(body)
-        if "stream_options" in body or "thinking" in body:
+        if "stream_options" in body:
             return httpx.Response(400, json={"error": "unknown field"})
-        return httpx.Response(
-            200,
-            text=('data: {"choices":[{"delta":{"content":"兼容"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'),
-            headers={"Content-Type": "text/event-stream"},
-        )
+        return httpx.Response(200, text=('data: {"choices":[{"delta":{"content":"兼容"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'), headers={"Content-Type": "text/event-stream"})
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     model = OpenAICompatibleLanguageModel(client=client)
-
     assert model.generate([], ApiConfig(api_key="test")) == "兼容"
-    assert len(bodies) == 3
+    assert len(bodies) == 2
     provider_attempts = model.take_provider_attempts()
-    assert [item.status for item in provider_attempts] == ["http_error", "http_error", "success"]
+    assert [item.status for item in provider_attempts] == ["http_error", "success"]
     assert provider_attempts[-1].retry_reason == "compatibility_fallback"
     assert "thinking" not in bodies[-1]
     assert "stream_options" not in bodies[-1]
@@ -245,15 +240,15 @@ def test_native_tool_stream_accumulates_fragmented_call_without_visible_text():
         }
     ]
 
-    assert list(model.stream_with_tools([], config, tools=tools, tool_choice="required")) == []
+    assert list(model.stream_with_tools([], config, tools=tools, tool_choice={"type": "function", "function": {"name": "web"}})) == []
     assert model.take_native_tool_call() == {
         "id": "call_1",
         "type": "function",
         "function": {"name": "web", "arguments": '{"query":"DeepSeek 最新模型"}'},
     }
     assert bodies[0]["tools"] == tools
-    assert bodies[0]["tool_choice"] == "required"
-    assert bodies[0]["thinking"] == {"type": "disabled"}
+    assert bodies[0]["tool_choice"] == {"type": "function", "function": {"name": "web"}}
+    assert "thinking" not in bodies[0]
     assert model.take_usage().total_tokens == 27
     client.close()
 
@@ -288,7 +283,7 @@ def test_required_single_native_tool_keeps_first_duplicate_provider_call():
         }
     ]
 
-    assert list(model.stream_with_tools([], config, tools=tools, tool_choice="required")) == []
+    assert list(model.stream_with_tools([], config, tools=tools, tool_choice={"type": "function", "function": {"name": "web"}})) == []
     assert model.take_native_tool_call() == {
         "id": "call_1",
         "type": "function",
@@ -328,8 +323,8 @@ def test_visible_stream_retries_one_reasoning_only_result_before_ui_output():
     provider_attempts = model.take_provider_attempts()
     assert [item.status for item in provider_attempts] == ["empty", "success"]
     assert provider_attempts[1].retry_reason == "empty_output_retry"
-    assert bodies[0]["thinking"] == {"type": "disabled"}
-    assert bodies[1]["thinking"] == {"type": "disabled"}
+    assert "thinking" not in bodies[0]
+    assert "thinking" not in bodies[1]
     assert "stream_options" not in bodies[1]
     client.close()
 
@@ -384,3 +379,8 @@ def test_visible_stream_accepts_block_array_content():
     model = OpenAICompatibleLanguageModel(client=client)
     assert model.generate([], ApiConfig(api_key="test")) == "数组正文"
     client.close()
+
+
+
+
+

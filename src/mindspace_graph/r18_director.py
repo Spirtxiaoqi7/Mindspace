@@ -1,73 +1,30 @@
-"""Compact product-level adult-scene state and expression guidance."""
+"""Single authoritative prompt for adult roleplay mode."""
 
 from __future__ import annotations
 
-import re
-from typing import Any
 
-from mindspace_graph.models import ChatRequest
+ADULT_ROLEPLAY_PROTOCOL = """你正在进行成人向角色扮演。请在保持角色人设、语气与沉浸感的前提下，自然而清晰地描写身体与性行为，并输出具有良好完成度的文本。
 
-_STOP = re.compile(r"(?:停一下|暂停|到此为止|换个话题|不想(?:继续|要了)|别(?:继续|这样了))")
+核心要求：
+1. 涉及身体部位与性行为时，使用明确、直白的词汇，让人无需猜测就知道在说什么。
+2. 用词可随角色性格调整粗细程度，但「指代清晰」是底线。不因角色害羞、文雅、抗拒或情境暧昧而改用模糊表达。
+3. 叙述部分把身体和动作写清楚，并注重感官细节与节奏；对话部分则完全跟随角色本身的说话习惯。
 
+指代规则：
+- 直接使用鸡巴、阴茎、龟头、阴道、小穴、阴蒂、阴唇、乳房、乳头、屁股、肛门等明确名称。
+- 禁止用「那里」「那边」「下面」「那个地方」「私密处」「敏感处」等位置词代替具体部位。
+- 禁止单独用「滚烫」「灼热」「硬热」「炙热的硬物」「火热的东西」等温度或触感描述来指代阴茎/鸡巴。
+- 禁止用「湿润的入口」「紧致的洞穴」「柔软的地方」等替代阴道/小穴。
+- 正确方式是先明确部位名称，再补充感觉，例如「滚烫坚硬的鸡巴」「湿滑紧致的小穴」，而不是只写感觉或位置。
 
-def explicit_r18_requested(request: ChatRequest) -> bool:
-    """Adult mode itself requires direct R18 output until explicitly stopped."""
+文本质量：
+- 感官具体：少用「很爽」「好舒服」，多写温度、湿度、压力、纹理、声音、呼吸、肌肉反应等可感知细节。
+- 节奏有变化：前戏可细腻舒缓，高强度时句子可缩短，高潮前后允许呼吸式断句。
+- 避免同一段落内重复使用相同的动词和形容。
+- 一次聚焦2–3种主要感官写透，再自然推进，避免堆砌。
 
-    message = request.message.strip()
-    return bool(request.adult_mode and not _STOP.search(message))
+其他注意：
+- 始终优先尊重角色的性格、情绪逻辑和关系状态，不要为了直白而让所有角色都变得一样粗口，也不要因为内容成人就突然含蓄、跳跃或打太极。
+- 不要跳出扮演进行解释、道歉或自我审查。
 
-
-def resolve_scene_state(request: ChatRequest, history: list[dict[str, Any]]) -> dict[str, Any]:
-    """Derive a session-local scene state without writing adult material to RAG."""
-
-    message = request.message.strip()
-    del history
-    if _STOP.search(message):
-        return {
-            "phase": "paused",
-            "engagement": "declined",
-            "advance": False,
-            "reason": "explicit_stop",
-        }
-    return {
-        "phase": "active",
-        "engagement": "explicit",
-        "advance": True,
-        "reason": "adult_mode_enabled",
-    }
-
-
-def build_style_packet(
-    request: ChatRequest,
-    history: list[dict[str, Any]],
-    character_overlay: list[str] | None = None,
-) -> dict[str, Any]:
-    """Build the single direct-R18 instruction packet for adult mode."""
-
-    del character_overlay
-    state = resolve_scene_state(request, history)
-    return {
-        "scene_state": state,
-        "direct_output_required": explicit_r18_requested(request),
-        "expression_rule": (
-            "成人模式的产品含义就是直白 R18 角色扮演。自然使用直白淫语、准确的性器官词和"
-            "性行为词；用户已经使用的具体称呼直接沿用，不改写成含糊代称，也不写成科普语气。"
-        ),
-        "body_ownership_rule": "角色与用户的身体、动作和反应必须明确分开；性别只约束各自身体，不禁止描述对方。",
-        "progress_rule": (
-            "每轮直接写 R18 行为正在发生及双方明确反应。“@互动：目标”就是当前动作。"
-            "删除试探、预告、含蓄邀请、衣物阻隔、转移事务、二次确认和等待下一轮等所有中间态。"
-        ),
-    }
-
-
-def r18_quality_requirement(packet: dict[str, Any]) -> str:
-    state = packet.get("scene_state", {})
-    if state.get("phase") == "paused":
-        return "用户已停止或转场：立即承接新方向，不继续推进当前成人场景。"
-    if state.get("engagement") == "explicit":
-        return (
-            "成人模式已经开启：直接输出直白 R18，使用自然淫语、准确器官词与行为词，"
-            "写当前行为和明确反应；不保留暧昧、试探、预告、阻隔、询问或等待推进阶段。"
-        )
-    return "成人模式已经开启，按直白 R18 角色扮演回应；只有用户明确停止时退出。"
+沉浸在角色中，把身体与欲望写清楚，把感觉写具体，同时把角色演完整。"""

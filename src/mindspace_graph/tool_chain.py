@@ -22,7 +22,7 @@ FINAL_AFTER_TOOL_PROTOCOL = (
     "请用户下一轮单独确认，不得声称已经记下或已经设置提醒。"
 )
 _WEB_ACTION = re.compile(
-    r"(?:我|我这边|刚才|刚刚)?[^。！？!?\n]{0,12}(?:联网|上网|搜索|查询|检索|搜到|查到)"
+    r"(?:我|我这边|刚才|刚刚)?[^。！？!?\n]{0,12}(?:联网|上网|搜索|查询|检索|搜到|查到|查(?:了|过)?)"
     r"[^。！？!?\n]{0,24}(?:了|显示|发现|结果|信息|资料)",
     re.IGNORECASE,
 )
@@ -271,7 +271,9 @@ def enforce_tool_claims(
 ) -> tuple[str, list[str]]:
     violations: list[str] = []
     value = response
-    web_success = bool(result and result.tool == "web" and result.status == "success")
+    web_result = result if result and result.tool == "web" else None
+    web_executed = bool(web_result and web_result.status in {"success", "failed"})
+    web_has_evidence = bool(web_result and web_result.status == "success" and web_result.source_count > 0)
     memory_success = bool(
         result and result.tool == "memory" and result.status == "success" and result.source_count > 0
     )
@@ -284,8 +286,11 @@ def enforce_tool_claims(
             for item in (result.data.get("tasks") or [])
         )
     )
-    if not web_success:
+    if not web_executed:
         value = _replace_claim_sentences(value, _WEB_ACTION, "这轮没有实际联网查询", violations)
+    elif not web_has_evidence:
+        replacement = "已尝试联网检索，但没有找到相关公开结果" if web_result.status == "success" else "已尝试联网检索，但这次检索未能完成"
+        value = _replace_claim_sentences(value, _WEB_ACTION, replacement, violations)
     if not memory_success:
         value = _replace_claim_sentences(value, _MEMORY_ACTION, "这轮没有实际查询历史记录", violations)
     if memory_empty:

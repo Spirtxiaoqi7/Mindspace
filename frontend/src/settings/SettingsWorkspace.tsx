@@ -10,6 +10,7 @@ const uid = () => crypto.randomUUID();
 const bool = (value: unknown) => Boolean(value);
 const num = (value: unknown, fallback = 0) => Number.isFinite(Number(value)) ? Number(value) : fallback;
 const str = (value: unknown) => String(value ?? "");
+type LlmProviderOption = { id: string; label: string; base_url: string; models: string[]; requires_key?: boolean; custom?: boolean };
 function formatBytes(value: number) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
@@ -57,6 +58,7 @@ function AvatarEditor({ role, entry, onChange, onUpload, busy }: { role: Role; e
 export function SettingsWorkspace({ value, avatars, initialTab = "model", onClose, onDirty, onOpenProfile, onOpenMemory, onOpenKnowledge, onOpenDiagnostics, onSaved, onSettingsChange, onAvatarsChange, notify }: { value: ProductSettings; avatars: AvatarConfig; initialTab?: string; onClose: () => void; onDirty: (dirty: boolean) => void; onOpenProfile: (role: Role) => void; onOpenMemory: () => void; onOpenKnowledge: () => void; onOpenDiagnostics: () => void; onSaved: (value: ProductSettings, avatars: AvatarConfig) => void; onSettingsChange: (value: ProductSettings) => void; onAvatarsChange: (value: AvatarConfig) => void; notify: (message: string) => void }) {
   const normalizedValue: ProductSettings = {
     ...structuredClone(value),
+    llm: { provider: "custom", ...structuredClone(value.llm) },
     audio: {
       asr_listening_energy_threshold_db: -50,
       asr_listening_min_speech_ms: 120,
@@ -86,7 +88,7 @@ export function SettingsWorkspace({ value, avatars, initialTab = "model", onClos
     capabilities: {
       master_enabled: true,
       local_knowledge_enabled: true,
-      web_search_enabled: false,
+      web_search_enabled: true,
       realtime_topics_enabled: false,
       topic_expansion_enabled: true,
       proactive_hotspots_enabled: false,
@@ -109,6 +111,10 @@ export function SettingsWorkspace({ value, avatars, initialTab = "model", onClos
   const [qwenVoices, setQwenVoices] = useState<{ active_voice: string; items: Array<{ id: string; label: string; installed: boolean; selected: boolean }> }>({ active_voice: "serena", items: [] });
   const [avatarBusy, setAvatarBusy] = useState<Role | "">("");
   const [llmApiKey, setLlmApiKey] = useState("");
+  const [llmProviders, setLlmProviders] = useState<LlmProviderOption[]>([]);
+  const [availableModels, setAvailableModels] = useState<string[]>([str(normalizedValue.llm.model)].filter(Boolean));
+  const [llmModelBusy, setLlmModelBusy] = useState(false);
+  const [llmModelStatus, setLlmModelStatus] = useState("选择供应商后获取实时模型列表，也可以直接填写模型 ID");
   const [ttsApiKey, setTtsApiKey] = useState("");
   const [vocabulary, setVocabulary] = useState<ASRVocabularySnapshot | null>(null);
   const [vocabularyBusy, setVocabularyBusy] = useState(false);
@@ -142,6 +148,17 @@ export function SettingsWorkspace({ value, avatars, initialTab = "model", onClos
     initial.current = JSON.stringify(baseline);
   }, [externalAudioSelection, providerBusy, value.audio]);
   useEffect(() => {
+    request<{ providers: LlmProviderOption[] }>("/api/v1/models/providers")
+      .then(({ providers }) => {
+        setLlmProviders(providers);
+        setDraft((current) => {
+          const selected = providers.find((item) => item.id === current.llm.provider)
+            || providers.find((item) => item.base_url.replace(/\/$/, "") === str(current.llm.base_url).replace(/\/$/, ""))
+            || providers.find((item) => item.id === "custom");
+          return selected ? { ...current, llm: { ...current.llm, provider: selected.id } } : current;
+        });
+      })
+      .catch(() => undefined);
     request<{ active_voice: string; items: Array<{ id: string; label: string; family: string; installed: boolean; selected: boolean }> }>("/api/v1/audio/tts/voices")
       .then(setGptVoices)
       .catch(() => undefined);
@@ -202,6 +219,44 @@ export function SettingsWorkspace({ value, avatars, initialTab = "model", onClos
     if (ttsApiKey.trim()) payload.audio.tts_siliconflow_api_key = ttsApiKey.trim();
     const result = await request<{ settings: ProductSettings }>("/api/v1/settings", { method: "PUT", body: JSON.stringify(payload) });
     setDraft(result.settings); setLlmApiKey(""); setTtsApiKey(""); onSettingsChange(result.settings); return result.settings;
+  };
+  const switchLlmProvider = (providerId: string) => {
+    const provider = llmProviders.find((item) => item.id === providerId);
+    if (!provider) return;
+    const presetModels = provider.models || [];
+    setDraft((current) => ({
+      ...current,
+      llm: {
+        ...current.llm,
+        provider: provider.id,
+        base_url: provider.custom ? current.llm.base_url : provider.base_url,
+        model: presetModels[0] || current.llm.model,
+      },
+    }));
+    setAvailableModels(Array.from(new Set([str(draft.llm.model), ...presetModels].filter(Boolean))));
+    setLlmModelStatus(provider.custom ? "填写兼容端点后获取模型，或直接输入模型 ID" : `${provider.label} 端点已自动配置`);
+  };
+  const discoverLlmModels = async () => {
+    setLlmModelBusy(true);
+    setLlmModelStatus("正在读取供应商模型列表…");
+    try {
+      const result = await request<{ models: string[]; source: string; warning?: string }>("/api/v1/models/discover", {
+        method: "POST",
+        body: JSON.stringify({
+          provider: draft.llm.provider || "custom",
+          base_url: draft.llm.base_url,
+          api_key: llmApiKey.trim(),
+        }),
+      });
+      const models = Array.from(new Set([str(draft.llm.model), ...(result.models || [])].filter(Boolean)));
+      setAvailableModels(models);
+      setLlmModelStatus(result.warning || `已读取 ${result.models.length} 个模型`);
+      if (!draft.llm.model && result.models[0]) update("llm", "model", result.models[0]);
+    } catch (error) {
+      setLlmModelStatus((error as Error).message);
+    } finally {
+      setLlmModelBusy(false);
+    }
   };
   const switchTtsProvider = async (next: string) => {
     const provider = ["browser", "cosyvoice", "gpt-sovits", "qwen3-vllm", "siliconflow"].includes(next) ? next : "browser";
@@ -373,7 +428,18 @@ export function SettingsWorkspace({ value, avatars, initialTab = "model", onClos
       <div className="persona-config-actions"><button type="button" onClick={() => onOpenProfile("user")}>编辑用户资料</button></div>
       <h3>语言模型 API</h3>
       <p className={`notice ${bool(draft.llm.credentials_configured) ? "" : "warning"}`}>{bool(draft.llm.credentials_configured) ? "真实 LLM API 已启用；保存后立即用于下一轮对话。" : "尚未配置 LLM API 密钥。未配置时会阻止发送，不会生成演示回复。"}</p>
-      <div className="form-grid"><SelectField label="运行模式" value="openai" disabled options={[["openai", "真实 API（OpenAI 兼容）"]]} onChange={() => undefined} /><Field label="模型" value={draft.llm.model} onChange={(next) => update("llm", "model", next)} /><Field label="API 地址" value={draft.llm.base_url} onChange={(next) => update("llm", "base_url", next)} /><Field label="新 API 密钥（留空保持）" value={llmApiKey} type="password" placeholder={bool(draft.llm.credentials_configured) ? "已配置；输入新密钥可替换" : "输入 API 密钥"} onChange={(next) => setLlmApiKey(str(next))} /><Field label="温度" value={draft.llm.temperature} type="number" min={0} max={2} step={0.05} onChange={(next) => update("llm", "temperature", next)} /><Field label="最大 token" value={draft.llm.max_tokens} type="number" min={64} max={32768} onChange={(next) => update("llm", "max_tokens", next)} /></div>
+      <section className="llm-connection-panel">
+        <header><div><span>OPENAI COMPATIBLE</span><strong>{llmProviders.find((item) => item.id === draft.llm.provider)?.label || "选择供应商"}</strong></div><small>预设端点自动维护，自定义接口仍可完整填写</small></header>
+        <div className="form-grid">
+          <SelectField label="API 供应商" value={draft.llm.provider || "custom"} options={llmProviders.map((item) => [item.id, item.label])} onChange={switchLlmProvider} />
+          <Field label="新 API 密钥（留空保持）" value={llmApiKey} type="password" placeholder={bool(draft.llm.credentials_configured) ? "已配置；输入新密钥可替换" : "输入 API 密钥"} onChange={(next) => setLlmApiKey(str(next))} />
+          {draft.llm.provider === "custom" && <Field label="OpenAI 兼容 API 地址" value={draft.llm.base_url} onChange={(next) => update("llm", "base_url", next)} placeholder="例如 http://127.0.0.1:1234/v1" />}
+          <label className="field"><span>模型</span><input list="mindspace-llm-models" value={draft.llm.model} onChange={(event) => update("llm", "model", event.target.value)} placeholder="选择或填写模型 ID" /><datalist id="mindspace-llm-models">{availableModels.map((model) => <option value={model} key={model} />)}</datalist></label>
+          <Field label="温度" value={draft.llm.temperature} type="number" min={0} max={2} step={0.05} onChange={(next) => update("llm", "temperature", next)} />
+          <Field label="最大 token" value={draft.llm.max_tokens} type="number" min={64} max={32768} onChange={(next) => update("llm", "max_tokens", next)} />
+        </div>
+        <footer><button className="secondary" type="button" disabled={llmModelBusy || !llmProviders.length} onClick={() => void discoverLlmModels()}>{llmModelBusy ? "正在获取模型…" : "获取模型列表"}</button><span>{llmModelStatus}</span></footer>
+      </section>
       <h3>语音合成 API</h3>
       <p className="notice">上线版本默认使用云端流式 TTS，不随安装包分发本地 CosyVoice 模型；本地链路仍可在“实时语音”中切换。</p>
       <div className="form-grid"><Field label="SiliconFlow API 地址" value={draft.audio.tts_siliconflow_base_url} onChange={(next) => update("audio", "tts_siliconflow_base_url", next)} /><Field label="新 TTS API 密钥（留空保持）" value={ttsApiKey} type="password" placeholder={bool(draft.audio.tts_siliconflow_credentials_configured) ? "已配置；输入新密钥可替换" : "输入 SiliconFlow API 密钥"} onChange={(next) => setTtsApiKey(str(next))} /><SelectField label="云端模型" value={draft.audio.tts_siliconflow_model} options={[["fnlp/MOSS-TTSD-v0.5", "MOSS-TTSD v0.5"], ["FunAudioLLM/CosyVoice2-0.5B", "CosyVoice2 0.5B"]]} onChange={(next) => setDraft((current) => ({ ...current, audio: { ...current.audio, tts_siliconflow_model: next, tts_siliconflow_voice: next === "fnlp/MOSS-TTSD-v0.5" ? "fnlp/MOSS-TTSD-v0.5:alex" : "FunAudioLLM/CosyVoice2-0.5B:alex" } }))} /><Field label="音色 ID" value={draft.audio.tts_siliconflow_voice} onChange={(next) => update("audio", "tts_siliconflow_voice", next)} /><SelectField label="PCM 采样率" value={draft.audio.tts_siliconflow_sample_rate} options={[["16000", "16 kHz"], ["24000", "24 kHz（推荐）"], ["32000", "32 kHz"], ["44100", "44.1 kHz"]]} onChange={(next) => update("audio", "tts_siliconflow_sample_rate", Number(next))} /><Field label="增益 dB" value={draft.audio.tts_siliconflow_gain} type="number" min={-10} max={10} step={0.5} onChange={(next) => update("audio", "tts_siliconflow_gain", next)} /></div>

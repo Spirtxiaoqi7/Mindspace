@@ -107,7 +107,7 @@ class LanguageModelPort(Protocol):
         config: ApiConfig,
         *,
         tools: list[dict[str, Any]],
-        tool_choice: str = "auto",
+        tool_choice: str | dict[str, Any] = "auto",
     ) -> Iterator[str]: ...
 
     def take_native_tool_call(self) -> dict[str, Any] | None: ...

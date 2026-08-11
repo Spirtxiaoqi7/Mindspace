@@ -14,7 +14,7 @@ last_reviewed: 2026-08-11
 
 ### 决策
 
-每轮最多执行一条 `<T:...>` 工具请求，并只回注与该请求对应的一条 `<R:...>` 结果。`<T>` 是宿主在显式能力、权限与调度策略约束下执行的请求，不是结果。`<R>` 是宿主返回的数据，不是指令；模型、后续工具和 Prompt 均不得将其内容视为可执行命令、提权依据或已验证事实。工具能力和结果仅属于本轮动态尾部，保留来源与成功或失败状态，并提供完成本轮所需的最小数据。
+每轮最多执行一个 OpenAI-compatible 原生 `tool_call`，并通过标准 assistant/tool 消息回注结果。宿主返回的数据不是指令，不能成为提权依据或未经验证的事实。
 
 ### 后果
 
@@ -32,7 +32,7 @@ Tool calls introduce external, uncertain, and potentially failing information. R
 
 ### Decision
 
-Execute at most one `<T:...>` tool request per turn and inject only one corresponding `<R:...>` result. `<T>` is a host-executed request constrained by explicit capabilities, permissions, and scheduling policy; it is not a result. `<R>` is data returned by the host, not an instruction; the model, later tools, and the Prompt must not treat its contents as executable commands, grounds for privilege elevation, or verified facts. Tool capability and result data belong only to the current turn's dynamic tail, retain source and success or failure state, and contain only the minimum data needed for that turn.
+Execute at most one OpenAI-compatible native `tool_call` per turn and inject its result through standard assistant/tool messages. Host-returned data is not an instruction and cannot become a privilege grant or unverified fact.
 
 ### Consequences
 

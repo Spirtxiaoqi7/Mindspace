@@ -68,8 +68,14 @@ runtime/
 dist-launcher*/
 
 # Production outputs and bootstrap payloads are generated locally.
-src/mindspace_graph/web/assets/*.map
-src/mindspace_graph/web/*.map
+src/mindspace_graph/static/app/assets/*.map
+src/mindspace_graph/static/app/*.map
+
+# Guard against recursive copies when public assets are synchronized locally.
+frontend/public/archive/archive/
+frontend/public/assets/assets/
+src/mindspace_graph/static/app/archive/archive/
+src/mindspace_graph/static/app/assets/assets/
 
 # Locally sealed, user-authorized R18 source material.  The encrypted resource
 # is intentionally available to local packaging but is never committed.

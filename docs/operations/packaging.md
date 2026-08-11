@@ -21,7 +21,7 @@ Set-Location A:\RAG\Mindspace-admin
 pwsh -File .\scripts\build.ps1
 ```
 
-Hatch 必须将 `src/mindspace_graph/web` 包含进 wheel。安装后使用 `mindspace-server` 启动。
+Hatch 必须将 `src/mindspace_graph/static/app` 包含进 wheel。安装后使用 `mindspace-server` 启动。
 
 ### 便携 ZIP
 
@@ -85,7 +85,7 @@ Set-Location A:\RAG\Mindspace-admin
 pwsh -File .\scripts\build.ps1
 ```
 
-Hatch must include `src/mindspace_graph/web` in the wheel. Start the installed package with `mindspace-server`.
+Hatch must include `src/mindspace_graph/static/app` in the wheel. Start the installed package with `mindspace-server`.
 
 ### Portable ZIP
 

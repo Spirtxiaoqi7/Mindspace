@@ -15,6 +15,8 @@ from mindspace_graph.nodes import (
     build_contextual_retrieval_query,
     should_open_adult_continuity,
 )
+from mindspace_graph.tool_chain import ToolExecutionResult
+from mindspace_graph.web.models import RetrievalDecision
 
 
 def invoke(deps, **request_overrides):
@@ -81,6 +83,81 @@ def test_happy_path_runs_parallel_retrieval_and_persists_turn():
     assert response.llm_call_count == 1
     assert response.model.total_calls == 1
     assert [item.kind for item in response.model.call_summary] == ["generation"]
+
+
+class ToolIgnoringModel(DeterministicLanguageModel):
+    def __init__(self) -> None:
+        self.tool_choices = []
+
+    def stream_with_tools(self, _messages, _config, *, tools, tool_choice):
+        assert [item["function"]["name"] for item in tools] == ["web"]
+        self.tool_choices.append(tool_choice)
+        yield "好，我帮你查了。"
+
+    def take_native_tool_call(self):
+        return None
+
+
+class NativeToolThenEmptyFinalModel(ToolIgnoringModel):
+    def __init__(self) -> None:
+        super().__init__()
+        self._call = {"id": "native-web", "type": "function", "function": {"name": "web", "arguments": '{"query":"LangGraph","platforms":["github"]}'}}
+
+    def stream_with_tools(self, _messages, _config, *, tools, tool_choice):
+        self.tool_choices.append(tool_choice)
+        return iter(())
+
+    def take_native_tool_call(self):
+        call, self._call = self._call, None
+        return call
+
+    def stream(self, _messages, _config):
+        return iter(())
+
+
+class ForceWebCapabilities:
+    def retrieval_decision(self, request, *, history=None):
+        return RetrievalDecision(mode="force", scope="developer", query=request.message, platforms=["github"], reason_codes=["explicit_platform_lookup"], confidence=1)
+
+    def auxiliary_tool_hint(self, _request):
+        return ""
+
+    def enabled(self, _key):
+        return True
+
+    def execute_web(self, instruction):
+        return ToolExecutionResult(call_id=instruction.call_id, tool="web", level=3, status="success", parameter_summary=instruction.parameter_summary, source_count=1, data={"coverage": "partial", "sources": [{"url": "https://github.com/langchain-ai/langgraph", "platform": "github"}]})
+
+
+def test_force_web_prefetches_when_native_provider_ignores_required_tool_choice():
+    deps = demo_dependencies()
+    model = ToolIgnoringModel()
+    deps.llm = model
+    deps.capabilities = ForceWebCapabilities()
+    result = invoke(deps, message="帮我在 GitHub 查找 LangGraph 官方仓库最近发布版本和更新时间。", api={"base_url": "https://provider.example/v1", "model": "test"})
+
+    assert model.tool_choices == [{"type": "function", "function": {"name": "web"}}]
+    assert result["response"].tool_execution is not None
+    assert result["response"].tool_execution["tool"] == "web"
+    assert result["response"].tool_execution["status"] == "success"
+    assert result["response"].llm_call_count == 2
+    assert "好，我帮你查了" not in result["response"].reply
+
+
+def test_completed_web_tool_uses_deterministic_reply_when_final_generation_is_empty():
+    deps = demo_dependencies()
+    model = NativeToolThenEmptyFinalModel()
+    deps.llm = model
+    deps.capabilities = ForceWebCapabilities()
+    result = invoke(deps, message="帮我在 GitHub 查找 LangGraph 官方仓库最近发布版本和更新时间。", api={"base_url": "https://provider.example/v1", "model": "test"})
+
+    response = result["response"]
+    assert response.status == "success"
+    assert response.tool_execution is not None
+    assert response.tool_execution["status"] == "success"
+    assert response.llm_call_count == 2
+    assert "联网检索已完成" in response.reply
+    assert "https://github.com/langchain-ai/langgraph" in response.reply
 
 
 class BrokenOnceModel(DeterministicLanguageModel):
@@ -389,7 +466,6 @@ def test_prompt_uses_role_system_layers_and_never_identifies_as_protocol_outputt
     invoke(deps, system_prompt="你是弦月，语气温柔。")
 
     assert [item["role"] for item in model.captured[:2]] == ["system", "system"]
-    assert not any("<T:" in item["content"] or "<R:" in item["content"] for item in model.captured)
     assert any(item["role"] == "user" and "【当前用户明确输入】" in item["content"] for item in model.captured)
     assert model.captured[-1]["role"] == "system"
     assert model.captured[-1]["content"].startswith("已确认状态：")

@@ -31,7 +31,6 @@ from mindspace_graph.profile_bootstrap import evaluate_profile_bootstrap
 from mindspace_graph.prompting import build_prompt, resolve_initiative_request
 from mindspace_graph.event_memory import event_memory_lane
 from mindspace_graph.protocol import IncrementalResponseParser, ProtocolParser
-from mindspace_graph.r18_director import explicit_r18_requested
 from mindspace_graph.roleplay import (
     allow_raw_chat_retrieval,
     normalize_presentation_response,
@@ -41,6 +40,7 @@ from mindspace_graph.roleplay import (
 from mindspace_graph.state import TurnState
 from mindspace_graph.tool_chain import (
     FINAL_AFTER_TOOL_PROTOCOL,
+    ToolInstruction,
     ToolExecutionResult,
     enforce_tool_claims,
     execute_memory_tool,
@@ -387,9 +387,11 @@ class NodeFactory:
             writer({"event": "tool.hinted", "data": {"hint": "", "model_calls": 0, "reason": "event_memory_lane"}})
             return {"tool_hint": "", "trace": ["tool_hint"]}
         service = self.deps.capabilities
-        hint = service.route_hint(state["request"], history=state.get("recent_history", [])) if service else ""
-        writer({"event": "tool.hinted", "data": {"hint": hint, "model_calls": 0}})
-        return {"tool_hint": hint, "trace": ["tool_hint"]}
+        decision = service.retrieval_decision(state["request"], history=state.get("recent_history", [])) if service else None
+        data = decision.model_dump(mode="json") if decision else {"mode": "suppress", "scope": "none", "reason_codes": ["capability_unavailable"], "confidence": 0.0}
+        hint = "web_force" if data["mode"] == "force" else "web" if data["mode"] == "allow" else service.auxiliary_tool_hint(state["request"]) if service else ""
+        writer({"event": "tool.hinted", "data": {"decision": data, "model_calls": 0}})
+        return {"tool_hint": hint, "retrieval_decision": data, "trace": ["tool_hint"]}
 
     @staticmethod
     def route_tool_request(state: TurnState) -> str:
@@ -404,7 +406,7 @@ class NodeFactory:
         # requires, current external information; that explicit L3 request is a
         # one-turn authorization and must not be silently rejected by stale
         # desktop settings carried forward from the pre-0.8.2 capability model.
-        user_authorized_web = instruction.tool == "web" and state.get("tool_hint") == "web"
+        user_authorized_web = instruction.tool == "web" and str(state.get("tool_hint", "")).startswith("web")
         if instruction.tool == "web" and (
             service is None
             or (not service.enabled("web_search_enabled") and not user_authorized_web)
@@ -542,18 +544,15 @@ class NodeFactory:
     def inject_tool_result(self, state: TurnState) -> dict[str, Any]:
         result = state["tool_result"]
         native_call = state.get("native_tool_call")
-        if not native_call:
-            raise RuntimeError("native tool result is missing its provider call")
-        messages = [
-            *state["prompt_messages"],
-            {"role": "assistant", "content": "", "tool_calls": [native_call]},
-            {
-                "role": "tool",
-                "tool_call_id": native_call.get("id", ""),
-                "content": tool_result_json(result),
-            },
-            {"role": "system", "content": FINAL_AFTER_TOOL_PROTOCOL},
-        ]
+        if native_call:
+            messages = [
+                *state["prompt_messages"],
+                {"role": "assistant", "content": "", "tool_calls": [native_call]},
+                {"role": "tool", "tool_call_id": native_call.get("id", ""), "content": tool_result_json(result)},
+                {"role": "system", "content": FINAL_AFTER_TOOL_PROTOCOL},
+            ]
+        else:
+            messages = [*state["prompt_messages"], {"role": "system", "content": "Host-supplied public retrieval data: " + tool_result_json(result)}]
         if self.deps.prompt_inspector is not None:
             self.deps.prompt_inspector.record(
                 run_id=state.get("request_id", ""),
@@ -569,6 +568,9 @@ class NodeFactory:
         if not self._call_allowed(state, "final_generation"):
             raise RuntimeError("final generation model call budget exhausted")
         request = state["request"]
+        clear_native_call = getattr(self.deps.llm, "take_native_tool_call", None)
+        if callable(clear_native_call):
+            clear_native_call()
         # The first call may intentionally cap a short user message at 200
         # tokens. Once a tool has returned multiple sources, that short-turn
         # cap is no longer an appropriate answer budget.
@@ -597,11 +599,39 @@ class NodeFactory:
             **self._record_call(state, "final_generation", started),
             "trace": ["generate_final"],
         }
+
+    @staticmethod
+    def _tool_result_fallback_response(result: ToolExecutionResult) -> str:
+        data = result.data if isinstance(result.data, dict) else {}
+        coverage = str(data.get("coverage") or "unavailable")
+        sources = data.get("sources") if isinstance(data.get("sources"), list) else []
+        failures = data.get("partial_failures") if isinstance(data.get("partial_failures"), list) else []
+        lines = ["联网检索已完成。" if result.status == "success" else "联网检索未能完整完成。", f"覆盖状态：{coverage}。"]
+        summaries = []
+        for source in sources[:3]:
+            if not isinstance(source, dict):
+                continue
+            title = str(source.get("title") or source.get("url") or "公开来源").strip()
+            url = str(source.get("url") or "").strip()
+            summaries.append(f"{title}{f'（{url}）' if url and url != title else ''}")
+        if summaries:
+            lines.append("来源：" + "；".join(summaries) + "。")
+        if failures:
+            compact = []
+            for failure in failures[:2]:
+                if isinstance(failure, dict):
+                    compact.append("：".join(part for part in (str(failure.get("provider") or ""), str(failure.get("error") or "")) if part))
+                elif isinstance(failure, str):
+                    compact.append(failure)
+            if compact:
+                lines.append("局部限制：" + "；".join(compact) + "。")
+        return "".join(lines)
+
     def compose_prompt(self, state: TurnState) -> dict[str, Any]:
         """把权威数据、账本历史和本轮临时上下文组装成主模型 messages。"""
 
         self._check_cancelled(state)
-        native_tools_enabled = not event_memory_lane(state["request"].message) and supports_native_tools(state["request"].api.base_url) and callable(
+        native_tools_enabled = not event_memory_lane(state["request"].message) and supports_native_tools(state["request"].api.base_url, state["request"].api.model) and callable(
             getattr(self.deps.llm, "stream_with_tools", None)
         )
         built = build_prompt(
@@ -651,13 +681,19 @@ class NodeFactory:
         """调用主模型并只把 <response> 内正文增量暴露给前端。"""
 
         self._check_cancelled(state)
+        decision = state.get("retrieval_decision") or {}
+        if not state.get("native_tools_enabled") and decision.get("mode") == "force":
+            instruction = ToolInstruction(tool="web", level=3, parameter=str(decision.get("query") or state["request"].message), command={"scope": decision.get("scope", "auto"), "platforms": decision.get("platforms", []), "recency": decision.get("recency", "any")})
+            writer({"event": "tool.requested", "data": {"call_id": instruction.call_id, "tool": "web", "level": 3, "parameter_summary": instruction.parameter_summary, "fallback": "host_prefetch"}})
+            return {"raw_candidate": "", "tool_instruction": instruction, "model_usage": state.get("model_usage", []), "provider_attempts": state.get("provider_attempts", []), "trace": ["host_prefetch"]}
         if not self._call_allowed(state, "generation"):
             raise RuntimeError("generation model call budget exhausted")
         request = state["request"]
         # The primary generation remains the only foreground content call.
         # R18 intensity and stage advancement are decided in the final prompt,
         # never by a second rewrite request.
-        defer_visible_response = explicit_r18_requested(request)
+        force_web = decision.get("mode") == "force" and str(state.get("tool_hint", "")).startswith("web")
+        defer_visible_response = force_web
         started = time.perf_counter()
         extractor = IncrementalResponseParser()
         # Retain backward-compatible cue parsing for older model templates.
@@ -672,7 +708,7 @@ class NodeFactory:
             token_stream = self.deps.llm.stream_with_tools(
                 state["prompt_messages"],
                 request.api,
-                tools=native_tool_definitions(hint),
+                tools=native_tool_definitions(hint.removesuffix("_force")),
                 tool_choice=native_tool_choice(hint),
             )
         else:
@@ -725,6 +761,16 @@ class NodeFactory:
                         },
                     }
                 )
+        if force_web and (instruction is None or instruction.tool != "web"):
+            native_call = None
+            instruction = ToolInstruction(
+                tool="web",
+                level=3,
+                parameter=str(decision.get("query") or request.message),
+                command={"scope": decision.get("scope", "auto"), "platforms": decision.get("platforms", []), "recency": decision.get("recency", "any")},
+            )
+            writer({"event": "tool.requested", "data": {"call_id": instruction.call_id, "tool": "web", "level": 3, "parameter_summary": instruction.parameter_summary, "fallback": "host_prefetch"}})
+            raw = ""
         usage = self._take_model_usage(writer)
         self._check_cancelled(state)
         return {
@@ -780,6 +826,9 @@ class NodeFactory:
         emit_voice_cue = request.interaction_mode == "voice" and active_tts_provider == "qwen3-vllm"
         if emit_voice_cue and not state.get("voice_cue_event_sent"):
             writer({"event": "response.voice_cue", "data": {"cue": voice_cue}})
+        # Prefer model-authored visible prose even if it omitted legacy wrapper
+        # metadata.  Deterministic source summaries are only for empty output
+        # (or an ignored second tool call), never a replacement for normal text.
         visible_response = parsed_visible or previous_visible
         if visible_response:
             visible_response = normalize_voice_response(visible_response, request)
@@ -788,6 +837,15 @@ class NodeFactory:
         # always owns an empty plan.  This also makes protocol formatting
         # incapable of triggering a second foreground model call.
         protocol = self._safe_protocol(visible_response, state) if visible_response else None
+        tool_result = state.get("tool_result")
+        if protocol is None and isinstance(tool_result, ToolExecutionResult) and tool_result.tool == "web":
+            visible_response = self._tool_result_fallback_response(tool_result)
+            protocol = self._safe_protocol(visible_response, state)
+            errors = []
+            self.deps.audit.record(
+                "tool_result_deterministic_response",
+                {"request_id": state.get("request_id", ""), "status": tool_result.status, "coverage": tool_result.data.get("coverage", "")},
+            )
         if protocol is not None:
             self.deps.audit.record(
                 "protocol_fallback",
@@ -1168,6 +1226,7 @@ class NodeFactory:
             trace=[*state.get("trace", []), "finalize_error"],
             llm_call_count=state.get("llm_call_count", 0),
             model=self._model_diagnostics(state),
+            tool_execution=(state["tool_result"].model_dump(mode="json") if state.get("tool_result") else None),
         )
         self.deps.audit.record("turn_failed", response.model_dump(mode="json"))
         return {"response": response, "errors": errors, "trace": ["finalize_error"]}

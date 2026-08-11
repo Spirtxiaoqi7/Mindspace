@@ -4,6 +4,14 @@ Mindspace 是一个本地优先的 AI 角色、长期会话、记忆、工具调
 
 Mindspace is a local-first desktop system for AI characters, long-running conversations, memory, tool use, and voice.
 
+> 当前稳定源码：`main` / `v0.9.0`
+> 
+> 不想手动配置环境时，可从官网下载安装包：[www.douyinqijun.cn](https://www.douyinqijun.cn)。
+> 
+> 唯一开发目录：`A:\RAG\Mindspace-admin`
+>
+> 桌面运行目录：`A:\Mindspace`，不是开发工作树；`A:\Mindspace\data` 永远不进入源码提交。
+
 ## 中文
 
 ### 产品能力

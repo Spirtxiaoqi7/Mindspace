@@ -50,6 +50,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/mindspace_graph"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/mindspace_graph/static" = "mindspace_graph/static"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
@@ -65,4 +68,3 @@ select = ["E", "F", "I", "UP", "B"]
 name = "aliyun"
 url = "https://mirrors.aliyun.com/pypi/simple/"
 default = true
-

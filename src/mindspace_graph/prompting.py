@@ -50,6 +50,7 @@ from mindspace_graph.prompt_templates import (
     build_reply_context_template,
     join_turn_data_templates,
 )
+from mindspace_graph.r18_director import ADULT_ROLEPLAY_PROTOCOL
 from mindspace_graph.role_runtime import (
     build_runtime_role_state,
     compact_system_prompt,
@@ -135,8 +136,6 @@ def _deduplicate_retrieval_context(
     ]
 
 
-_EXPLICIT_CONTINUATION_HINT = re.compile(r"(?:来吧|继续|接着|可以|愿意|就这样|按你的|随你|不会的|好啊|行啊|开始吧)")
-_EXPLICIT_STOP_HINT = re.compile(r"^\s*(?:停|暂停|不要继续|别继续|到此为止|不行|算了)")
 _QUICK_INTERACTION = re.compile(r"@互动[：:]\s*([^\s@，。！？!?]{1,20})")
 _NORMAL_INTERACTIONS = frozenset({"摸头", "拥抱", "牵手", "贴近", "亲吻"})
 _FEMALE_ADULT_INTERACTIONS = frozenset({"奶子", "阴蒂"})
@@ -211,23 +210,10 @@ def _post_history_role_directive(
     character_name = str(
         profiles.ai_profile.get("identity", {}).get("name") or request.character_name or "当前角色"
     ).strip()
-    # ADULT is a hard-switch lane. Profile hints, an intimate location and old
-    # dialogue can select ROMANCE context, but may never reactivate adult rules.
-    adult_context_active = request.adult_mode
-    explicit_continuation = bool(
-        adult_context_active
-        and _EXPLICIT_CONTINUATION_HINT.search(request.message)
-        and not _EXPLICIT_STOP_HINT.search(request.message)
-    )
-
     roleplay_layer = build_roleplay_layer(request, profiles, history)
     presentation_mode = resolve_presentation_mode(request, history)
-    director = dict(roleplay_layer.pop("r18_director", {}) or {})
-    r18_requirement = str(roleplay_layer.pop("r18_quality_requirement", "") or "")
     interaction = _quick_interaction_directive(request, profiles)
     turn_data = _turn_data_directive(request)
-    scene_state = director.get("scene_state", {})
-    direct_output_required = bool(director.get("direct_output_required"))
     recent_adult_context = any(
         bool(item.get("adult_mode")) or str(item.get("companion_lane") or "") == "ADULT"
         for item in history[-8:]
@@ -241,11 +227,8 @@ def _post_history_role_directive(
         interaction=interaction,
         turn_data=turn_data,
         adult_mode=request.adult_mode,
-        scene_state_json=_json(scene_state),
-        r18_requirement=r18_requirement,
-        direct_output_required=direct_output_required,
+        adult_protocol=ADULT_ROLEPLAY_PROTOCOL if request.adult_mode else "",
         recent_adult_context=recent_adult_context,
-        explicit_continuation=explicit_continuation,
         reply_length_preference=request.reply_length_preference,
     )
 

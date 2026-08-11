@@ -6,6 +6,7 @@ from mindspace_graph.adapters.in_memory import DeterministicLanguageModel, demo_
 from mindspace_graph.capabilities import ReadOnlyCapabilityService
 from mindspace_graph.graph import build_graph
 from mindspace_graph.models import ApiConfig, ChatRequest
+from mindspace_graph.native_tools import native_call_to_instruction
 from mindspace_graph.tool_chain import (
     ToolExecutionResult,
     ToolInstruction,
@@ -46,30 +47,25 @@ def test_result_json_escapes_external_markup():
     assert "<script>" not in rendered
 
 
-def test_route_hint_is_zero_call_and_local_is_never_exposed(tmp_path):
+def test_retrieval_decision_is_zero_call_and_local_is_never_exposed(tmp_path):
     service = ReadOnlyCapabilityService(
         config_provider=lambda: capability_config(),
         runtime_dir=tmp_path,
     )
-    assert service.route_hint(ChatRequest(message="搜索 DeepSeek 最新模型")) == "web"
-    assert service.route_hint(ChatRequest(message="网络搜索一下有没有新鲜事")) == "web"
-    assert service.route_hint(ChatRequest(message="朋友说 DeepSeek 已支持超长上下文，这个说法稳妥吗")) == "web"
-    assert service.route_hint(ChatRequest(message="我今天换美元，继续按旧汇率估算够不够")) == "web"
-    assert service.route_hint(ChatRequest(message="Python 很久没升级，现在是不是已经落后")) == "web"
-    assert service.route_hint(ChatRequest(message="明早坐高铁去杭州来得及吗")) == "web"
-    assert service.route_hint(ChatRequest(message="上一代 Android 继续作为目标平台合适吗")) == "web"
-    assert service.route_hint(ChatRequest(message="今天用 Python 写个排序脚本合适吗")) == ""
-    assert service.route_hint(ChatRequest(message="你还记得我喜欢什么吗")) == "memory"
-    assert service.route_hint(ChatRequest(message="你还记不记得我刚才说过什么")) == "memory"
-    assert service.route_hint(ChatRequest(message="我之前是不是说过不想吃辣")) == "memory"
-    assert service.route_hint(ChatRequest(message="给我创建一个任务")) == "task"
+    assert service.retrieval_decision(ChatRequest(message="搜索 DeepSeek 最新模型")).mode == "force"
+    assert service.retrieval_decision(ChatRequest(message="网络搜索一下有没有新鲜事")).mode == "force"
+    assert service.retrieval_decision(ChatRequest(message="朋友说 DeepSeek 已支持超长上下文，这个说法稳妥吗")).mode == "allow"
+    assert service.retrieval_decision(ChatRequest(message="我今天换美元，继续按旧汇率估算够不够")).mode == "force"
+    assert service.retrieval_decision(ChatRequest(message="今天用 Python 写个排序脚本合适吗")).mode == "suppress"
+    assert service.auxiliary_tool_hint(ChatRequest(message="你还记得我喜欢什么吗")) == "memory"
+    assert service.auxiliary_tool_hint(ChatRequest(message="给我创建一个任务")) == "task"
     service.close()
 
 
 def web_transport(request: httpx.Request) -> httpx.Response:
     if request.url.host == "www.bing.com":
         xml = """<rss><channel>
-        <item><title>Source A</title><link>https://example.com/a</link><description>A summary</description></item>
+        <item><title>Mindspace Source A</title><link>https://example.com/a</link><description>Mindspace summary</description></item>
         <item><title>Blocked</title><link>http://127.0.0.1/private</link><description>x</description></item>
         </channel></rss>"""
         return httpx.Response(200, text=xml, headers={"content-type": "application/rss+xml"})
@@ -94,6 +90,32 @@ def test_web_executor_uses_public_get_and_returns_bounded_sources(tmp_path):
     assert result.source_count <= 5
     assert result.data["sources"][0]["url"] == "https://example.com/a"
     assert sum(len(item["content"]) for item in result.data["sources"]) <= 8000
+
+
+def test_native_original_platform_intent_reaches_web_execution_and_rejects_x_home(tmp_path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "search.brave.com":
+            return httpx.Response(200, text='<div data-type="web"><a href="https://x.com/OpenAI">OpenAI</a><div class="generic-snippet">Official profile</div></div>')
+        if request.url.host == "www.bing.com":
+            return httpx.Response(200, text="<html></html>")
+        if request.url.host == "www.baidu.com":
+            return httpx.Response(200, text="<html></html>")
+        if request.url.host == "html.duckduckgo.com":
+            return httpx.Response(200, text="<html></html>")
+        raise AssertionError(request.url)
+
+    service = ReadOnlyCapabilityService(config_provider=lambda: capability_config(), runtime_dir=tmp_path, http_transport=httpx.MockTransport(handler))
+    instruction = native_call_to_instruction(
+        {"id": "x1", "function": {"name": "web", "arguments": '{"query":"OpenAI posts"}'}},
+        user_message="帮我在 X 查找 OpenAI 官方账号最近动态",
+    )
+    result = service.execute_web(instruction)
+    service.close()
+    assert instruction.command["platforms"] == ["x"]
+    assert result.status == "success"
+    assert result.data["coverage"] == "unavailable"
+    assert result.data["sources"] == []
+    assert result.data["reason_codes"] == ["no_relevant_results"]
 
 
 class ScriptedModel(DeterministicLanguageModel):
@@ -254,6 +276,7 @@ def test_failed_tools_cannot_be_claimed_as_success():
         ),
     )
     assert web_violations and "联网查到了" not in web
+    assert "已尝试联网检索" in web
     assert task_violations and "创建了任务" not in task
     assert hinted_violations and "我记下了" not in hinted_task
     assert reminder_violations and "建好了" not in reminder and "提醒你" not in reminder

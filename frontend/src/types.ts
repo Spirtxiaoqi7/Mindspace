@@ -160,6 +160,7 @@ export interface StreamEnvelope<T = Record<string, unknown>> {
 
 export interface LlmSettings {
   mode: string;
+  provider?: string;
   base_url: string;
   model: string;
   credentials_configured?: boolean;

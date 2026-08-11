@@ -249,12 +249,26 @@ export function closeOpenMenusOutside(target: Element, root: ParentNode = docume
   return closed;
 }
 
-export function providerToolCapability(baseUrl: string) {
-  const normalized = baseUrl.trim().toLocaleLowerCase().replace(/\/$/, "");
-  const native = normalized === "https://api.deepseek.com" || normalized === "https://api.deepseek.com/v1";
-  return native
-    ? { native: true, label: "工具能力：原生 function calling，由 Mindspace 执行授权" }
-    : { native: false, label: "工具能力：Mindspace 指令协议，当前 Provider 未启用原生工具调用" };
+export type ProviderToolCapabilityState =
+  | "unknown"
+  | "probing"
+  | "supported"
+  | "unsupported"
+  | "transient_failure";
+
+export function providerToolCapability(state: ProviderToolCapabilityState | string | null | undefined) {
+  switch (state) {
+    case "supported":
+      return { native: true, state, label: "工具能力：可用" };
+    case "unsupported":
+      return { native: false, state, label: "工具能力：不可用" };
+    case "probing":
+      return { native: null, state, label: "工具能力：探测中" };
+    case "transient_failure":
+      return { native: null, state: "unknown" as const, label: "工具能力：未知（探测暂时失败）" };
+    default:
+      return { native: null, state: "unknown" as const, label: "工具能力：未知" };
+  }
 }
 
 export function modelAttemptInspectorEvent(attempt: ProviderHttpAttempt, timestamp: string, sequence: number): InspectorEvent {

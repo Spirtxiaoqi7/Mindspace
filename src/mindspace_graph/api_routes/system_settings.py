@@ -9,6 +9,8 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 
+from mindspace_graph.llm_providers import normalize_base_url, provider_by_id, provider_catalog
+
 from .context import ApiContext, ClearDataRequest
 
 
@@ -64,6 +66,44 @@ def register_routes(app: FastAPI, context: ApiContext) -> None:
         if current and current not in model_ids:
             model_ids.insert(0, current)
         return {"base_url": base_url, "current": current, "models": model_ids}
+
+    @app.get("/api/v1/models/providers")
+    async def get_model_providers():
+        return {"providers": provider_catalog()}
+
+    @app.post("/api/v1/models/discover")
+    async def discover_models(payload: dict[str, Any]):
+        provider = provider_by_id(str(payload.get("provider") or "custom"))
+        base_url = normalize_base_url(
+            str(payload.get("base_url") or "") if provider.get("custom") else str(provider.get("base_url") or "")
+        )
+        if not base_url:
+            raise HTTPException(status_code=422, detail="请填写自定义 OpenAI 兼容 API 地址")
+        api_key = str(payload.get("api_key") or settings.llm_api_key or "").strip()
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        fallback = [str(item) for item in provider.get("models", []) if str(item).strip()]
+        try:
+            response = await shared_http.get(f"{base_url}/models", headers=headers, timeout=12.0)
+            response.raise_for_status()
+            body = response.json()
+            rows = body.get("data", body.get("models", [])) if isinstance(body, dict) else body
+            models = sorted(
+                {
+                    str(item.get("id") or item.get("name") or "").strip()
+                    for item in rows if isinstance(item, dict)
+                }
+                | {str(item).strip() for item in rows if isinstance(item, str)}
+                - {""}
+            )
+            return {"provider": provider["id"], "base_url": base_url, "models": models or fallback, "source": "remote", "warning": ""}
+        except (httpx.HTTPError, ValueError) as exc:
+            return {
+                "provider": provider["id"],
+                "base_url": base_url,
+                "models": fallback,
+                "source": "preset",
+                "warning": f"供应商未返回模型目录，可继续手填模型 ID：{exc}",
+            }
 
     @app.patch("/api/v1/settings")
     @app.put("/api/v1/settings")
@@ -127,7 +167,7 @@ def register_routes(app: FastAPI, context: ApiContext) -> None:
                 "mode": settings.llm_mode,
                 "error": "当前未启用真实 LLM API，请保存模型 API 配置后重试",
             }
-        headers = {"Authorization": f"Bearer {settings.llm_api_key}"}
+        headers = {"Authorization": f"Bearer {settings.llm_api_key}"} if settings.llm_api_key else {}
         try:
             response = await shared_http.post(
                 f"{settings.llm_base_url.rstrip('/')}/chat/completions",

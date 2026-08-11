@@ -6,6 +6,7 @@ from typing import Any
 from uuid import uuid4
 
 from .tool_chain import ToolInstruction, validate_task_command
+from .web.routing import infer_platforms
 
 NATIVE_TOOL_GUIDANCE = (
     "需要外部信息或任务操作时使用结构化函数调用；"
@@ -22,8 +23,16 @@ def native_tool_definitions(tool_hint: str = "") -> list[dict[str, Any]]:
     definitions = {
         "web": _function(
             "web",
-            "查询需要联网核实的当前或外部信息。参数可以是搜索词或完整 URL。",
-            {"query": {"type": "string", "description": "搜索词或完整 URL"}},
+            "Read public current or external information. Use search, open_page, or find_in_page.",
+            {
+                "query": {"type": "string", "description": "Verbatim search intent; required."},
+                "scope": {"type": "string", "enum": ["auto", "official", "news", "social", "developer", "realtime"]},
+                "platforms": {"type": "array", "items": {"type": "string"}},
+                "recency": {"type": "string", "enum": ["live", "today", "week", "month", "any"]},
+                "action": {"type": "string", "enum": ["search", "open_page", "find_in_page"]},
+                "url": {"type": "string"},
+                "find": {"type": "string"},
+            },
             ["query"],
         ),
         "memory": _function(
@@ -81,8 +90,10 @@ def native_tool_definitions(tool_hint: str = "") -> list[dict[str, Any]]:
     return [definitions[name] for name in names]
 
 
-def native_tool_choice(tool_hint: str = "") -> str:
-    return "required" if tool_hint in {"web", "memory", "task"} else "auto"
+def native_tool_choice(tool_hint: str = "") -> str | dict[str, Any]:
+    if tool_hint == "web_force":
+        return {"type": "function", "function": {"name": "web"}}
+    return "auto"
 
 
 def native_call_to_instruction(call: dict[str, Any], *, user_message: str) -> ToolInstruction:
@@ -108,7 +119,14 @@ def native_call_to_instruction(call: dict[str, Any], *, user_message: str) -> To
             raise ValueError(f"{name} query is required")
         if len(query) > 2000:
             raise ValueError(f"{name} query is too long")
-        return ToolInstruction(call_id=call_id, tool=name, level=3, parameter=query)
+        command = {key: arguments[key] for key in ("scope", "platforms", "recency", "action", "url", "find") if key in arguments} if name == "web" else None
+        if name == "web":
+            model_platforms = command.get("platforms") if isinstance(command.get("platforms"), list) else []
+            platforms = list(dict.fromkeys([*infer_platforms(user_message), *(str(item).strip().lower() for item in model_platforms if str(item).strip())]))
+            if platforms:
+                command["platforms"] = platforms
+            command["original_intent"] = user_message
+        return ToolInstruction(call_id=call_id, tool=name, level=3, parameter=query, command=command)
     task_ops = {
         "task_list": "list",
         "task_create": "create",
@@ -130,9 +148,11 @@ def native_call_to_instruction(call: dict[str, Any], *, user_message: str) -> To
     return ToolInstruction(call_id=call_id, tool="task", level=2, parameter=compact, command=command)
 
 
-def supports_native_tools(base_url: str) -> bool:
-    normalized = (base_url or "").strip().lower().rstrip("/")
-    return normalized in {"https://api.deepseek.com", "https://api.deepseek.com/v1"}
+def supports_native_tools(base_url: str, model: str = "") -> bool:
+    """Probe any configured OpenAI-compatible endpoint; never vendor-allowlist."""
+    from mindspace_graph.provider_capabilities import PROVIDER_CAPABILITIES, ProviderCapabilityState
+
+    return bool((base_url or "").strip()) and PROVIDER_CAPABILITIES.get(base_url, model).state != ProviderCapabilityState.UNSUPPORTED
 
 
 def _function(

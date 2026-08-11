@@ -56,6 +56,14 @@ function safeWebUrl(value: unknown) {
   return /^https?:\/\//i.test(url) ? url : "";
 }
 
+function formatPartialFailure(value: unknown) {
+  if (typeof value === "string") return value;
+  const failure = asRecord(value);
+  const provider = str(failure.provider).trim();
+  const error = str(failure.error).trim();
+  return [provider, error].filter(Boolean).join("：") || "请求失败";
+}
+
 function TraceItem({ item }: { item: InspectorEvent }) {
   const data = asRecord(item.data);
   const isTool = item.event.startsWith("tool:") || item.event.startsWith("tool.");
@@ -75,7 +83,7 @@ function ModelTraceData({ data }: { data: Record<string, unknown> }) {
 
 export function ToolCard({ tool }: { tool: ToolExecution }) {
   const statusLabel = { requested: "已请求", reviewing: "审查中", running: "执行中", success: "已完成", denied: "已拒绝", failed: "失败" }[tool.status];
-  const toolLabel = tool.tool === "web" ? "联网搜索" : tool.tool === "memory" ? "记忆检索" : "任务处理";
+  const toolLabel = tool.tool === "web" ? "联网检索" : tool.tool === "memory" ? "记忆检索" : "任务处理";
   const active = ["requested", "reviewing", "running"].includes(tool.status);
   const [clock, setClock] = useState(() => Date.now());
   useEffect(() => {
@@ -99,5 +107,6 @@ export function ToolCard({ tool }: { tool: ToolExecution }) {
 function ToolTraceData({ data }: { data: Record<string, unknown> }) {
   const payload = asRecord(data.data);
   const sources = Array.isArray(payload.sources) ? payload.sources.map(asRecord) : [];
-  return <div className="tool-trace"><p><b>参数</b><span>{str(data.parameter_summary) || "无"}</span></p><p><b>状态</b><span>{str(data.status || (bool(data.allowed) ? "approved" : "reviewed"))}</span></p>{str(data.error || data.reason) && <p className="tool-error"><b>说明</b><span>{str(data.error || data.reason)}</span></p>}{sources.length > 0 && <details><summary>联网来源（{sources.length}）</summary>{sources.map((source, index) => { const url = safeWebUrl(source.url); return <article key={`${url}-${index}`}><strong>{str(source.title || source.source)}</strong>{str(source.content) && <p>{str(source.content)}</p>}{url && <a href={url} target="_blank" rel="noreferrer">打开来源</a>}</article>; })}</details>}{!sources.length && Object.keys(payload).length > 0 && <pre>{JSON.stringify(payload, null, 2)}</pre>}</div>;
+  const coverage = str(payload.coverage); const failures = Array.isArray(payload.partial_failures) ? payload.partial_failures.map(formatPartialFailure).filter(Boolean) : [];
+  return <div className="tool-trace"><p><b>状态</b><span>{str(data.status || (bool(data.allowed) ? "approved" : "reviewed"))}</span></p>{coverage && <p><b>覆盖</b><span>{coverage}</span></p>}{str(data.error || data.reason) && <p className="tool-error"><b>说明</b><span>{str(data.error || data.reason)}</span></p>}{sources.length > 0 && <details><summary>来源（{sources.length}）</summary>{sources.map((source, index) => { const url = safeWebUrl(source.url); return <article key={`${url}-${index}`}><strong>{str(source.title || source.platform || "公开来源")}</strong><p>{[str(source.platform), str(source.published_at), str(source.retrieved_at), str(source.freshness), str(source.evidence_level)].filter(Boolean).join(" · ")}</p>{str(source.text || source.content) && <p>{str(source.text || source.content)}</p>}{url && <a href={url} target="_blank" rel="noreferrer">打开来源</a>}</article>; })}</details>}{failures.length > 0 && <p className="tool-error"><b>局部失败</b><span>{failures.join("；")}</span></p>}</div>;
 }

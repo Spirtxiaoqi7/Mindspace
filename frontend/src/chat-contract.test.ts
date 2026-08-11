@@ -138,12 +138,25 @@ describe("execution details and product gates", () => {
     expect(shouldRenderToolExecution({} as never)).toBe(false);
   });
 
-  it("uses live ASR readiness and never blocks chat for provider capability", () => {
+  it("uses live ASR readiness and renders only backend-probed provider capability", () => {
     expect(shouldShowComposerAction(false, false, false)).toBe(false);
     expect(composerAction(false, true, false)).toBe("send");
     expect(composerAction(false, false, true)).toBe("voice");
-    expect(providerToolCapability("https://api.deepseek.com/v1")).toMatchObject({ native: true });
-    expect(providerToolCapability("https://api.siliconflow.com/v1")).toMatchObject({ native: false });
+    expect(providerToolCapability("supported")).toMatchObject({ native: true, state: "supported" });
+    expect(providerToolCapability("unsupported")).toMatchObject({ native: false, state: "unsupported" });
+    expect(providerToolCapability("probing")).toMatchObject({ native: null, state: "probing" });
+  });
+
+  it("does not infer capability from OpenAI, custom-compatible, or DeepSeek URLs", () => {
+    const providerUrls = [
+      "https://api.openai.com/v1",
+      "https://llm.example.test/openai/v1",
+      "https://api.deepseek.com/v1",
+    ];
+    for (const baseUrl of providerUrls) {
+      expect(providerToolCapability(baseUrl)).toMatchObject({ native: null, state: "unknown" });
+      expect(providerToolCapability("transient_failure")).toMatchObject({ native: null, state: "unknown" });
+    }
   });
 
   it("closes menus only when the pointer target is outside", () => {

@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 
 from mindspace_graph.models import ApiConfig, ModelUsage, ProviderHttpAttempt
+from mindspace_graph.provider_capabilities import PROVIDER_CAPABILITIES, explicitly_rejects_tools
 
 
 class EmptyVisibleContentError(ValueError):
@@ -66,6 +67,7 @@ class OpenAICompatibleLanguageModel:
             # routing continues to work because it operates below httpx.
             trust_env=False,
         )
+        self._tool_capabilities = PROVIDER_CAPABILITIES
 
     def close(self) -> None:
         if self._owns_client:
@@ -177,6 +179,7 @@ class OpenAICompatibleLanguageModel:
 
     def stream(self, messages: list[dict[str, str]], config: ApiConfig) -> Iterator[str]:
         self._local.usage = None
+        self._local.native_tool_call = None
         self._reset_provider_attempts()
         yield from self._stream(messages, config, request_kind="generation")
 
@@ -186,7 +189,7 @@ class OpenAICompatibleLanguageModel:
         config: ApiConfig,
         *,
         tools: list[dict[str, Any]],
-        tool_choice: str = "auto",
+        tool_choice: str | dict[str, Any] = "auto",
     ) -> Iterator[str]:
         """Stream visible text or retain one provider-native tool call."""
 
@@ -200,16 +203,18 @@ class OpenAICompatibleLanguageModel:
             "max_tokens": config.max_tokens,
             "stream": True,
             "stream_options": {"include_usage": True},
-            "thinking": {"type": "disabled"},
             "tools": tools,
             "tool_choice": tool_choice,
         }
         endpoint = f"{config.base_url.rstrip('/')}/chat/completions"
-        headers = {"Authorization": f"Bearer {config.api_key}", "Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json"}
+        if config.api_key:
+            headers["Authorization"] = f"Bearer {config.api_key}"
         calls: dict[int, dict[str, Any]] = {}
         visible = False
         last_usage_event: dict[str, Any] | None = None
-        attempt = self._begin_provider_attempt("generation", compatibility_variant="native_tools")
+        self._tool_capabilities.begin_probe(config.base_url, config.model)
+        attempt = self._begin_provider_attempt("generation", compatibility_variant="chat_completions_tools")
         response_status: int | None = None
         try:
             with self._client.stream(
@@ -247,13 +252,17 @@ class OpenAICompatibleLanguageModel:
                             current["function"]["name"] += str(function["name"])
                         if function.get("arguments"):
                             current["function"]["arguments"] += str(function["arguments"])
-                    content = delta.get("content")
-                    if isinstance(content, str) and content:
+                    content = _text_content(delta.get("content"))
+                    if content:
                         visible = True
                         yield content
             if not calls and not visible:
                 raise EmptyVisibleContentError("model returned no visible content or tool call")
         except httpx.HTTPStatusError as exc:
+            if explicitly_rejects_tools(exc.response.status_code, exc.response.text):
+                self._tool_capabilities.unsupported(config.base_url, config.model, "unsupported_field")
+            else:
+                self._tool_capabilities.transient_failure(config.base_url, config.model, f"http_{exc.response.status_code}")
             self._finish_provider_attempt(
                 attempt, "generation", status="http_error", compatibility_variant="native_tools",
                 http_status=exc.response.status_code, error=str(exc),
@@ -277,6 +286,7 @@ class OpenAICompatibleLanguageModel:
             )
             raise
         else:
+            self._tool_capabilities.supported(config.base_url, config.model, protocol="tools")
             self._finish_provider_attempt(
                 attempt, "generation", status="success", compatibility_variant="native_tools",
                 http_status=response_status,
@@ -294,11 +304,8 @@ class OpenAICompatibleLanguageModel:
                 for item in calls.values()
                 if isinstance(item, dict)
             } - {""}
-            forced_single_function = (
-                tool_choice == "required"
-                and len(configured_names) == 1
-                and returned_names == configured_names
-            )
+            selected_name = str(((tool_choice.get("function") or {}).get("name") or "")) if isinstance(tool_choice, dict) else ""
+            forced_single_function = len(configured_names) == 1 and returned_names == configured_names and selected_name in configured_names
             if not forced_single_function:
                 raise ValueError("provider returned more than one tool call in a single turn")
         if calls:
@@ -433,10 +440,10 @@ class OpenAICompatibleLanguageModel:
         variants = [
             {
                 **base_body,
-                "thinking": {"type": "disabled"},
+                
                 "response_format": {"type": "json_object"},
             },
-            {**base_body, "thinking": {"type": "disabled"}},
+            base_body,
             base_body,
         ]
         last_error: Exception | None = None
@@ -510,23 +517,18 @@ class OpenAICompatibleLanguageModel:
         *,
         request_kind: str,
     ) -> Iterator[str]:
-        """Visible generation prefers non-thinking output and retries one blank result."""
+        """Visible generation uses only standard Chat Completions fields."""
 
-        variants = [
-            (True, True),
-            (False, True),
-            (False, False),
-        ]
+        variants = [True, False]
         last_error: Exception | None = None
         blank_retry_used = False
-        for variant_index, (include_usage, disable_thinking) in enumerate(variants):
+        for variant_index, include_usage in enumerate(variants):
             try:
                 yield from self._stream_with_connect_retry(
                     messages,
                     config,
                     request_kind=request_kind,
                     include_usage=include_usage,
-                    disable_thinking=disable_thinking,
                     retry_reason="compatibility_fallback" if variant_index else "",
                 )
                 return
@@ -548,7 +550,6 @@ class OpenAICompatibleLanguageModel:
                     config,
                     request_kind=request_kind,
                     include_usage=False,
-                    disable_thinking=disable_thinking,
                     retry_reason="empty_output_retry",
                 )
                 return
@@ -563,7 +564,6 @@ class OpenAICompatibleLanguageModel:
         *,
         request_kind: str,
         include_usage: bool,
-        disable_thinking: bool,
         retry_reason: str = "",
     ) -> Iterator[str]:
         """Retry one failed connection or silent first response before visible text."""
@@ -576,7 +576,6 @@ class OpenAICompatibleLanguageModel:
                     config,
                     request_kind=request_kind,
                     include_usage=include_usage,
-                    disable_thinking=disable_thinking,
                     retry_reason="connection_retry" if attempt else retry_reason,
                 ):
                     emitted = True
@@ -603,7 +602,6 @@ class OpenAICompatibleLanguageModel:
         *,
         request_kind: str,
         include_usage: bool,
-        disable_thinking: bool,
         retry_reason: str = "",
     ) -> Iterator[str]:
         """发送真实 provider 请求并把 SSE delta.content 原样交给协议解析层。"""
@@ -620,8 +618,6 @@ class OpenAICompatibleLanguageModel:
         }
         if include_usage:
             body["stream_options"] = {"include_usage": True}
-        if disable_thinking:
-            body["thinking"] = {"type": "disabled"}
         headers = {"Content-Type": "application/json"}
         if config.api_key:
             headers["Authorization"] = f"Bearer {config.api_key}"
@@ -630,7 +626,7 @@ class OpenAICompatibleLanguageModel:
         saw_reasoning = False
         finish_reason = ""
         started_at = monotonic()
-        variant = f"stream_usage_{int(include_usage)}_thinking_disabled_{int(disable_thinking)}"
+        variant = f"stream_usage_{int(include_usage)}"
         attempt = self._begin_provider_attempt(
             request_kind,
             compatibility_variant=variant,
@@ -704,4 +700,6 @@ class OpenAICompatibleLanguageModel:
                 attempt, request_kind, status="success", compatibility_variant=variant,
                 retry_reason=retry_reason, http_status=response_status,
             )
+
+
 

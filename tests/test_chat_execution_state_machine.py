@@ -102,8 +102,12 @@ class CountingWebCapability:
     def enabled(self, name: str) -> bool:
         return True
 
-    def route_hint(self, message: str, history=None) -> str:
-        return "web"
+    def retrieval_decision(self, request, history=None):
+        from mindspace_graph.web.models import RetrievalDecision
+        return RetrievalDecision(mode="force", query=request.message)
+
+    def auxiliary_tool_hint(self, request) -> str:
+        return ""
 
     def execute_web(self, instruction):
         self.calls += 1
@@ -199,15 +203,15 @@ def test_provider_final_failure_is_audited_and_recoverable_from_durable_events(t
 
         durable_events = container.database.conversation_run_events("provider-failure-run", 0)
         attempt_events = [item for item in durable_events if "event: model.attempt" in item]
-        assert len(attempt_events) == 2
+        assert len(attempt_events) == 1
         assert all('"status": "transport_error"' in item for item in attempt_events)
         terminal = next(item for item in durable_events if "event: run.error" in item)
-        assert '"total_http_attempts": 2' in terminal
+        assert '"total_http_attempts": 1' in terminal
         assert '"provider_attempts"' in terminal
 
         container.conversation._stream_runs.clear()
         replay = "".join([item async for item in container.conversation.resume_stream("provider-failure-run")])
-        assert replay.count("event: model.attempt") == 2
+        assert replay.count("event: model.attempt") == 1
         assert "event: run.error" in replay
         await container.conversation.aclose()
         client.close()

@@ -17,7 +17,7 @@ def test_hinted_native_tool_sets_are_small_and_required():
         "task_update",
         "task_complete",
     ]
-    assert native_tool_choice("web") == "required"
+    assert native_tool_choice("web_force") == {"type": "function", "function": {"name": "web"}}
     assert native_tool_choice("") == "auto"
 
 
@@ -49,6 +49,15 @@ def test_native_calls_map_to_validated_host_instructions():
     }
 
 
+def test_web_call_merges_platform_scope_from_the_original_user_message():
+    instruction = native_call_to_instruction(
+        {"id": "w1", "function": {"name": "web", "arguments": '{"query":"translated query","platforms":["github"]}'}},
+        user_message="帮我在 GitHub、X(Twitter)、小红书、Bilibili、Reddit、YouTube、Bluesky 和 Mastodon 查找。",
+    )
+    assert instruction.command["platforms"] == ["x", "github", "youtube", "reddit", "bluesky", "mastodon", "bilibili", "xiaohongshu"]
+    assert instruction.command["original_intent"] == "帮我在 GitHub、X(Twitter)、小红书、Bilibili、Reddit、YouTube、Bluesky 和 Mastodon 查找。"
+
+
 def test_native_task_discards_model_invented_clock_time():
     task = native_call_to_instruction(
         {
@@ -63,7 +72,7 @@ def test_native_task_discards_model_invented_clock_time():
     assert task.command == {"op": "create", "title": "周六买花", "due_at": None}
 
 
-def test_native_tools_only_enable_for_official_deepseek_endpoint():
+def test_native_tools_probe_any_openai_compatible_endpoint_until_explicit_rejection():
     assert supports_native_tools("https://api.deepseek.com")
     assert supports_native_tools("https://api.deepseek.com/v1/")
-    assert not supports_native_tools("https://api.siliconflow.com/v1")
+    assert supports_native_tools("https://api.siliconflow.com/v1")

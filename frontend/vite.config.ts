@@ -11,7 +11,8 @@ export default defineConfig(({ mode }) => ({
   plugins: [react()],
   base: "/assets/",
   build: {
-    outDir: resolve(__dirname, "../src/mindspace_graph/web"),
+    // Build artifacts must never share a directory with importable Python code.
+    outDir: resolve(__dirname, "../src/mindspace_graph/static/app"),
     emptyOutDir: true,
     assetsDir: ".",
     sourcemap: mode !== "production" && process.env.MINDSPACE_DEV_SOURCEMAP === "1",

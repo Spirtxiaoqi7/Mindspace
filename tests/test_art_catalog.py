@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from mindspace_graph.art_catalog import ArtCatalogService
+from mindspace_graph.static_paths import BUILTIN_ART_ARCHIVE_ROOT, BUILTIN_ART_MANIFEST, STATIC_APP_ROOT
 
 
 def sha256(path: Path) -> str:
@@ -15,9 +16,9 @@ def sha256(path: Path) -> str:
 
 
 def test_builtin_art_manifest_v2_and_approved_expansion_are_valid():
-    web_root = Path(__file__).parents[1] / "src" / "mindspace_graph" / "web"
-    archive_root = web_root / "archive"
-    manifest = json.loads((archive_root / "manifest.json").read_text(encoding="utf-8"))
+    web_root = STATIC_APP_ROOT
+    archive_root = BUILTIN_ART_ARCHIVE_ROOT
+    manifest = json.loads(BUILTIN_ART_MANIFEST.read_text(encoding="utf-8"))
     preview_index = json.loads((archive_root / "previews" / "index.json").read_text(encoding="utf-8"))
 
     assert manifest["schema_version"] == "2.0.0"
@@ -58,6 +59,18 @@ def test_builtin_art_manifest_v2_and_approved_expansion_are_valid():
     assert 'width="64"' in icon
     assert 'height="64"' in icon
     assert 'viewBox="4 4 56 56"' in icon
+
+
+def test_packaged_static_root_contains_shell_manifest_scene_assets_avatars_and_worklets():
+    manifest = json.loads(BUILTIN_ART_MANIFEST.read_text(encoding="utf-8"))
+    assert (STATIC_APP_ROOT / "index.html").is_file()
+    assert (STATIC_APP_ROOT / "avatar-ai-default.webp").is_file()
+    assert (STATIC_APP_ROOT / "avatar-user-default.webp").is_file()
+    assert (STATIC_APP_ROOT / "pcm-worklet.js").is_file()
+    assert (STATIC_APP_ROOT / "tts-playback-worklet.js").is_file()
+    scene_assets = [item for item in manifest["assets"] if "/scenes/" in item["path"]]
+    assert scene_assets
+    assert all((STATIC_APP_ROOT / item["path"].removeprefix("/assets/")).is_file() for item in scene_assets)
 
 
 def test_pack_extraction_rolls_back_corrupt_replacement(tmp_path):

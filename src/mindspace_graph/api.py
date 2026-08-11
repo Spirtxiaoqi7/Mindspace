@@ -33,6 +33,7 @@ from mindspace_graph.audio import AudioService
 from mindspace_graph.destiny import DestinyService
 from mindspace_graph.bootstrap import ProductContainer, build_container
 from mindspace_graph.settings import AppSettings
+from mindspace_graph.static_paths import STATIC_APP_ROOT
 from mindspace_graph.version import APP_VERSION
 
 
@@ -131,7 +132,7 @@ def create_app(
     app.state.audio = audio
     app.state.destiny = destiny
 
-    web_root = Path(__file__).resolve().parent / "web"
+    web_root = STATIC_APP_ROOT
     avatar_root = settings.runtime_dir / "data" / "avatars"
     avatar_root.mkdir(parents=True, exist_ok=True)
     avatar_config_path = avatar_root / "config.json"

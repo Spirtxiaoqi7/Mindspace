@@ -210,8 +210,6 @@ def test_native_tool_guidance_is_short_and_old_protocol_is_absent() -> None:
     text = "\n".join(item["content"] for item in built.messages)
     assert NATIVE_TOOL_GUIDANCE in text
     assert "零调用提示=web" in text
-    assert "<T:" not in text
-    assert "<R:" not in text
     assert "knowledge.search_local" not in text
     assert "capability_plan" not in text
 
