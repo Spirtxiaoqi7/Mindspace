@@ -10,7 +10,7 @@ last_reviewed: 2026-08-11
 
 ### 发布原则与边界
 
-所有发布命令从 `A:\RAG\Mindspace-admin` 执行。日常业务、Prompt、RAG、TTS/ASR 编排和聊天前端变更只发布 Core 包；仅在 Electron Launcher、安装器或更新器本身变更时才加入 `-IncludeLauncher`。`A:\Mindspace` 是用户运行时，不是发布源；不得上传其 `data`、`config`、`logs`、`environment`、`models`、`user-data`、`reports/` 或用户数据。
+所有发布命令从 `<repo>` 执行。日常业务、Prompt、RAG、TTS/ASR 编排和聊天前端变更只发布 Core 包；仅在 Electron Launcher、安装器或更新器本身变更时才加入 `-IncludeLauncher`。`<home>` 是用户运行时，不是发布源；不得上传其 `data`、`config`、`logs`、`environment`、`models`、`user-data`、`reports/` 或用户数据。
 
 Core、Launcher 和签名目录在独立 OSS/CDN 完成配置前统一由官网 `douyinqijun.cn/downloads/mindspace` 承载。迁移 CDN 前必须完成完整在线验收；不得仅以 DNS、HTTP 200 或页面可访问作为发布成功依据。
 
@@ -19,7 +19,7 @@ Core、Launcher 和签名目录在独立 OSS/CDN 完成配置前统一由官网 
 稳定 Core 更新：
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 .\scripts\prepare-online-release.ps1 `
   -Version 0.4.1 `
   -Sequence 41 `
@@ -32,7 +32,7 @@ Set-Location A:\RAG\Mindspace-admin
 Launcher 同时变更时：
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 .\scripts\prepare-online-release.ps1 `
   -Version 0.5.0 `
   -Sequence 50 `
@@ -51,7 +51,7 @@ Set-Location A:\RAG\Mindspace-admin
 发布到本地 Web 根目录：
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 .\scripts\publish-online-release.ps1 `
   -Channel stable `
   -WebRoot D:\www\downloads\mindspace
@@ -60,7 +60,7 @@ Set-Location A:\RAG\Mindspace-admin
 版本文件先复制，最后原子替换 `catalog/stable/windows-x64.json`，避免客户端读取半成品。通过 SSH 发布时使用密钥，不保存服务器密码：
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 .\scripts\publish-online-release.ps1 `
   -Channel stable `
   -Remote root@your-server `
@@ -70,7 +70,7 @@ Set-Location A:\RAG\Mindspace-admin
 公开前可先上传完整暂存版本；该操作不会修改官网链接、Launcher feed 或 stable 清单：
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 .\scripts\publish-online-release-interactive.ps1 -Channel stable -StagingOnly
 ```
 
@@ -79,7 +79,7 @@ Set-Location A:\RAG\Mindspace-admin
 发布后必须执行：
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 node .\scripts\verify-online-release.mjs --full
 ```
 
@@ -91,13 +91,13 @@ node .\scripts\verify-online-release.mjs --full
 
 更新服务器只保留当前安装器、5 个 Core 版本和回滚文件时，1 GiB 可运行；建议 5–10 GiB 对象存储并启用 CDN。若客户端保留本地 ASR 和向量模型，应预留至少 12–15 GiB 磁盘。安装器体积不等于完整本地 AI 环境体积，模型与私有环境需单独计算分发流量和容量。
 
-Core 安装失败或健康检查失败时，更新器用 rollback token 恢复上一 Core。若迁移缺陷风险出现，立即以更高 Sequence 和 `rollout=0` 停止新增更新，再发布修复版本。已迁移用户数据不得在线降级。升级前在 `<home>\data\backups\` 创建完整回滚点；只有更新器失效才使用完整目录备份，并永不删除或覆盖 `<home>\data`、`models`、`environment`、`user-data`。其中 `<home>` 是已安装运行时的 Home，通常为 `A:\Mindspace`，且 `runtime_dir=home`。
+Core 安装失败或健康检查失败时，更新器用 rollback token 恢复上一 Core。若迁移缺陷风险出现，立即以更高 Sequence 和 `rollout=0` 停止新增更新，再发布修复版本。已迁移用户数据不得在线降级。升级前在 `<home>\data\backups\` 创建完整回滚点；只有更新器失效才使用完整目录备份，并永不删除或覆盖 `<home>\data`、`models`、`environment`、`user-data`。其中 `<home>` 是已安装运行时的 Home，通常为 `<home>`，且 `runtime_dir=home`。
 
 ## English
 
 ### Release principles and boundaries
 
-Run all release commands from `A:\RAG\Mindspace-admin`. Publish only a Core package for routine business, Prompt, RAG, TTS/ASR orchestration, and chat-frontend changes. Add `-IncludeLauncher` only when the Electron Launcher, installer, or updater itself changes. `A:\Mindspace` is a user runtime, not a release source; do not upload its `data`, `config`, `logs`, `environment`, `models`, `user-data`, `reports/`, or any user data.
+Run all release commands from `<repo>`. Publish only a Core package for routine business, Prompt, RAG, TTS/ASR orchestration, and chat-frontend changes. Add `-IncludeLauncher` only when the Electron Launcher, installer, or updater itself changes. `<home>` is a user runtime, not a release source; do not upload its `data`, `config`, `logs`, `environment`, `models`, `user-data`, `reports/`, or any user data.
 
 Until an independent OSS/CDN is configured, serve Core, Launcher, and signed catalogs together from `douyinqijun.cn/downloads/mindspace`. Complete full online acceptance before migrating to a CDN; DNS, HTTP 200, or a reachable page alone are not proof of a successful release.
 
@@ -106,7 +106,7 @@ Until an independent OSS/CDN is configured, serve Core, Launcher, and signed cat
 Stable Core update:
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 .\scripts\prepare-online-release.ps1 `
   -Version 0.4.1 `
   -Sequence 41 `
@@ -119,7 +119,7 @@ Set-Location A:\RAG\Mindspace-admin
 When the Launcher also changes:
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 .\scripts\prepare-online-release.ps1 `
   -Version 0.5.0 `
   -Sequence 50 `
@@ -138,7 +138,7 @@ Generated output is in `runtime\release-site\mindspace`. Keep `runtime\update-ke
 Publish to a local web root:
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 .\scripts\publish-online-release.ps1 `
   -Channel stable `
   -WebRoot D:\www\downloads\mindspace
@@ -147,7 +147,7 @@ Set-Location A:\RAG\Mindspace-admin
 Copy version files first and atomically replace `catalog/stable/windows-x64.json` last, so clients cannot see a partial release. For SSH publishing, use a key and do not store a server password:
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 .\scripts\publish-online-release.ps1 `
   -Channel stable `
   -Remote root@your-server `
@@ -157,7 +157,7 @@ Set-Location A:\RAG\Mindspace-admin
 Before public release, upload a complete staged version; this does not modify the website link, Launcher feed, or stable catalog:
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 .\scripts\publish-online-release-interactive.ps1 -Channel stable -StagingOnly
 ```
 
@@ -166,7 +166,7 @@ The staging path is `/downloads/mindspace/staging/<version>/`. Complete public f
 After publication, run:
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 node .\scripts\verify-online-release.mjs --full
 ```
 
@@ -178,4 +178,4 @@ The server must provide HTTPS, GET, HEAD, and Range; `.partial` resume must retu
 
 One GiB can operate an update server retaining the current installer, five Core versions, and rollback files; use 5–10 GiB object storage with a CDN in practice. A client retaining local ASR and vector models should reserve at least 12–15 GiB of disk. Installer size is not the size of a complete local AI environment: model and private-environment distribution traffic and capacity must be calculated separately.
 
-If Core installation or its health check fails, the updater restores the previous Core with a rollback token. When migration-defect risk appears, immediately stop new updates with a higher Sequence and `rollout=0`, then publish a fix. Migrated user data must not be downgraded online. Before upgrade, create a complete rollback point under `<home>\data\backups\`; use a complete directory backup only if the updater fails, and never delete or overwrite `<home>\data`, `models`, `environment`, or `user-data`. Here `<home>` is the installed-runtime Home, usually `A:\Mindspace`, and `runtime_dir=home`.
+If Core installation or its health check fails, the updater restores the previous Core with a rollback token. When migration-defect risk appears, immediately stop new updates with a higher Sequence and `rollout=0`, then publish a fix. Migrated user data must not be downgraded online. Before upgrade, create a complete rollback point under `<home>\data\backups\`; use a complete directory backup only if the updater fails, and never delete or overwrite `<home>\data`, `models`, `environment`, or `user-data`. Here `<home>` is the installed-runtime Home, usually `<home>`, and `runtime_dir=home`.

@@ -434,9 +434,9 @@ export function SettingsWorkspace({ value, avatars, initialTab = "model", onClos
           <SelectField label="API 供应商" value={draft.llm.provider || "custom"} options={llmProviders.map((item) => [item.id, item.label])} onChange={switchLlmProvider} />
           <Field label="新 API 密钥（留空保持）" value={llmApiKey} type="password" placeholder={bool(draft.llm.credentials_configured) ? "已配置；输入新密钥可替换" : "输入 API 密钥"} onChange={(next) => setLlmApiKey(str(next))} />
           {draft.llm.provider === "custom" && <Field label="OpenAI 兼容 API 地址" value={draft.llm.base_url} onChange={(next) => update("llm", "base_url", next)} placeholder="例如 http://127.0.0.1:1234/v1" />}
-          <label className="field"><span>模型</span><input list="mindspace-llm-models" value={draft.llm.model} onChange={(event) => update("llm", "model", event.target.value)} placeholder="选择或填写模型 ID" /><datalist id="mindspace-llm-models">{availableModels.map((model) => <option value={model} key={model} />)}</datalist></label>
+          <label className="field" style={{ gridColumn: "1 / -1" }}><span>模型</span><input list="mindspace-llm-models" value={draft.llm.model} onChange={(event) => update("llm", "model", event.target.value)} placeholder="选择或填写模型 ID" /><datalist id="mindspace-llm-models">{availableModels.map((model) => <option value={model} key={model} />)}</datalist></label>
+          <div style={{ gridColumn: "1 / -1" }}><Field label="最大输出 Token" value={draft.llm.max_tokens} type="number" min={512} max={32768} step={512} onChange={(next) => update("llm", "max_tokens", next)} /><small className="field-hint">控制模型单次输出上限；工具调用及工具后的回复最低保障 4096 Token，不改变上下文窗口。</small></div>
           <Field label="温度" value={draft.llm.temperature} type="number" min={0} max={2} step={0.05} onChange={(next) => update("llm", "temperature", next)} />
-          <Field label="最大 token" value={draft.llm.max_tokens} type="number" min={64} max={32768} onChange={(next) => update("llm", "max_tokens", next)} />
         </div>
         <footer><button className="secondary" type="button" disabled={llmModelBusy || !llmProviders.length} onClick={() => void discoverLlmModels()}>{llmModelBusy ? "正在获取模型…" : "获取模型列表"}</button><span>{llmModelStatus}</span></footer>
       </section>

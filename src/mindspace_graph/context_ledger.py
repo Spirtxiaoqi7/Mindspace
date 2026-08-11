@@ -1044,12 +1044,25 @@ class ContextLedger:
                 "SELECT active_epoch_id, character_id FROM context_sessions WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
-            if (
-                active is None
-                or (character_id and str(active["character_id"] or "") != character_id)
-                or int(active["active_epoch_id"] or 0) != epoch_id
-            ):
+            if active is None or (character_id and str(active["character_id"] or "") != character_id):
                 raise RuntimeError("context epoch changed before turn commit")
+            active_epoch_id = int(active["active_epoch_id"] or 0)
+            if active_epoch_id != epoch_id:
+                old_epoch = db.execute(
+                    "SELECT system_hash, profile_revisions_json, rewrite_version FROM context_epochs WHERE epoch_id = ?",
+                    (epoch_id,),
+                ).fetchone()
+                new_epoch = db.execute(
+                    "SELECT system_hash, profile_revisions_json, rewrite_version FROM context_epochs WHERE epoch_id = ? AND status = 'active'",
+                    (active_epoch_id,),
+                ).fetchone()
+                comparable = ("system_hash", "profile_revisions_json", "rewrite_version")
+                if old_epoch is None or new_epoch is None or any(old_epoch[key] != new_epoch[key] for key in comparable):
+                    raise RuntimeError("context epoch changed before turn commit")
+                # Background compaction may atomically replace an epoch while
+                # a foreground model call is running. Identical authoritative
+                # inputs make rebasing this turn onto the new epoch safe.
+                epoch_id = active_epoch_id
             sequences: list[int] = []
             for item in pending_events:
                 sequence = self._insert_event(

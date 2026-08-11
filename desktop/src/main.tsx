@@ -4,7 +4,7 @@ import "./styles.css";
 import "./redesign.css";
 
 const services = {
-  api: { title: "Mindspace Core", subtitle: "LangGraph · RAG · SSE", icon: "brand", tone: "brand" },
+  api: { title: "Mindspace Core", subtitle: "对话 · 记忆 · 联网", icon: "brand", tone: "brand" },
   asr: { title: "实时聆听", subtitle: "FunASR · VAD · 打断", icon: "≋", tone: "teal" },
   tts: { title: "自然声音", subtitle: "可切换本地流式合成", icon: "◒", tone: "sage" },
 } as const;
@@ -506,7 +506,7 @@ function App() {
       }
     }
     if (!coreOnline) {
-      setNotice("正在启动 Mindspace Core；语音服务不会阻塞本次进入…");
+      setNotice("正在启动 Mindspace Core…");
       const result = await window.launcher.action("api", "start");
       if (!result.ok) {
         setNotice(result.error || "启动失败，请查看日志");
@@ -528,7 +528,7 @@ function App() {
         return;
       }
     }
-    setNotice(asrOnline ? "Mindspace 已准备好" : "Core 已就绪；本次启动未启用 VAD/ASR，将以纯文字模式进入");
+    setNotice("Mindspace 已准备好");
     await window.launcher.open("app");
     setBusy("");
   }
@@ -762,7 +762,7 @@ function App() {
         <i className="spinner" />
         <span className="eyebrow">STARTING LOCALLY</span>
         <h1>正在确认本机状态</h1>
-        <p>这里只读取运行环境和已保存配置，不会启动或下载任何声音模型。</p>
+        <p>正在读取本机配置。</p>
       </div>
     </div>;
   }
@@ -790,7 +790,7 @@ function App() {
         <span title="启动器字体比例">{Math.round(launcherFontScale * 100)}%</span>
         <button aria-label="放大启动器字体" title="放大字体" disabled={launcherFontScale >= 1.5} onClick={() => setLauncherFontScale((value) => Math.min(1.5, Number((value + 0.1).toFixed(1))))}>A+</button>
       </div>
-      <span className="title-status"><i className={runtime.ready && coreOnline ? "online" : ""} />{!runtime.ready ? "环境待初始化" : coreOnline ? (asrOnline ? "Core 就绪 · 语音可用" : "Core 就绪 · 仅文字") : "Core 正在准备"}</span>
+      <span className="title-status"><i className={runtime.ready && coreOnline ? "online" : ""} />{!runtime.ready ? "待初始化" : coreOnline ? "Core 就绪" : "Core 启动中"}</span>
     </header>
 
     <main>
@@ -800,18 +800,18 @@ function App() {
       </section>}
       <section className="hero">
         <div className="hero-copy">
-          <span className="eyebrow">PRIVATE · LOCAL · READY</span>
-          <h1>一切准备就绪，<br /><em>她在等你。</em></h1>
-          <p>进入对话，或让角色安静地留在桌面。服务、模型和更新会在后台保持可见、可控。</p>
+          <span className="eyebrow">PRIVATE · LOCAL</span>
+          <h1>准备就绪。<br /><em>开始对话。</em></h1>
+          <p>进入 Mindspace，或在下方管理本地服务。</p>
           <div className="hero-actions action-deck">
             <button className="action-card action-card-primary" disabled={Boolean(busy)} onClick={launchMindspace}>
               <span className="action-orb" aria-hidden="true"><img src="./ui/launcher-clay-orb-v1.png" alt="" /></span>
-              <span className="action-copy"><small>START A CONVERSATION</small><b>{busy === "launch" ? <><i className="spinner" />{runtime.ready ? "正在启动 Core" : "正在初始化"}</> : !runtime.ready ? "一键初始化并进入" : coreOnline ? "进入 Mindspace" : "启动 Core 并进入"}</b><em>{runtime.ready ? "继续最近一次对话" : "环境会按顺序完成准备"}</em></span>
+              <span className="action-copy"><small>MINDSPACE</small><b>{busy === "launch" ? <><i className="spinner" />{runtime.ready ? "正在启动 Core" : "正在初始化"}</> : !runtime.ready ? "初始化并进入" : coreOnline ? "进入 Mindspace" : "启动并进入"}</b><em>{runtime.ready ? "继续对话" : "准备运行环境"}</em></span>
               <strong aria-hidden="true">↗</strong>
             </button>
-            <button className="action-card action-card-desktop" onClick={() => setNotice("Live2D 桌宠将在 V1.0 正式版开放；0.8.0 不包含 SDK、模型或下载项")}>
+            <button className="action-card action-card-desktop" onClick={() => setNotice("桌宠功能将在后续版本开放")}>
               <span className="action-symbol" aria-hidden="true">✦</span>
-              <span className="action-copy"><small>LIVE2D PREVIEW</small><b>V1.0 正式版开放</b><em>本版仅保留入口 · 不占用运行资源</em></span>
+              <span className="action-copy"><small>DESKTOP COMPANION</small><b>桌宠预览</b><em>即将开放</em></span>
               <strong aria-hidden="true">→</strong>
             </button>
           </div>
@@ -820,9 +820,9 @@ function App() {
         <div className="hero-visual">
           <div className="aura aura-one" /><div className="aura aura-two" />
           <div className="portrait companion-art"><img src="./mindspace-companion-portrait-v1.webp" alt="Mindspace 角色肖像" /></div>
-          <span className="companion-controls companion-advanced" aria-label="Live2D 桌宠版本说明">V1.0 · COMING SOON</span>
-          <span className="floating-chip chip-memory"><i>◇</i><b>记忆已连接</b><small>本地持久化</small></span>
-          <span className="floating-chip chip-voice"><i>≋</i><b>{asrOnline ? "语音已启用" : "本次仅文字"}</b><small>{asrOnline ? "实时聆听可用" : "VAD / ASR 未启动"}</small></span>
+          <span className="companion-controls companion-advanced" aria-label="桌宠功能状态">桌宠预览</span>
+          <span className="floating-chip chip-memory"><i>◇</i><b>记忆</b><small>已连接</small></span>
+          <span className="floating-chip chip-voice"><i>≋</i><b>语音</b><small>{asrOnline ? "可用" : "未启动"}</small></span>
         </div>
       </section>
 
@@ -832,7 +832,7 @@ function App() {
       </section>}
 
       <section className="runtime-panel overview-panel" id="advanced-management">
-        <div className="panel-heading"><div><span className="eyebrow">RUNTIME</span><h2>本地服务</h2></div><div className="panel-controls"><button className="refresh" disabled={Boolean(busy)} onClick={stopAll}>全部停止</button><button className="refresh" onClick={() => void refresh()}>↻ 刷新</button></div></div>
+        <div className="panel-heading"><div><span className="eyebrow">SERVICES</span><h2>服务</h2></div><div className="panel-controls"><button className="refresh" disabled={Boolean(busy)} onClick={stopAll}>全部停止</button><button className="refresh" onClick={() => void refresh()}>↻ 刷新</button></div></div>
         <div className="service-grid service-strip">{Object.entries(services).map(([id, item]) => {
           const isQwenTts = id === "tts" && qwenSelected;
           // Snapshot keeps a stable `tts` key even when Qwen's backing worker
@@ -858,7 +858,7 @@ function App() {
           const showAsrProgress = id === "asr" && !online && (!asrAllReady || asrInstalling);
           return <article className={`service-card ${online && !ttsDisabled ? "online" : ""}${showAsrProgress ? " has-progress" : ""}`} key={id}>
             <span className={`service-icon ${item.tone}`}>{item.icon === "brand" ? <img src="./mindspace-brand-icon.png" alt="" /> : item.icon}</span>
-            <div><strong>{isQwenTts ? "Qwen3 实时语音" : item.title}</strong><small>{ttsDisabled ? "声音已关闭 · 仅文字对话" : remoteTts ? "SiliconFlow · 流式 API" : isQwenTts ? "vLLM-Omni · WSL2 · CustomVoice 固定 Serena" : id === "tts" && data?.ttsProvider === "gpt-sovits" ? `${voices.items.find((voice) => voice.id === voices.current)?.label || "GPT-SoVITS"} · 本地流式` : item.subtitle}</small></div>
+            <div><strong>{isQwenTts ? "Qwen3 实时语音" : item.title}</strong><small>{ttsDisabled ? "已关闭" : remoteTts ? "SiliconFlow" : isQwenTts ? "本地实时语音" : id === "tts" && data?.ttsProvider === "gpt-sovits" ? `${voices.items.find((voice) => voice.id === voices.current)?.label || "GPT-SoVITS"} · 本地` : item.subtitle}</small></div>
             <span className="service-state" title={hardwareUnavailable ? selectedHardwareItem?.unavailableReason : ""}><i />{ttsDisabled ? "已关闭" : remoteTts ? "API 托管" : hardwareUnavailable ? "硬件不满足" : isQwenTts && !qwenRuntime?.ready ? "运行时未接入" : isQwenTts && starting ? "正在加载模型" : online ? "运行中" : id === "asr" && asrInstalling ? "正在安装" : id === "asr" && asrRuntime?.discoveryState === "repairable" ? "待修复" : id === "asr" && asrRuntime?.discoveryState === "missing" ? "未安装" : "未启动"}</span>
             <button disabled={Boolean(busy) || ttsDisabled || remoteTts || hardwareUnavailable || (isQwenTts && !qwenRuntime?.ready)} title={hardwareUnavailable ? selectedHardwareItem?.unavailableReason : ""} onClick={() => serviceAction(serviceId, starting ? "stop" : online ? "restart" : "start")}>{ttsDisabled ? "无需启动" : remoteTts ? "无需本地模型" : hardwareUnavailable ? selectedHardwareItem?.preflightCode === "RAM_INSUFFICIENT" ? "内存不足" : selectedHardwareItem?.preflightCode === "VRAM_INSUFFICIENT" ? "显存不足" : "硬件不满足" : isQwenTts && !qwenRuntime?.ready ? "请先接入" : isQwenTts && starting ? "停止加载" : online ? "重启" : id === "asr" && asrInstalling ? `${asrInstallProgress.toFixed(0)}%` : asrNeedsSetup ? asrRuntime?.partial || asrProgressItem?.partial || asrProgressItem?.error ? "继续修复并启动" : "安装并启动" : "启动"}</button>
             {showAsrProgress && <div className="service-install-progress" role="status" aria-live="polite">
@@ -868,7 +868,7 @@ function App() {
           </article>;
         })}</div>
         <div className="voice-provider-switcher">
-          <div className="voice-provider-intro"><span className="voice-intro-mark" aria-hidden="true">♪</span><div><strong>声音方案</strong><small>与应用内共用同一配置；切换时会先安全释放旧引擎。</small></div></div>
+          <div className="voice-provider-intro"><span className="voice-intro-mark" aria-hidden="true">♪</span><div><strong>声音方案</strong><small>选择对话声音。</small></div></div>
           <div>{dashboardVoiceOptions.map((option) => {
             const hardwareItem = option.id === "qwen3-vllm"
               ? qwenRuntime
@@ -953,7 +953,7 @@ function App() {
       </section>
     </main>
 
-    <footer><div><span>应用与数据存储目录</span><code>{data?.home || "检测中…"}</code><button disabled={Boolean(busy) || Boolean(runtime.active)} onClick={selectStorage}>{data?.storage?.active ? `迁移中 ${data.storage.progress}%` : "更改存储位置"}</button></div><div><span>环境清单 {runtime.runtimeVersion || "…"} · PowerShell 7 {data?.ps7Ready ? "已就绪" : "待安装"}</span><button onClick={async () => { const result = await window.launcher.shortcut(); setNotice(result.ok ? "桌面快捷方式已创建" : "创建失败"); }}>创建桌面快捷方式</button></div></footer>
+    <footer><div><span>数据目录</span><code>{data?.home || "检测中…"}</code><button disabled={Boolean(busy) || Boolean(runtime.active)} onClick={selectStorage}>{data?.storage?.active ? `迁移中 ${data.storage.progress}%` : "更改"}</button></div><div><span>Runtime {runtime.runtimeVersion || "…"}</span><button onClick={async () => { const result = await window.launcher.shortcut(); setNotice(result.ok ? "快捷方式已创建" : "创建失败"); }}>创建快捷方式</button></div></footer>
     {announcementOpen && <div className="announcement-backdrop">
       <section className="announcement-dialog" role="dialog" aria-modal="true" aria-labelledby="announcement-title">
         <header><div><span className="eyebrow">MINDSPACE RELEASES</span><h2 id="announcement-title">{announcementView === "update" ? "发现新版本" : "版本公告"}</h2></div><button className="announcement-close" aria-label="关闭公告" onClick={() => setAnnouncementOpen(false)}>×</button></header>

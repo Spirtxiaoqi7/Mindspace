@@ -6,8 +6,9 @@ from .providers import GitHubProvider, SearchProvider, SocialProvider, compact_f
 from .ranking import rank_sources
 from .readers import DocumentReader,PublicHttpClient
 from .routing import infer_platforms
+from .weather import WeatherProvider, is_weather_query, weather_location
 class WebOrchestrator:
-    def __init__(self,*,config_provider,http_transport=None): self.config_provider=config_provider;self.http=PublicHttpClient(transport=http_transport);self.reader=DocumentReader(self.http);self.search_provider=SearchProvider(self.http,config_provider);self.github=GitHubProvider(self.http);self.social=SocialProvider(self.http,self.search_provider)
+    def __init__(self,*,config_provider,http_transport=None): self.config_provider=config_provider;self.http=PublicHttpClient(transport=http_transport);self.reader=DocumentReader(self.http);self.search_provider=SearchProvider(self.http,config_provider);self.github=GitHubProvider(self.http);self.social=SocialProvider(self.http,self.search_provider);self.weather=WeatherProvider(self.http)
     def close(self):self.http.close()
     def open_page(self,url):return self.reader.open_page(url)
     def find_in_page(self,source,pattern):return self.reader.find_in_page(source,pattern)
@@ -23,6 +24,13 @@ class WebOrchestrator:
         if query.action=="open_page":
             try:return finalize_result(query,[self.open_page(query.url or query.query)],[], executed=True)
             except Exception as exc:return finalize_result(query,[],[{"provider":"open_page","error":str(exc)[:300]}], executed=False)
+        if is_weather_query(query) and weather_location(query):
+            try:
+                return finalize_result(query,self.weather.search(query),[],executed=True)
+            except Exception:
+                # Search pages remain a bounded fallback when the structured
+                # provider cannot resolve a place or is temporarily offline.
+                pass
         github_requested = "github" in query.platforms or query.scope == "developer"
         jobs = [("github", lambda: (self.github.search(query), [], ["github_rest"]))] if github_requested else [("search", lambda: self.search_provider.search(query))]
         for platform in query.platforms:

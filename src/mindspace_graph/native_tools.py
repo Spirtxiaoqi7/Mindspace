@@ -91,8 +91,9 @@ def native_tool_definitions(tool_hint: str = "") -> list[dict[str, Any]]:
 
 
 def native_tool_choice(tool_hint: str = "") -> str | dict[str, Any]:
-    if tool_hint == "web_force":
-        return {"type": "function", "function": {"name": "web"}}
+    # Thinking-capable OpenAI-compatible models may support tools while
+    # rejecting named/required tool_choice variants. A forced web turn already
+    # exposes only the web tool and has a deterministic host-side fallback.
     return "auto"
 
 

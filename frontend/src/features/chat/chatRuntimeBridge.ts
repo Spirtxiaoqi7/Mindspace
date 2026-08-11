@@ -5,6 +5,7 @@ import {
   modelSummaryInspectorEvent,
   parseModelDiagnostics,
   providerToolCapability,
+  publicRunError,
 } from "../../chat-contract";
 import type { ProviderToolCapabilityState } from "../../chat-contract";
 import { asRecord, num, str } from "../../shared/formatters";
@@ -16,6 +17,9 @@ export const restoreSessionMessages = (sessionId: string, messages: Message[]) =
   hydrateTurnRequestSnapshots(sessionId, messages);
 
 export const getProviderToolCapability = (state?: ProviderToolCapabilityState | null) => providerToolCapability(state);
+
+export const getPublicRunError = (internalError: unknown, errorCode: unknown) =>
+  publicRunError(internalError, errorCode);
 
 export function createModelAttemptInspectorEvent(
   value: unknown,

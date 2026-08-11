@@ -12,7 +12,7 @@ last_reviewed: 2026-08-11
 
 - 本文件是当前废弃对象、计划版本和删除门禁的权威来源。
 - 登记废弃不等于立即删除；名称旧不等于没有调用。
-- `A:\RAG\Mindspace-admin` 是唯一可修改源码；不得为清理工作覆盖 `A:\Mindspace` 或其中的用户数据。
+- `<repo>` 是唯一可修改源码；不得为清理工作覆盖 `<home>` 或其中的用户数据。
 
 ### 废弃流程
 
@@ -34,7 +34,7 @@ last_reviewed: 2026-08-11
 
 - This document is the authoritative source for current deprecated items, planned versions, and removal gates.
 - Registration does not mean immediate deletion; an old name does not prove zero usage.
-- `A:\RAG\Mindspace-admin` is the only modifiable source; cleanup work must not overwrite `A:\Mindspace` or its user data.
+- `<repo>` is the only modifiable source; cleanup work must not overwrite `<home>` or its user data.
 
 ### Deprecation process
 

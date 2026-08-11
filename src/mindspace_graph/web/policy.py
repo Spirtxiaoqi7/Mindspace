@@ -21,7 +21,7 @@ def _is_target_source(source: WebSource, platform: str) -> bool:
     if platform == "github":
         return source.platform == "github" and source.evidence_level.startswith("github_rest") and (host == "github.com" or host.endswith(".github.com"))
     if platform == "x":
-        return source.platform == "x" and source.evidence_level in {"x_oembed", "indexed_summary"} and bool(_X_STATUS.search(f"{host}{urlsplit(source.url).path}"))
+        return source.platform == "x" and source.evidence_level in {"x_oembed", "x_syndication", "indexed_summary"} and bool(_X_STATUS.search(f"{host}{urlsplit(source.url).path}"))
     if platform == "xiaohongshu":
         return source.platform == "xiaohongshu" and source.evidence_level == "indexed_summary" and bool(_XIAOHONGSHU_NOTE.search(f"{host}{urlsplit(source.url).path}"))
     return source.platform == platform

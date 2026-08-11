@@ -174,6 +174,8 @@ EXPECTED_OPERATIONS = [('/api/v1/activities', 'get', 'list_activities_api_v1_act
  ('/api/v1/memory/restore', 'post', 'restore_memory_item_api_v1_memory_restore_post'),
  ('/api/v1/memory/structured', 'get', 'structured_memory_api_v1_memory_structured_get'),
  ('/api/v1/models/available', 'get', 'get_available_models_api_v1_models_available_get'),
+ ('/api/v1/models/discover', 'post', 'discover_models_api_v1_models_discover_post'),
+ ('/api/v1/models/providers', 'get', 'get_model_providers_api_v1_models_providers_get'),
  ('/api/v1/profiles/{name}', 'get', 'get_profile_api_v1_profiles__name__get'),
  ('/api/v1/profiles/{name}', 'put', 'put_profile_api_v1_profiles__name__put'),
  ('/api/v1/profiles/{name}/card', 'get', 'profile_card_api_v1_profiles__name__card_get'),

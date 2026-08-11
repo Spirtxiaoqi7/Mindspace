@@ -49,6 +49,29 @@ NODE_LABELS = {
     "persist_turn": "保存本轮对话",
     "finalize_error": "整理错误",
 }
+
+
+def _public_stream_error(exc: Exception) -> tuple[str, str]:
+    """Map internal/provider failures to stable client-facing errors.
+
+    Full exception details remain in the audit log. This boundary must never
+    turn transport, SDK, URL, header, or provider response text into chat copy.
+    """
+
+    name = type(exc).__name__.lower()
+    message = str(exc).lower()
+    if "timeout" in name or "timeout" in message or "timed out" in message:
+        return "model_timeout", "模型服务响应超时，请重试。"
+    if "connect" in name or "connection" in message or "name resolution" in message:
+        return "model_connection_failed", "无法连接模型服务，请检查网络和 API 配置后重试。"
+    if "httpstatus" in name or "status code" in message:
+        return (
+            "model_upstream_error",
+            "模型服务暂时无法完成请求，请重试；若持续失败，请检查当前模型是否支持工具调用。",
+        )
+    return "generation_failed", "生成失败，请重试；详细原因已记录在运行日志。"
+
+
 class ConversationService:
     """对话图的进程级外壳：注入服务端配置、管理流恢复并调度后台任务。"""
 
@@ -331,12 +354,14 @@ class ConversationService:
             run.error = "core shutdown interrupted the run"
             raise
         except Exception as exc:  # noqa: BLE001 - converted to a stable API event
-            run.error = str(exc)
+            error_code, public_error = _public_stream_error(exc)
+            run.error = public_error
             self.dependencies.audit.record("stream_failed", {"request_id": request_id, "error": str(exc)})
             payload = events.sse(
                 "run.error",
                 {
-                    "error": str(exc),
+                    "error": public_error,
+                    "error_code": error_code,
                     "model": {
                         "provider_attempts": run.provider_attempts,
                         "total_http_attempts": len(run.provider_attempts),

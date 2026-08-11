@@ -28,6 +28,7 @@ last_reviewed: 2026-08-11
 ### 运维
 
 - [桌面运行与回滚](operations/runtime.md)
+- [非 EXE 部署](operations/non-exe-deployment.md)
 - [封装](operations/packaging.md)
 - [发布](operations/release.md)
 
@@ -71,6 +72,7 @@ This is the single entry point for current Mindspace documentation. Documents ma
 ### Operations
 
 - [Desktop runtime and rollback](operations/runtime.md)
+- [Non-EXE deployment](operations/non-exe-deployment.md)
 - [Packaging](operations/packaging.md)
 - [Release](operations/release.md)
 

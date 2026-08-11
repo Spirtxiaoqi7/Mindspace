@@ -7,7 +7,7 @@ from typing import Any
 
 
 LLM_PROVIDERS: tuple[dict[str, Any], ...] = (
-    {"id": "deepseek", "label": "DeepSeek", "base_url": "https://api.deepseek.com", "models": ["deepseek-chat", "deepseek-reasoner"]},
+    {"id": "deepseek", "label": "DeepSeek", "base_url": "https://api.deepseek.com", "models": ["deepseek-v4-flash", "deepseek-v4-pro"]},
     {"id": "openai", "label": "OpenAI", "base_url": "https://api.openai.com/v1", "models": ["gpt-5", "gpt-4.1", "gpt-4o"]},
     {"id": "openrouter", "label": "OpenRouter", "base_url": "https://openrouter.ai/api/v1", "models": []},
     {"id": "siliconflow", "label": "SiliconFlow 硅基流动", "base_url": "https://api.siliconflow.com/v1", "models": []},

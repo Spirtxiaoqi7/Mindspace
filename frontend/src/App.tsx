@@ -26,6 +26,7 @@ import {
   createModelSummaryInspectorEvent,
   ExecutionInspector,
   getProviderToolCapability,
+  getPublicRunError,
   restoreSessionMessages,
   useChatRuntime,
   useConversationMaintenance,
@@ -774,7 +775,8 @@ function App() {
       const response = asRecord(data.response);
       const modelSummary = createModelSummaryInspectorEvent(response.model || data.model, num(response.llm_call_count), event.timestamp, true);
       setEvents((items) => [...items.filter((item) => item.event !== "model.summary"), modelSummary]);
-      const errors = Array.isArray(response.errors) ? response.errors.join("；") : str(data.error);
+      const internalErrors = Array.isArray(response.errors) ? response.errors.join("；") : data.error;
+      const errors = getPublicRunError(internalErrors, response.error_code || data.error_code);
       setMessages((items) => items.map((item) => item.status === "streaming" ? { ...item, content: errors || "生成失败", status: "error" as const } : item));
       setGenerating(false);
       runIdRef.current = "";

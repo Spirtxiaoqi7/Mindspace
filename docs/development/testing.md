@@ -10,7 +10,7 @@ last_reviewed: 2026-08-11
 
 ### 安全边界
 
-- 在 `A:\RAG\Mindspace-admin` 执行开发验证；不得把测试输出写入或覆盖 `A:\Mindspace`，尤其不得覆盖其中的用户数据。
+- 在 `<repo>` 执行开发验证；不得把测试输出写入或覆盖 `<home>`，尤其不得覆盖其中的用户数据。
 - 自动门禁不访问真实 API、不读取用户数据、不执行正式打包。
 - 真实 API、成人内容和私密对话只能隔离、本地且显式执行；原始输出留在忽略目录，只提交脱敏统计摘要。
 
@@ -32,7 +32,7 @@ last_reviewed: 2026-08-11
 
 ### Safety boundaries
 
-- Run development verification in `A:\RAG\Mindspace-admin`; never write test output to or overwrite `A:\Mindspace`, especially its user data.
+- Run development verification in `<repo>`; never write test output to or overwrite `<home>`, especially its user data.
 - Automated gates do not call real APIs, read user data, or perform formal packaging.
 - Real APIs, adult content, and private conversations may run only locally, in isolation, and by explicit action; keep raw output in ignored directories and commit only redacted statistical summaries.
 

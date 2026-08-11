@@ -36,7 +36,7 @@ Core 启动失败、健康检查失败或连接发现失败时，桌面层应显
 
 修改 Electron、preload 或 Core 接口时，必须同时检查真实请求路径、认证头、运行根和打包后的行为。不得仅凭开发服务器可用就认定桌面版可用。新增桌面能力应维持最小权限原则：渲染层提出有限请求，preload 验证和转发，Core 在服务端执行并审计。
 
-`A:\RAG\Mindspace-admin` 是可编辑开发源；`A:\Mindspace` 是桌面运行/部署目标。对运行目录的观察不能替代对源目录的开发修改，反之亦然。
+`<repo>` 是可编辑开发源；`<home>` 是桌面运行/部署目标。对运行目录的观察不能替代对源目录的开发修改，反之亦然。
 
 ## English
 
@@ -68,4 +68,4 @@ When Core startup, health checking, or connection discovery fails, the desktop l
 
 When changing Electron, preload, or Core interfaces, inspect the real request path, authentication header, runtime root, and packaged behavior together. A working development server is not sufficient proof that the desktop release works. New desktop capabilities must preserve least privilege: the renderer makes bounded requests, preload validates and forwards them, and Core executes and audits them server-side.
 
-`A:\RAG\Mindspace-admin` is the editable development source; `A:\Mindspace` is the desktop runtime/deployment target. Observing the runtime directory cannot substitute for development changes in the source directory, and vice versa.
+`<repo>` is the editable development source; `<home>` is the desktop runtime/deployment target. Observing the runtime directory cannot substitute for development changes in the source directory, and vice versa.

@@ -16,9 +16,9 @@ class ApiConfig(BaseModel):
 
     api_key: str = ""
     base_url: str = "https://api.deepseek.com"
-    model: str = "deepseek-chat"
+    model: str = "deepseek-v4-flash"
     temperature: float = Field(default=0.7, ge=0, le=2)
-    max_tokens: int = Field(default=2000, ge=64, le=8192)
+    max_tokens: int = Field(default=4096, ge=64, le=32768)
 
 
 class RetrievalSettings(BaseModel):

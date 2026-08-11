@@ -95,6 +95,8 @@ def explicitly_rejects_tools(status_code: int, response_text: str) -> bool:
     if status_code not in {400, 404, 405, 415, 422}:
         return False
     text = (response_text or "").lower()
+    if "thinking mode" in text and "tool_choice" in text:
+        return False
     field = any(token in text for token in ("tool_choice", "tool_calls", "tools", "function_call", "functions"))
     rejection = any(
         token in text
@@ -113,4 +115,3 @@ def explicitly_rejects_tools(status_code: int, response_text: str) -> bool:
 
 class ProviderToolsUnsupportedError(RuntimeError):
     """The endpoint explicitly rejected both structured tool protocols."""
-

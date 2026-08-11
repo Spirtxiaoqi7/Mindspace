@@ -3,7 +3,11 @@ from __future__ import annotations
 import html
 import json
 import re
+import shutil
+import subprocess
+import sys
 import time
+from email.utils import parsedate_to_datetime
 from threading import Lock
 from base64 import urlsafe_b64decode
 from urllib.parse import parse_qs, quote_plus, urlsplit
@@ -228,6 +232,22 @@ class GitHubProvider:
 
 
 class SocialProvider:
+    _X_KNOWN_HANDLES = {
+        "openai": "OpenAI",
+        "sam altman": "sama",
+        "samaltman": "sama",
+        "山姆奥特曼": "sama",
+        "山姆·奥特曼": "sama",
+        "萨姆奥特曼": "sama",
+        "萨姆·奥特曼": "sama",
+    }
+    _PLATFORM_DOMAINS = {
+        "youtube": "youtube.com",
+        "xiaohongshu": "xiaohongshu.com",
+        "weibo": "weibo.com",
+        "douyin": "douyin.com",
+    }
+
     def __init__(self, http, search): self.http, self.search_provider = http, search
     def search(self, query, platform):
         if platform=="bilibili":
@@ -236,7 +256,7 @@ class SocialProvider:
         if platform=="mastodon": return self._mastodon(query),"mastodon_public"
         if platform=="reddit": return self._reddit(query),"reddit_public"
         if platform=="x": return self._x(query),"x_oembed_or_index"
-        domain = "xiaohongshu.com" if platform == "xiaohongshu" else f"{platform}.com"
+        domain = self._PLATFORM_DOMAINS.get(platform, f"{platform}.com")
         values, _, providers = self.search_provider.search(WebQuery(query=f"site:{domain} {query.query}"))
         result = [item.model_copy(update={"platform": platform if self._matches_platform_url(platform, item.url) else "web", "evidence_level": "indexed_summary"}) for item in values]
         return result, providers[0] if providers else "search_index"
@@ -245,15 +265,97 @@ class SocialProvider:
         if platform == "xiaohongshu": return bool(re.search(r"(?:^|\.)xiaohongshu\.com/(?:explore|discovery/item)/[^/?#]+", url, re.I))
         return bool(re.search(rf"(?:^|\.){re.escape(platform)}\.com/", url, re.I))
     def _bluesky(self,q):
-        r=self.http.get(f"https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q={quote_plus(q.query)}&limit=5");r.raise_for_status();return []
+        r=self.http.get(f"https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q={quote_plus(q.query)}&limit=5");r.raise_for_status();result=[]
+        for item in r.json().get("posts",[]):
+            author=item.get("author") or {};record=item.get("record") or {};uri=str(item.get("uri") or "");post_id=uri.rsplit("/",1)[-1];handle=str(author.get("handle") or "")
+            if handle and post_id: result.append(WebSource(source_type="social_post",platform="bluesky",author=str(author.get("displayName") or handle),handle=f"@{handle}",url=f"https://bsky.app/profile/{handle}/post/{post_id}",title=f"@{handle} on Bluesky",text=_clean(str(record.get("text") or "")),published_at=str(item.get("indexedAt") or record.get("createdAt") or ""),freshness="public_api",evidence_level="bluesky_public"))
+        return result
     def _mastodon(self,q):
-        r=self.http.get(f"https://mastodon.social/api/v2/search?q={quote_plus(q.query)}&type=statuses");r.raise_for_status();return []
+        r=self.http.get(f"https://mastodon.social/api/v2/search?q={quote_plus(q.query)}&type=statuses");r.raise_for_status();result=[]
+        for item in r.json().get("statuses",[])[:5]:
+            account=item.get("account") or {};url=str(item.get("url") or "")
+            if url: result.append(WebSource(source_type="social_post",platform="mastodon",author=str(account.get("display_name") or account.get("acct") or ""),handle=str(account.get("acct") or ""),url=url,title="Mastodon post",text=_clean(str(item.get("content") or "")),published_at=str(item.get("created_at") or ""),freshness="public_api",evidence_level="mastodon_public"))
+        return result
     def _reddit(self,q):
-        r=self.http.get(f"https://www.reddit.com/search.json?q={quote_plus(q.query)}&limit=5");r.raise_for_status();return []
+        r=self.http.get(f"https://www.reddit.com/search.json?q={quote_plus(q.query)}&limit=5");r.raise_for_status();result=[]
+        for row in ((r.json().get("data") or {}).get("children") or []):
+            item=row.get("data") or {};permalink=str(item.get("permalink") or "")
+            if permalink: result.append(WebSource(source_type="social_post",platform="reddit",author=str(item.get("author") or ""),handle=str(item.get("author") or ""),url=f"https://www.reddit.com{permalink}",title=_clean(str(item.get("title") or ""),300),text=_clean(str(item.get("selftext") or item.get("title") or "")),published_at=str(item.get("created_utc") or ""),freshness="public_api",evidence_level="reddit_public"))
+        return result
     def _x(self,q):
+        handle = self._x_handle(q.query)
+        if handle:
+            for attempt in range(2):
+                try:
+                    timeline = self._x_timeline(handle)
+                    if timeline:
+                        return timeline
+                except Exception:
+                    pass
+                if attempt == 0:
+                    time.sleep(0.2)
         values,_,_=self.search_provider.search(WebQuery(query=f"site:x.com {q.query}")); result=[]
         for item in values:
             if not re.search(r"(?:x\.com|twitter\.com)/[^/]+/status/\d+",item.url,re.I): continue
             try: r=self.http.get(f"https://publish.twitter.com/oembed?url={quote_plus(item.url)}");r.raise_for_status();p=r.json();result.append(WebSource(source_type="oembed",platform="x",url=item.url,author=str(p.get("author_name")or""),text=re.sub(r"<[^>]+>","",str(p.get("html")or"")),freshness="public_api",evidence_level="x_oembed"))
             except Exception: result.append(item.model_copy(update={"platform":"x","evidence_level":"indexed_summary","freshness":"search_index"}))
         return result
+
+    @classmethod
+    def _x_handle(cls, text: str) -> str:
+        value = str(text or "")
+        direct = re.search(r"(?:x\.com/|twitter\.com/|@)([A-Za-z0-9_]{1,15})", value, re.I)
+        if direct:
+            return direct.group(1)
+        folded = re.sub(r"[\s\-_·•]", "", value).casefold()
+        for alias, handle in cls._X_KNOWN_HANDLES.items():
+            if re.sub(r"[\s\-_·•]", "", alias).casefold() in folded:
+                return handle
+        return ""
+
+    def _x_timeline(self, handle: str) -> list[WebSource]:
+        if not re.fullmatch(r"[A-Za-z0-9_]{1,15}", handle):
+            raise ValueError("invalid X handle")
+        url = f"https://syndication.twitter.com/srv/timeline-profile/screen-name/{quote_plus(handle)}"
+        response = self.http.get(url)
+        if response.status_code == 429:
+            curl = shutil.which("curl")
+            if not curl:
+                response.raise_for_status()
+            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            completed = subprocess.run(
+                [curl, "--silent", "--show-error", "--fail", "--location", "--max-time", "12", "--max-filesize", "2000000", url],
+                capture_output=True,
+                check=True,
+                timeout=15,
+                creationflags=flags,
+            )
+            raw_html = completed.stdout.decode("utf-8", errors="replace")
+        else:
+            response.raise_for_status()
+            raw_html = response.text
+        match = re.search(
+            r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>',
+            raw_html,
+            re.S,
+        )
+        if not match:
+            return []
+        payload = json.loads(html.unescape(match.group(1)))
+        entries = (((payload.get("props") or {}).get("pageProps") or {}).get("timeline") or {}).get("entries") or []
+        result: list[WebSource] = []
+        for entry in entries:
+            tweet = ((entry.get("content") or {}).get("tweet") or {}) if isinstance(entry, dict) else {}
+            tweet_id = str(tweet.get("id_str") or "")
+            text = _clean(str(tweet.get("full_text") or ""))
+            user = tweet.get("user") if isinstance(tweet.get("user"), dict) else {}
+            screen_name = str(user.get("screen_name") or handle)
+            if not tweet_id or not text:
+                continue
+            result.append(WebSource(source_type="social_post", platform="x", author=str(user.get("name") or screen_name), handle=f"@{screen_name}", url=f"https://x.com/{screen_name}/status/{tweet_id}", title=f"@{screen_name} on X", text=text, published_at=str(tweet.get("created_at") or ""), freshness="public_api", evidence_level="x_syndication", official_account=True, authority="official_x_account"))
+        def published(source: WebSource) -> float:
+            try:
+                return parsedate_to_datetime(source.published_at).timestamp()
+            except (TypeError, ValueError, OverflowError):
+                return 0.0
+        return sorted(result, key=published, reverse=True)[:5]

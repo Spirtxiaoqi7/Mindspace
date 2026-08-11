@@ -248,8 +248,31 @@ def test_native_tool_stream_accumulates_fragmented_call_without_visible_text():
     }
     assert bodies[0]["tools"] == tools
     assert bodies[0]["tool_choice"] == {"type": "function", "function": {"name": "web"}}
+    assert "stream_options" not in bodies[0]
     assert "thinking" not in bodies[0]
     assert model.take_usage().total_tokens == 27
+    client.close()
+
+
+def test_native_tool_rejection_reads_streamed_error_before_capability_detection():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": {"message": "tools are not supported"}})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    model = OpenAICompatibleLanguageModel(client=client)
+    config = ApiConfig(api_key="test", base_url="https://provider.invalid/v1")
+    tools = [{"type": "function", "function": {"name": "web", "parameters": {"type": "object"}}}]
+
+    try:
+        list(model.stream_with_tools([], config, tools=tools))
+    except httpx.HTTPStatusError as exc:
+        assert exc.response.json()["error"]["message"] == "tools are not supported"
+    else:
+        raise AssertionError("expected provider rejection")
+
+    attempts = model.take_provider_attempts()
+    assert [item.status for item in attempts] == ["http_error"]
+    assert attempts[0].http_status == 400
     client.close()
 
 

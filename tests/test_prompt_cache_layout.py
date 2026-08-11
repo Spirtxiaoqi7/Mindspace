@@ -296,9 +296,8 @@ def test_adult_roleplay_context_activates_profile_rules_in_final_calibration():
     assert calibration["role"] == "system"
     assert "仅在 R18 情境中启用的角色规则" not in calibration["content"]
     assert "NSFW续写" not in calibration["content"]
-    assert "【成人模式｜用户已明确开启】" in calibration["content"]
-    assert "直接承接用户已经明确提出的互动" in calibration["content"]
-    assert "不停在询问、确认、承诺、邀请或预告上" in calibration["content"]
+    assert "你正在进行成人向角色扮演" in calibration["content"]
+    assert "自然而清晰地描写身体与性行为" in calibration["content"]
     event = built.pending_events[-1]
     assert event["kind"] == "roleplay_post_history"
     assert event["ephemeral"] is True
@@ -322,10 +321,9 @@ def test_r18_sexual_action_mode_is_explicit_and_does_not_replace_normal_adult_de
     )
 
     calibration = built.messages[-1]
-    assert "【成人模式｜用户已明确开启】" in calibration["content"]
-    assert "阴茎、龟头、睾丸" not in calibration["content"]
-    assert "鸡巴、肉棒" not in calibration["content"]
-    assert "自然使用直白淫语、准确性器官词和性行为词" in calibration["content"]
+    assert "你正在进行成人向角色扮演" in calibration["content"]
+    assert "鸡巴、阴茎、龟头" in calibration["content"]
+    assert "指代清晰" in calibration["content"]
     assert "本轮质量目标" not in calibration["content"]
     turn_control = next(item for item in built.pending_events if item["kind"] == "turn_control")
     assert turn_control["metadata"]["adult_mode"] is True
@@ -354,8 +352,8 @@ def test_r18_final_directive_is_compact_and_does_not_force_escalation():
     assert "最近 R18 推进状态" not in calibration
     assert "当前 R18 Director" not in calibration
     assert "六级" not in calibration
-    assert "直接承接用户已经明确提出的互动" in calibration
-    assert "不复述要求" in calibration
+    assert "自然而清晰地描写身体与性行为" in calibration
+    assert "不要跳出扮演进行解释" in calibration
 
 
 def test_private_r18_output_protocol_is_not_injected_into_generation():
@@ -391,10 +389,11 @@ def test_private_r18_output_protocol_is_not_injected_into_generation():
 
     adult_text = adult.messages[-1]["content"]
     ordinary_text = "\n".join(item["content"] for item in ordinary.messages)
-    assert "【成人模式｜用户已明确开启】" in adult_text
+    assert "你正在进行成人向角色扮演" in adult_text
     assert "原文规则A：必须保留这个句子。" not in adult_text
     assert "原文规则B：符号♡与括号()也保持。" not in adult_text
     assert "原文规则A：必须保留这个句子。" not in ordinary_text
+    assert "你正在进行成人向角色扮演" not in ordinary_text
 
 
 def test_gender_identity_is_the_first_high_priority_system_content():

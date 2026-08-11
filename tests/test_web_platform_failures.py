@@ -42,6 +42,30 @@ def test_platform_failures_are_isolated_and_indexed_evidence_is_honest() -> None
     assert x_source.evidence_level == "indexed_summary"
 
 
+def test_weather_uses_structured_provider_before_search_pages() -> None:
+    requested_hosts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requested_hosts.append(request.url.host)
+        if request.url.host == "geocoding-api.open-meteo.com":
+            return httpx.Response(200, json={"results": [{"name": "西安", "admin1": "陕西", "country": "中国", "latitude": 34.26, "longitude": 108.94}]})
+        if request.url.host == "api.open-meteo.com":
+            return httpx.Response(200, json={
+                "timezone": "Asia/Shanghai",
+                "current": {"time": "2026-08-11T14:00", "temperature_2m": 31.2, "apparent_temperature": 33.0, "relative_humidity_2m": 52, "precipitation": 0, "weather_code": 2, "wind_speed_10m": 9.1},
+                "daily": {"time": ["2026-08-11"], "weather_code": [2], "temperature_2m_max": [33.1], "temperature_2m_min": [23.4], "precipitation_probability_max": [15]},
+            })
+        raise AssertionError(f"generic search must not run: {request.url}")
+
+    web = WebOrchestrator(config_provider=lambda: {"capabilities": {"max_web_results": 8}}, http_transport=httpx.MockTransport(handler))
+    result = web.execute(WebQuery(query="西安 今天 天气预报", original_intent="西安的呢？", recency="today"))
+    web.close()
+    assert requested_hosts == ["geocoding-api.open-meteo.com", "api.open-meteo.com"]
+    assert (result.status, result.coverage, result.freshness) == ("success", "complete", "official_api")
+    assert result.sources[0].evidence_level == "structured_weather_api"
+    assert '"temperature_c":31.2' in result.sources[0].text
+
+
 def test_platform_coverage_requires_target_evidence_and_strict_queries_need_timestamps() -> None:
     web_only = WebSource(url="https://example.com/x", title="X discussion", platform="web", freshness="search_index")
     x_result = finalize_result(WebQuery(query="X posts", platforms=["x"]), [web_only], [])

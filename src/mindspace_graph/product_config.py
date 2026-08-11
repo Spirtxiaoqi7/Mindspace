@@ -110,6 +110,16 @@ class ProductConfigStore:
             loaded_llm = loaded.get("llm", {}) if isinstance(loaded, dict) else {}
             if "provider" not in loaded_llm:
                 self._config["llm"]["provider"] = infer_provider_id(self._config["llm"]["base_url"])
+            deepseek_url = str(self._config["llm"].get("base_url") or "").rstrip("/").lower()
+            legacy_deepseek_model = str(self._config["llm"].get("model") or "").strip().lower()
+            if deepseek_url in {"https://api.deepseek.com", "https://api.deepseek.com/v1"} and legacy_deepseek_model in {
+                "deepseek-chat",
+                "deepseek-reasoner",
+            }:
+                # DeepSeek retired both legacy aliases on 2026-07-24. Migrate
+                # only the official endpoint; custom OpenAI-compatible users
+                # remain free to expose those identifiers themselves.
+                self._config["llm"]["model"] = "deepseek-v4-flash"
             if loaded_schema_version == "1.0.0":
                 # 250 ms was the old fixed endpoint and truncated hesitant Chinese.
                 # Migrate only that exact legacy default; explicit custom values stay intact.
@@ -166,7 +176,7 @@ class ProductConfigStore:
                 "base_url": self.settings.llm_base_url,
                 "model": self.settings.llm_model,
                 "temperature": 0.7,
-                "max_tokens": 2000,
+                "max_tokens": 4096,
                 "context_window": self.settings.llm_context_window,
                 "compaction_enabled": self.settings.context_compaction_enabled,
                 "compaction_model": self.settings.context_compaction_model,

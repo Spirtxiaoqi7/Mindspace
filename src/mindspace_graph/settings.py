@@ -39,7 +39,7 @@ class AppSettings:
     llm_mode: str = "openai"
     llm_base_url: str = "https://api.deepseek.com"
     llm_api_key: str = ""
-    llm_model: str = "deepseek-chat"
+    llm_model: str = "deepseek-v4-flash"
     llm_context_window: int = 64_000
     context_compaction_enabled: bool = True
     context_compaction_model: str = ""
@@ -104,7 +104,7 @@ class AppSettings:
             llm_mode=os.environ.get("MINDSPACE_LLM_MODE", "openai").strip().lower(),
             llm_base_url=os.environ.get("MINDSPACE_LLM_BASE_URL", "https://api.deepseek.com"),
             llm_api_key=os.environ.get("MINDSPACE_LLM_API_KEY", ""),
-            llm_model=os.environ.get("MINDSPACE_LLM_MODEL", "deepseek-chat"),
+            llm_model=os.environ.get("MINDSPACE_LLM_MODEL", "deepseek-v4-flash"),
             llm_context_window=int(os.environ.get("MINDSPACE_LLM_CONTEXT_WINDOW", "64000")),
             context_compaction_enabled=_bool("MINDSPACE_CONTEXT_COMPACTION_ENABLED", True),
             context_compaction_model=os.environ.get("MINDSPACE_CONTEXT_COMPACTION_MODEL", "").strip(),

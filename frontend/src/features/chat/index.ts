@@ -15,6 +15,7 @@ export {
   createModelAttemptInspectorEvent,
   createModelSummaryInspectorEvent,
   getProviderToolCapability,
+  getPublicRunError,
   restoreSessionMessages,
 } from "./chatRuntimeBridge";
 export type {

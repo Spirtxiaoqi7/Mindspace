@@ -10,9 +10,9 @@ last_reviewed: 2026-08-11
 
 ### 适用范围与边界
 
-- 可编辑的唯一开发源是 `A:\RAG\Mindspace-admin`。所有开发、构建和发布命令都从该目录执行。
-- `A:\Mindspace` 是已安装的桌面运行时和用户工作区，不是开发检出目录；不得在其中修改业务代码、脚本或作为发布输入。
-- 已安装运行时以 `home` 为运行时根，即 `runtime_dir=home`。部署时 `home` 应解析为 `A:\Mindspace`（或用户明确配置的等效 Mindspace Home），不得回落为构建机路径。
+- 可编辑的唯一开发源是 `<repo>`。所有开发、构建和发布命令都从该目录执行。
+- `<home>` 是已安装的桌面运行时和用户工作区，不是开发检出目录；不得在其中修改业务代码、脚本或作为发布输入。
+- 已安装运行时以 `home` 为运行时根，即 `runtime_dir=home`。部署时 `home` 应解析为 `<home>`（或用户明确配置的等效 Mindspace Home），不得回落为构建机路径。
 - 运行时目录布局如下：`<home>\data` 保存用户数据和持久化运行状态，`<home>\config` 保存运行时配置，`<home>\logs` 保存日志；`environment`、`models`、`user-data` 与更新备份也必须留在 Home 内。发布包和 Core 更新不得包含这些用户可写目录。
 
 ### 本地开发
@@ -20,7 +20,7 @@ last_reviewed: 2026-08-11
 在开发源目录执行：
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 uv sync --frozen --extra dev
 uv run mindspace-server
 ```
@@ -54,9 +54,9 @@ Core 更新先验证签名、SHA-256 和准确字节数，再切换目录。健�
 
 ### Scope and boundaries
 
-- The sole editable development source is `A:\RAG\Mindspace-admin`. Run all development, build, and release commands from this directory.
-- `A:\Mindspace` is the installed desktop runtime and user workspace, not a development checkout. Do not modify product code or scripts there, and do not use it as release input.
-- The installed runtime uses `home` as its runtime root: `runtime_dir=home`. At deployment, `home` must resolve to `A:\Mindspace` (or an explicitly configured equivalent Mindspace Home), never to a build-machine path.
+- The sole editable development source is `<repo>`. Run all development, build, and release commands from this directory.
+- `<home>` is the installed desktop runtime and user workspace, not a development checkout. Do not modify product code or scripts there, and do not use it as release input.
+- The installed runtime uses `home` as its runtime root: `runtime_dir=home`. At deployment, `home` must resolve to `<home>` (or an explicitly configured equivalent Mindspace Home), never to a build-machine path.
 - The runtime layout is: `<home>\data` for user data and durable runtime state, `<home>\config` for runtime configuration, and `<home>\logs` for logs. `environment`, `models`, `user-data`, and update backups must also remain inside Home. Release packages and Core updates must not include these user-writable directories.
 
 ### Local development
@@ -64,7 +64,7 @@ Core 更新先验证签名、SHA-256 和准确字节数，再切换目录。健�
 Run from the development source:
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 uv sync --frozen --extra dev
 uv run mindspace-server
 ```

@@ -10,14 +10,14 @@ last_reviewed: 2026-08-11
 
 ### 封装边界
 
-所有封装从 `A:\RAG\Mindspace-admin` 执行。`mindspace_graph` 是图、模型、策略和端口核心；`adapters`、`service.py`、`audio.py`、`api.py` 与 `web/` 可独立替换。`runtime/` 以及已安装 Home 中的 `data`、`config`、`logs`、`environment`、`models` 和 `user-data` 始终外置，不得打入 wheel、Core ZIP 或发布输入。
+所有封装从 `<repo>` 执行。`mindspace_graph` 是图、模型、策略和端口核心；`adapters`、`service.py`、`audio.py`、`api.py` 与 `web/` 可独立替换。`runtime/` 以及已安装 Home 中的 `data`、`config`、`logs`、`environment`、`models` 和 `user-data` 始终外置，不得打入 wheel、Core ZIP 或发布输入。
 
-`A:\Mindspace` 仅为桌面运行时。它的 `runtime_dir=home` 布局以 Home 为根，用户可写内容必须留在该 Home 中；不得把已安装目录当作源代码检出或由构建过程读取用户数据。
+`<home>` 仅为桌面运行时。它的 `runtime_dir=home` 布局以 Home 为根，用户可写内容必须留在该 Home 中；不得把已安装目录当作源代码检出或由构建过程读取用户数据。
 
 ### Wheel
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 pwsh -File .\scripts\build.ps1
 ```
 
@@ -26,7 +26,7 @@ Hatch 必须将 `src/mindspace_graph/static/app` 包含进 wheel。安装后使�
 ### 便携 ZIP
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 pwsh -File .\scripts\package.ps1
 ```
 
@@ -41,7 +41,7 @@ pwsh -File .\portable-start.ps1 -OpenBrowser
 ### Docker
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 docker compose up --build
 ```
 
@@ -60,7 +60,7 @@ Electron Launcher 承担窗口、系统托盘、签名更新与私有运行时�
 ### 更新构建与签名
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 node .\scripts\generate-update-key.mjs
 pwsh -File .\scripts\build-update.ps1 -Version 0.5.8 -BaseUrl https://updates.example.com/stable
 pwsh -File .\scripts\test-update-e2e.ps1
@@ -74,14 +74,14 @@ pwsh -File .\scripts\test-update-e2e.ps1
 
 ### Packaging boundaries
 
-Run all packaging from `A:\RAG\Mindspace-admin`. `mindspace_graph` is the core for graphs, models, policies, and ports; `adapters`, `service.py`, `audio.py`, `api.py`, and `web/` may be replaced independently. `runtime/`, together with `data`, `config`, `logs`, `environment`, `models`, and `user-data` in the installed Home, is always external and must not enter a wheel, Core ZIP, or release input.
+Run all packaging from `<repo>`. `mindspace_graph` is the core for graphs, models, policies, and ports; `adapters`, `service.py`, `audio.py`, `api.py`, and `web/` may be replaced independently. `runtime/`, together with `data`, `config`, `logs`, `environment`, `models`, and `user-data` in the installed Home, is always external and must not enter a wheel, Core ZIP, or release input.
 
-`A:\Mindspace` is desktop runtime only. Its `runtime_dir=home` layout uses Home as the root, and user-writable content must remain in that Home. Do not treat the installed directory as a source checkout or read its user data during builds.
+`<home>` is desktop runtime only. Its `runtime_dir=home` layout uses Home as the root, and user-writable content must remain in that Home. Do not treat the installed directory as a source checkout or read its user data during builds.
 
 ### Wheel
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 pwsh -File .\scripts\build.ps1
 ```
 
@@ -90,7 +90,7 @@ Hatch must include `src/mindspace_graph/static/app` in the wheel. Start the inst
 ### Portable ZIP
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 pwsh -File .\scripts\package.ps1
 ```
 
@@ -105,7 +105,7 @@ The in-package script creates an isolated `.venv` and `runtime` without writing 
 ### Docker
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 docker compose up --build
 ```
 
@@ -124,7 +124,7 @@ When an older Launcher embeds an older download endpoint, retain DNS/TLS compati
 ### Update build and signing
 
 ```powershell
-Set-Location A:\RAG\Mindspace-admin
+Set-Location <repo>
 node .\scripts\generate-update-key.mjs
 pwsh -File .\scripts\build-update.ps1 -Version 0.5.8 -BaseUrl https://updates.example.com/stable
 pwsh -File .\scripts\test-update-e2e.ps1

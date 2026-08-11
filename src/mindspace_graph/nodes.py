@@ -552,7 +552,11 @@ class NodeFactory:
                 {"role": "system", "content": FINAL_AFTER_TOOL_PROTOCOL},
             ]
         else:
-            messages = [*state["prompt_messages"], {"role": "system", "content": "Host-supplied public retrieval data: " + tool_result_json(result)}]
+            messages = [
+                *state["prompt_messages"],
+                {"role": "system", "content": "Host-supplied public retrieval data: " + tool_result_json(result)},
+                {"role": "system", "content": FINAL_AFTER_TOOL_PROTOCOL},
+            ]
         if self.deps.prompt_inspector is not None:
             self.deps.prompt_inspector.record(
                 run_id=state.get("request_id", ""),
@@ -565,6 +569,19 @@ class NodeFactory:
 
     def generate_final(self, state: TurnState, writer: StreamWriter) -> dict[str, Any]:
         self._check_cancelled(state)
+        tool_result = state.get("tool_result")
+        if (
+            tool_result is not None
+            and tool_result.tool == "web"
+            and (tool_result.status != "success" or tool_result.source_count == 0)
+        ):
+            fallback = self._tool_result_fallback_response(tool_result)
+            return {
+                "raw_candidate": f"<response>{fallback}</response>",
+                "model_usage": state.get("model_usage", []),
+                "provider_attempts": state.get("provider_attempts", []),
+                "trace": ["generate_final_no_evidence_fallback"],
+            }
         if not self._call_allowed(state, "final_generation"):
             raise RuntimeError("final generation model call budget exhausted")
         request = state["request"]
@@ -575,7 +592,7 @@ class NodeFactory:
         # tokens. Once a tool has returned multiple sources, that short-turn
         # cap is no longer an appropriate answer budget.
         final_api = request.api.model_copy(
-            update={"max_tokens": max(int(request.api.max_tokens), 1200)}
+            update={"max_tokens": max(int(request.api.max_tokens), 4096)}
         )
         started = time.perf_counter()
         extractor = IncrementalResponseParser()
@@ -602,30 +619,11 @@ class NodeFactory:
 
     @staticmethod
     def _tool_result_fallback_response(result: ToolExecutionResult) -> str:
-        data = result.data if isinstance(result.data, dict) else {}
-        coverage = str(data.get("coverage") or "unavailable")
-        sources = data.get("sources") if isinstance(data.get("sources"), list) else []
-        failures = data.get("partial_failures") if isinstance(data.get("partial_failures"), list) else []
-        lines = ["联网检索已完成。" if result.status == "success" else "联网检索未能完整完成。", f"覆盖状态：{coverage}。"]
-        summaries = []
-        for source in sources[:3]:
-            if not isinstance(source, dict):
-                continue
-            title = str(source.get("title") or source.get("url") or "公开来源").strip()
-            url = str(source.get("url") or "").strip()
-            summaries.append(f"{title}{f'（{url}）' if url and url != title else ''}")
-        if summaries:
-            lines.append("来源：" + "；".join(summaries) + "。")
-        if failures:
-            compact = []
-            for failure in failures[:2]:
-                if isinstance(failure, dict):
-                    compact.append("：".join(part for part in (str(failure.get("provider") or ""), str(failure.get("error") or "")) if part))
-                elif isinstance(failure, str):
-                    compact.append(failure)
-            if compact:
-                lines.append("局部限制：" + "；".join(compact) + "。")
-        return "".join(lines)
+        if result.status == "success" and result.source_count == 0:
+            return "我刚刚尝试联网检索，但这次没有找到可核验的公开结果，所以还不能确定具体内容。"
+        if result.status == "success":
+            return "联网检索已经完成，但模型未能把结果整理成回复。请重试本轮消息。"
+        return "联网检索未能完成，所以我现在无法确认这项实时信息。"
 
     def compose_prompt(self, state: TurnState) -> dict[str, Any]:
         """把权威数据、账本历史和本轮临时上下文组装成主模型 messages。"""
@@ -705,9 +703,14 @@ class NodeFactory:
         chunks: list[str] = []
         if state.get("native_tools_enabled"):
             hint = state.get("tool_hint", "")
+            tool_api = request.api
+            if hint:
+                tool_api = request.api.model_copy(
+                    update={"max_tokens": max(int(request.api.max_tokens), 4096)}
+                )
             token_stream = self.deps.llm.stream_with_tools(
                 state["prompt_messages"],
-                request.api,
+                tool_api,
                 tools=native_tool_definitions(hint.removesuffix("_force")),
                 tool_choice=native_tool_choice(hint),
             )

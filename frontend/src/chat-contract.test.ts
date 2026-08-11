@@ -10,6 +10,7 @@ import {
   modelSummaryInspectorEvent,
   prepareRegeneration,
   providerToolCapability,
+  publicRunError,
   readActiveRun,
   recoveredUserMessage,
   saveTurnRequestSnapshot,
@@ -145,6 +146,13 @@ describe("execution details and product gates", () => {
     expect(providerToolCapability("supported")).toMatchObject({ native: true, state: "supported" });
     expect(providerToolCapability("unsupported")).toMatchObject({ native: false, state: "unsupported" });
     expect(providerToolCapability("probing")).toMatchObject({ native: null, state: "probing" });
+  });
+
+  it("never exposes internal stream errors as chat content", () => {
+    expect(publicRunError("Attempted to access streaming response content", "model_upstream_error"))
+      .toBe("模型服务暂时无法完成请求，请重试；若持续失败，请检查当前模型是否支持工具调用。");
+    expect(publicRunError("Bearer secret and provider URL", "unknown"))
+      .toBe("生成失败，请重试；详细原因已记录在运行日志。");
   });
 
   it("does not infer capability from OpenAI, custom-compatible, or DeepSeek URLs", () => {

@@ -10,7 +10,7 @@ from mindspace_graph.adapters.file_storage import (
 from mindspace_graph.adapters.local_retriever import LocalKnowledgeRetriever
 from mindspace_graph.models import ApiConfig, ChatRequest, JsonWriteReceipt, ProfileBundle
 from mindspace_graph.prompting import _role_profile, build_prompt
-from mindspace_graph.r18_director import build_style_packet
+from mindspace_graph.r18_director import ADULT_ROLEPLAY_PROTOCOL
 from mindspace_graph.roleplay import (
     allow_raw_chat_retrieval,
     build_presentation_plan,
@@ -209,10 +209,7 @@ def test_legacy_private_r18_protocol_is_not_loaded_into_the_compact_adult_packet
 
     assert "r18_director" not in ordinary
     assert adult["turn_style"] == "intimate"
-    assert "private_overlay" not in adult["r18_director"]
-    assert "intensity_ladder" not in adult["r18_director"]
-    assert "vocabulary" not in adult["r18_director"]
-    assert adult["r18_director"]["direct_output_required"] is True
+    assert "r18_director" not in adult
 
 
 def test_adult_role_correction_does_not_leak_into_daily_lane():
@@ -234,7 +231,7 @@ def test_adult_role_correction_does_not_leak_into_daily_lane():
     assert "previous_turn_correction" not in layer
 
 
-def test_r18_director_stays_explicit_while_adult_mode_is_enabled():
+def test_adult_mode_uses_the_intimate_turn_style_without_a_director_state():
     bundle = profiles()
     layer = build_roleplay_layer(
         request("继续", adult_mode=True, initiative=True),
@@ -242,8 +239,8 @@ def test_r18_director_stays_explicit_while_adult_mode_is_enabled():
         [{"role": "assistant", "content": "已有互动", "hidden": False}],
     )
 
-    assert layer["r18_director"]["scene_state"]["engagement"] == "explicit"
-    assert layer["r18_director"]["scene_state"]["advance"] is True
+    assert layer["turn_style"] == "intimate"
+    assert "r18_director" not in layer
 
 
 def test_stable_role_profile_excludes_conditional_card_payloads():
@@ -349,23 +346,11 @@ def test_r18_quality_does_not_reject_a_direct_request_response_by_vocabulary():
     assert result["reasons"] == []
 
 
-def test_r18_packet_requires_direct_output_without_injecting_a_word_list():
-    history = [
-        {"role": "assistant", "content": "让我想想，待会儿再说。"},
-        {"role": "user", "content": "好"},
-        {"role": "assistant", "content": "你先说想怎么来，我再考虑。"},
-    ]
-
-    packet = build_style_packet(
-        request("那你想怎么弄啊？", adult_mode=True, interaction_mode="voice"),
-        history,
-    )
-
-    assert "intensity_ladder" not in packet
-    assert "modules" not in packet
-    assert "vocabulary" not in packet
-    assert packet["direct_output_required"] is True
-    assert "直接写 R18 行为正在发生" in packet["progress_rule"]
+def test_r18_protocol_is_single_authoritative_text_without_legacy_ladders():
+    assert "intensity_ladder" not in ADULT_ROLEPLAY_PROTOCOL
+    assert "modules" not in ADULT_ROLEPLAY_PROTOCOL
+    assert "直接使用鸡巴、阴茎、龟头" in ADULT_ROLEPLAY_PROTOCOL
+    assert "沉浸在角色中" in ADULT_ROLEPLAY_PROTOCOL
 
 
 def test_r18_quality_accepts_explicit_sexual_action_progress():

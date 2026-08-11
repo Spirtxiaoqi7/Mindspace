@@ -136,15 +136,17 @@ def test_force_web_prefetches_when_native_provider_ignores_required_tool_choice(
     deps.capabilities = ForceWebCapabilities()
     result = invoke(deps, message="帮我在 GitHub 查找 LangGraph 官方仓库最近发布版本和更新时间。", api={"base_url": "https://provider.example/v1", "model": "test"})
 
-    assert model.tool_choices == [{"type": "function", "function": {"name": "web"}}]
+    assert model.tool_choices == ["auto"]
     assert result["response"].tool_execution is not None
     assert result["response"].tool_execution["tool"] == "web"
     assert result["response"].tool_execution["status"] == "success"
     assert result["response"].llm_call_count == 2
     assert "好，我帮你查了" not in result["response"].reply
+    assert "我查到的可核验公开结果" not in result["response"].reply
+    assert "覆盖状态" not in result["response"].reply
 
 
-def test_completed_web_tool_uses_deterministic_reply_when_final_generation_is_empty():
+def test_completed_web_tool_does_not_expose_structured_data_when_final_generation_is_empty():
     deps = demo_dependencies()
     model = NativeToolThenEmptyFinalModel()
     deps.llm = model
@@ -156,8 +158,8 @@ def test_completed_web_tool_uses_deterministic_reply_when_final_generation_is_em
     assert response.tool_execution is not None
     assert response.tool_execution["status"] == "success"
     assert response.llm_call_count == 2
-    assert "联网检索已完成" in response.reply
-    assert "https://github.com/langchain-ai/langgraph" in response.reply
+    assert response.reply == "联网检索已经完成，但模型未能把结果整理成回复。请重试本轮消息。"
+    assert "https://github.com/langchain-ai/langgraph" not in response.reply
 
 
 class BrokenOnceModel(DeterministicLanguageModel):
@@ -627,15 +629,15 @@ def test_r18_voice_uses_a_direct_requirement_without_a_word_gate_or_output_quota
     invoke(deps, message="我想要", interaction_mode="voice", adult_mode=True)
     prompt = "\n".join(item["content"] for item in model.captured)
 
-    assert "【成人模式｜用户已明确开启】" in prompt
-    assert "【本轮成人内容承接】" in prompt
+    assert "你正在进行成人向角色扮演" in prompt
+    assert "直接使用鸡巴、阴茎、龟头" in prompt
     assert "首句" not in prompt
     assert "色情直白词汇" not in prompt
     assert "整个输出视为无效" not in prompt
     assert "中性明确词可使用" not in prompt
     assert "口语直白词可使用" not in prompt
     assert "保持角色人格" not in prompt
-    assert "性别只约束各自身体" in prompt
+    assert "用户性别：不指定；角色性别：不指定" in prompt
     assert "R18 语音回复必须写" not in prompt
     assert "每轮至少自然使用两处" not in prompt
     assert "本轮最低性强度" not in prompt

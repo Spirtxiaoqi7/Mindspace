@@ -10,8 +10,8 @@ last_reviewed: 2026-08-11
 
 ### 工作边界
 
-- `A:\RAG\Mindspace-admin` 是唯一可编辑源码；所有开发、审阅和提交均在此目录进行。
-- `A:\Mindspace` 是运行目录，不是开发副本。源码构建、脚本和排障不得覆盖其中的应用、环境、模型、日志或用户数据。
+- `<repo>` 是唯一可编辑源码；所有开发、审阅和提交均在此目录进行。
+- `<home>` 是运行目录，不是开发副本。源码构建、脚本和排障不得覆盖其中的应用、环境、模型、日志或用户数据。
 - 不提交生成包、bootstrap 输出、报告、真实 API 原始日志、用户数据或临时视觉资产。
 
 ### 变更流程
@@ -32,8 +32,8 @@ last_reviewed: 2026-08-11
 
 ### Working boundaries
 
-- `A:\RAG\Mindspace-admin` is the only editable source; all development, review, and commits take place there.
-- `A:\Mindspace` is a runtime directory, not a development checkout. Source builds, scripts, and diagnostics must not overwrite its application, environment, models, logs, or user data.
+- `<repo>` is the only editable source; all development, review, and commits take place there.
+- `<home>` is a runtime directory, not a development checkout. Source builds, scripts, and diagnostics must not overwrite its application, environment, models, logs, or user data.
 - Do not commit generated packages, bootstrap output, reports, raw real-API logs, user data, or temporary visual assets.
 
 ### Change flow

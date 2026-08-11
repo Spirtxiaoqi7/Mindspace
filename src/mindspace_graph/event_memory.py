@@ -40,7 +40,8 @@ _EVENT_CANDIDATE = re.compile(
 )
 _EXTERNAL_REQUEST = re.compile(
     r"(?:联网|上网|网络搜索|搜索|帮我查|查一下|查查|查找|查询|打开|GitHub|"
-    r"天气|新闻|最新|实时|股价|汇率|比分|赛程|航班|路况)",
+    r"天气|新闻|最新|实时|股价|汇率|比分|赛程|航班|路况|"
+    r"推文|帖子|动态|社交平台|OpenAI|Twitter|X\.com|小红书|微博)",
     re.IGNORECASE,
 )
 _MATCH_STOP_GRAMS = {
@@ -69,7 +70,11 @@ def should_consider_event(message: str) -> bool:
 
 def event_memory_lane(message: str) -> bool:
     """Event writes are exclusive, while explicit external-information requests win."""
-    return should_consider_event(message) and not bool(_EXTERNAL_REQUEST.search(message or ""))
+    from mindspace_graph.web.routing import infer_platforms
+
+    return should_consider_event(message) and not bool(
+        _EXTERNAL_REQUEST.search(message or "") or infer_platforms(message or "")
+    )
 
 
 def parse_event_operation(raw: str) -> dict[str, Any]:

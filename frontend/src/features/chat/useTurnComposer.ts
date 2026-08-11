@@ -226,7 +226,7 @@ export function useTurnComposer({
       system_prompt: str(persona?.system_prompt),
       api: {
         temperature: num(llm?.temperature, 0.7),
-        max_tokens: num(llm?.max_tokens, 2000),
+        max_tokens: num(llm?.max_tokens, 4096),
       },
       retrieval: {
         rag_enabled: bool(retrievalSettings?.rag_enabled ?? true),

@@ -8,7 +8,7 @@ class PublicHttpClient:
     def close(self): self.client.close()
     def get(self, url, **kwargs):
         if urlsplit(url).scheme not in {"http","https"} or (urlsplit(url).hostname or "").lower() in {"localhost","127.0.0.1","::1"}: raise ValueError("public HTTP(S) URL required")
-        limit=kwargs.pop("max_bytes",0); response=self.client.get(url, **kwargs)
+        limit=kwargs.pop("max_bytes",0); response=self.client.get(url, **kwargs); response.read()
         if limit and len(response.content)>limit: raise ValueError("public response exceeds size limit")
         return response
 class DocumentReader:

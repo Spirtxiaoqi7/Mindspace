@@ -17,7 +17,7 @@ def test_hinted_native_tool_sets_are_small_and_required():
         "task_update",
         "task_complete",
     ]
-    assert native_tool_choice("web_force") == {"type": "function", "function": {"name": "web"}}
+    assert native_tool_choice("web_force") == "auto"
     assert native_tool_choice("") == "auto"
 
 

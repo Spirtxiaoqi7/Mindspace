@@ -198,7 +198,7 @@ def test_provider_final_failure_is_audited_and_recoverable_from_durable_events(t
             retrieval={"rag_enabled": False},
         )
 
-        with pytest.raises(RuntimeError, match="provider unavailable"):
+        with pytest.raises(RuntimeError, match="无法连接模型服务"):
             await container.conversation.invoke(request, "provider-failure-run")
 
         durable_events = container.database.conversation_run_events("provider-failure-run", 0)

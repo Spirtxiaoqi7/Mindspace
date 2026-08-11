@@ -236,6 +236,18 @@ export const shouldShowComposerAction = (generating: boolean, hasPayload: boolea
 export const composerAction = (generating: boolean, hasPayload: boolean, asrReady: boolean) =>
   generating ? "cancel" : hasPayload ? "send" : asrReady ? "voice" : "hidden";
 
+const PUBLIC_RUN_ERRORS: Record<string, string> = {
+  model_timeout: "模型服务响应超时，请重试。",
+  model_connection_failed: "无法连接模型服务，请检查网络和 API 配置后重试。",
+  model_upstream_error: "模型服务暂时无法完成请求，请重试；若持续失败，请检查当前模型是否支持工具调用。",
+  generation_failed: "生成失败，请重试；详细原因已记录在运行日志。",
+};
+
+export function publicRunError(_internalError: unknown, errorCode: unknown) {
+  const code = typeof errorCode === "string" ? errorCode.trim() : "";
+  return PUBLIC_RUN_ERRORS[code] || PUBLIC_RUN_ERRORS.generation_failed;
+}
+
 export function closeOpenMenusOutside(target: Element, root: ParentNode = document) {
   let closed = 0;
   root.querySelectorAll<HTMLDetailsElement>(

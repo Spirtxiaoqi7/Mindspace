@@ -118,6 +118,46 @@ def test_background_compaction_activates_a_new_epoch_and_keeps_recent_tail(tmp_p
     assert "第6轮需要保留的原始对话" in joined
 
 
+def test_turn_started_before_compaction_rebases_onto_equivalent_new_epoch(tmp_path):
+    ledger = ContextLedger(tmp_path / "context.db")
+    bundle = profiles()
+    for round_num in range(1, 7):
+        append_round(ledger, bundle, round_num)
+    stale = build_prompt(request(7), bundle, [], [], [], context_ledger=ledger)
+    assert stale.context_snapshot is not None
+
+    settings = AppSettings(
+        runtime_dir=tmp_path,
+        llm_context_window=256,
+        context_compaction_soft_ratio=0.1,
+        context_compaction_retain_turns=2,
+        context_compaction_delay_seconds=0,
+    )
+    service = ContextCompactionService(
+        settings=settings,
+        ledger=ledger,
+        profiles=InMemoryProfileRepository(bundle=bundle),
+        llm_provider=DeterministicLanguageModel,
+        active_run_count=lambda: 0,
+    )
+    asyncio.run(service.drain())
+    assert ledger.diagnostics("compact-session")["active_epoch_id"] != stale.context_snapshot.epoch_id
+
+    committed = ledger.append_turn(
+        request_id="request-7-after-compaction",
+        session_id="compact-session",
+        round_num=7,
+        epoch_id=stale.context_snapshot.epoch_id,
+        pending_events=stale.pending_events,
+        response="压缩完成后的当前回复。",
+        user_message_id="u7",
+        assistant_message_id="a7",
+        receipt=JsonWriteReceipt(turn_id="round_7"),
+        profiles=bundle,
+    )
+    assert committed["last_sequence"] >= committed["first_sequence"]
+
+
 def test_semantic_compaction_starts_at_round_fifteen_and_retains_three_raw_rounds(tmp_path):
     ledger = ContextLedger(tmp_path / "context.db")
     bundle = profiles()

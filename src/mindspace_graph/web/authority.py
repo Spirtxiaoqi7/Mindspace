@@ -31,12 +31,16 @@ def requested_brand_keys(query: str) -> set[str]:
 def authority_for_url(url: str, query: str) -> str:
     domain = _registrable_domain(url)
     org = _github_org(url)
+    parsed = urlsplit(url)
+    social_handle = next((part.casefold() for part in parsed.path.split("/") if part), "")
     for key in requested_brand_keys(query):
         _aliases, domains, github_orgs = _BRANDS[key]
         if domain in domains:
             return "official_domain"
         if org in github_orgs:
             return "official_github_org"
+        if domain in {"x.com", "twitter.com"} and key == "openai" and social_handle == "openai":
+            return "official_x_account"
     return ""
 
 

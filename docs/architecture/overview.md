@@ -10,7 +10,7 @@ last_reviewed: 2026-08-11
 
 ### 定位与入口
 
-Mindspace 是单仓库、单一桌面发布的模块化单体；可编辑开发源为 `A:\RAG\Mindspace-admin`。产品由 Desktop Launcher 启动 Core，页面通过 preload 的窄 IPC 和 Core HTTP/SSE API 工作。后端 FastAPI 入口是 `src/mindspace_graph/api.py`，前端挂载入口是 `frontend/src/main.tsx`，桌面组合入口是 `desktop/main.cjs`。
+Mindspace 是单仓库、单一桌面发布的模块化单体；可编辑开发源为 `<repo>`。产品由 Desktop Launcher 启动 Core，页面通过 preload 的窄 IPC 和 Core HTTP/SSE API 工作。后端 FastAPI 入口是 `src/mindspace_graph/api.py`，前端挂载入口是 `frontend/src/main.tsx`，桌面组合入口是 `desktop/main.cjs`。
 
 ### 职责与依赖边界
 
@@ -35,7 +35,7 @@ Mindspace 是单仓库、单一桌面发布的模块化单体；可编辑开发�
 
 ### 禁止事项
 
-- 不得把 `A:\Mindspace` 运行时目录当作开发源。
+- 不得把 `<home>` 运行时目录当作开发源。
 - 不得把 API 密钥、系统提示、活动或场景等客户端输入当作服务端权威值。
 - 不得用 SSE 伪装成普通 JSON 契约，或改变既有恢复游标、事件顺序和媒体语义。
 - 不得通过根级聚合、动态路径或跨功能内部导入绕过边界。
@@ -45,7 +45,7 @@ Mindspace 是单仓库、单一桌面发布的模块化单体；可编辑开发�
 
 ### Positioning and entry points
 
-Mindspace is a modular monolith in one repository and one desktop release. The editable development source is `A:\RAG\Mindspace-admin`. The Desktop Launcher starts Core, while the page uses narrow preload IPC plus Core HTTP/SSE APIs. The backend FastAPI entry point is `src/mindspace_graph/api.py`, the frontend mount entry point is `frontend/src/main.tsx`, and the desktop composition entry point is `desktop/main.cjs`.
+Mindspace is a modular monolith in one repository and one desktop release. The editable development source is `<repo>`. The Desktop Launcher starts Core, while the page uses narrow preload IPC plus Core HTTP/SSE APIs. The backend FastAPI entry point is `src/mindspace_graph/api.py`, the frontend mount entry point is `frontend/src/main.tsx`, and the desktop composition entry point is `desktop/main.cjs`.
 
 ### Responsibilities and dependency boundaries
 
@@ -70,7 +70,7 @@ Mindspace is a modular monolith in one repository and one desktop release. The e
 
 ### Prohibitions
 
-- Do not treat the `A:\Mindspace` runtime directory as the development source.
+- Do not treat the `<home>` runtime directory as the development source.
 - Do not treat client-supplied API keys, system prompts, activity, or scene values as server-authoritative.
 - Do not disguise SSE as a normal JSON contract or change established resume cursors, event order, or media semantics.
 - Do not bypass boundaries through root-level aggregators, dynamic paths, or imports into another feature's internals.

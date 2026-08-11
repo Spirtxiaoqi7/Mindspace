@@ -183,6 +183,39 @@ class OpenAICompatibleLanguageModel:
         self._reset_provider_attempts()
         yield from self._stream(messages, config, request_kind="generation")
 
+    @staticmethod
+    def _apply_provider_request_compat(body: dict[str, Any], config: ApiConfig) -> None:
+        """Apply vendor extensions only when the configured endpoint owns them."""
+
+        base_url = str(config.base_url or "").lower()
+        model = str(config.model or "").lower()
+        if "api.deepseek.com" in base_url and model in {"deepseek-v4-flash", "deepseek-v4-pro"}:
+            # V4 defaults to high-effort thinking. Mindspace roleplay and its
+            # one-tool handshake reserve a bounded budget for visible output;
+            # the default can consume that budget and return an empty turn.
+            body["thinking"] = {"type": "disabled"}
+
+    @staticmethod
+    def _apply_output_token_budget(
+        body: dict[str, Any], config: ApiConfig, max_tokens: int
+    ) -> None:
+        """Map Mindspace's provider-neutral output budget to the wire field."""
+
+        base_url = str(config.base_url or "").lower()
+        model = str(config.model or "").lower()
+        current_openai_model = (
+            model.startswith("gpt-5")
+            or model.startswith("o1")
+            or model.startswith("o3")
+            or model.startswith("o4")
+        )
+        field = (
+            "max_completion_tokens"
+            if "api.openai.com" in base_url and current_openai_model
+            else "max_tokens"
+        )
+        body[field] = max(64, int(max_tokens))
+
     def stream_with_tools(
         self,
         messages: list[dict[str, Any]],
@@ -200,12 +233,16 @@ class OpenAICompatibleLanguageModel:
             "model": config.model,
             "messages": messages,
             "temperature": config.temperature,
-            "max_tokens": config.max_tokens,
             "stream": True,
-            "stream_options": {"include_usage": True},
             "tools": tools,
-            "tool_choice": tool_choice,
         }
+        self._apply_output_token_budget(body, config, config.max_tokens)
+        # `auto` is the protocol default when tools are present. DeepSeek V4
+        # rejects forced tool choices in thinking mode, while omitting the
+        # default remains compatible with generic OpenAI-style endpoints.
+        if tool_choice != "auto":
+            body["tool_choice"] = tool_choice
+        self._apply_provider_request_compat(body, config)
         endpoint = f"{config.base_url.rstrip('/')}/chat/completions"
         headers = {"Content-Type": "application/json"}
         if config.api_key:
@@ -225,6 +262,8 @@ class OpenAICompatibleLanguageModel:
                 timeout=self.visible_timeout,
             ) as response:
                 response_status = response.status_code
+                if response.is_error:
+                    response.read()
                 response.raise_for_status()
                 for line in response.iter_lines():
                     if not line or not line.startswith("data:"):
@@ -427,9 +466,12 @@ class OpenAICompatibleLanguageModel:
             "model": config.model,
             "messages": messages,
             "temperature": 0,
-            "max_tokens": min(max_tokens, config.max_tokens),
             "stream": False,
         }
+        self._apply_output_token_budget(
+            base_body, config, min(max_tokens, config.max_tokens)
+        )
+        self._apply_provider_request_compat(base_body, config)
         headers = {"Content-Type": "application/json"}
         if config.api_key:
             headers["Authorization"] = f"Bearer {config.api_key}"
@@ -613,9 +655,10 @@ class OpenAICompatibleLanguageModel:
             "model": config.model,
             "messages": messages,
             "temperature": config.temperature,
-            "max_tokens": config.max_tokens,
             "stream": True,
         }
+        self._apply_output_token_budget(body, config, config.max_tokens)
+        self._apply_provider_request_compat(body, config)
         if include_usage:
             body["stream_options"] = {"include_usage": True}
         headers = {"Content-Type": "application/json"}
@@ -638,6 +681,8 @@ class OpenAICompatibleLanguageModel:
                 "POST", endpoint, headers=headers, json=body, timeout=self.visible_timeout
             ) as response:
                 response_status = response.status_code
+                if response.is_error:
+                    response.read()
                 response.raise_for_status()
                 for line in response.iter_lines():
                     line = line.strip()

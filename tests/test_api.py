@@ -168,9 +168,9 @@ def test_legacy_fixed_endpoint_migrates_without_overwriting_custom_value(tmp_pat
     legacy_snapshot = ProductConfigStore(legacy, settings).snapshot()
     custom_snapshot = ProductConfigStore(custom, settings).snapshot()
 
-    assert legacy_snapshot["schema_version"] == "1.2.0"
+    assert legacy_snapshot["schema_version"] == "1.3.0"
     assert legacy_snapshot["audio"]["asr_silence_ms"] == 600
-    assert custom_snapshot["schema_version"] == "1.2.0"
+    assert custom_snapshot["schema_version"] == "1.3.0"
     assert custom_snapshot["audio"]["asr_silence_ms"] == 720
 
 

@@ -497,7 +497,10 @@ def build_prompt(
     if native_tools_enabled:
         dynamic_lines.append(NATIVE_TOOL_GUIDANCE)
         if tool_hint:
-            dynamic_lines.append(f"服务端零调用提示={tool_hint}；本轮工具候选优先为 {tool_hint}。")
+            if tool_hint.endswith("_force"):
+                dynamic_lines.append("本轮需要外部实时信息；先调用当前唯一可用工具，不要直接回答。")
+            else:
+                dynamic_lines.append(f"服务端零调用提示={tool_hint}；本轮工具候选优先为 {tool_hint}。")
     if request.interaction_mode == "voice":
         dynamic_lines.append(build_voice_enabled_control_line())
         if request.voice_tts_provider == "qwen3-vllm":
