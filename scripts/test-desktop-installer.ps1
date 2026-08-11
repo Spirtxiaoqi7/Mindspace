@@ -37,6 +37,45 @@ function Assert-QaPath([string]$Path, [string]$Label) {
     }
 }
 
+function Assert-NoRegisteredMindspaceInstall {
+    # A production NSIS package keeps a machine-wide installation identity even
+    # when /D points at an isolated directory. Installing it while a real copy
+    # is registered can silently run that copy's uninstaller first. Production
+    # installer QA therefore belongs on a clean VM, never beside user data.
+    $registered = @()
+    foreach ($base in @(
+        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    )) {
+        if (-not (Test-Path -LiteralPath $base)) { continue }
+        $registered += Get-ChildItem -LiteralPath $base -ErrorAction SilentlyContinue |
+            ForEach-Object { Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue } |
+            Where-Object {
+                $_.DisplayName -eq 'Mindspace' -or
+                $_.InstallLocation -match '(?i)[\\/]Mindspace(?:[\\/]|$)'
+            }
+    }
+    if ($registered.Count) {
+        $locations = $registered |
+            ForEach-Object { if ($_.InstallLocation) { $_.InstallLocation } else { $_.DisplayName } } |
+            Sort-Object -Unique
+        throw "检测到已注册的 Mindspace 安装，生产安装包 QA 可能先卸载真实副本。请改用干净 VM：$($locations -join ', ')"
+    }
+
+    foreach ($protectedRoot in @(
+        $env:MINDSPACE_HOME,
+        'A:\Mindspace'
+    ) | Where-Object { $_ }) {
+        $full = [IO.Path]::GetFullPath($protectedRoot)
+        if ($full -eq $InstallRoot -or $full -eq $HomeRoot) { continue }
+        if ((Test-Path -LiteralPath (Join-Path $full 'Mindspace.exe')) -or
+            (Test-Path -LiteralPath (Join-Path $full 'data'))) {
+            throw "检测到正式 Mindspace 程序或数据目录，拒绝在同一系统执行生产安装包 QA：$full"
+        }
+    }
+}
+
 function Invoke-Installer([string[]]$Arguments) {
     $timer = [Diagnostics.Stopwatch]::StartNew()
     $process = Start-Process -FilePath $Installer -ArgumentList $Arguments -PassThru -Wait
@@ -58,6 +97,7 @@ function Stop-QaProcesses([string]$ImagePath) {
 
 Assert-QaPath $InstallRoot 'InstallRoot'
 Assert-QaPath $HomeRoot 'HomeRoot'
+Assert-NoRegisteredMindspaceInstall
 if (-not (Test-Path -LiteralPath $Installer -PathType Leaf)) {
     throw "安装器不存在：$Installer"
 }
