@@ -104,6 +104,7 @@ class CountingWebCapability:
 
     def retrieval_decision(self, request, history=None):
         from mindspace_graph.web.models import RetrievalDecision
+
         return RetrievalDecision(mode="force", query=request.message)
 
     def auxiliary_tool_hint(self, request) -> str:
@@ -240,7 +241,7 @@ def test_new_service_terminalizes_orphaned_running_run_without_reexecution(tmp_p
             sequence=1,
             event="model.attempt",
             payload=(
-                'id: 1\nevent: model.attempt\ndata: '
+                "id: 1\nevent: model.attempt\ndata: "
                 '{"version":"1.0","event":"model.attempt","seq":1,'
                 '"run_id":"orphaned-run","session_id":"orphaned-session","round":1,'
                 '"data":{"attempt":1,"status":"transport_error"}}\n\n'

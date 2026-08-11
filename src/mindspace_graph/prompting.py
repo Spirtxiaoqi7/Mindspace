@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
@@ -43,9 +42,9 @@ from mindspace_graph.prompt_templates import (
     build_attachments_template,
     build_authoritative_state_template,
     build_contract_template,
-    build_post_history_template,
     build_persona_template,
     build_physical_time_control_lines,
+    build_post_history_template,
     build_quick_interaction_template,
     build_reply_context_template,
     join_turn_data_templates,
@@ -177,8 +176,7 @@ def _turn_data_directive(request: ChatRequest) -> str:
         blocks.append(build_reply_context_template(request.reply_context))
     if request.attachments:
         rendered = tuple(
-            build_attachment_item_template(item.name, item.media_type, item.content)
-            for item in request.attachments
+            build_attachment_item_template(item.name, item.media_type, item.content) for item in request.attachments
         )
         blocks.append(build_attachments_template(rendered))
     return join_turn_data_templates(tuple(blocks))
@@ -298,9 +296,7 @@ def _time_state(request: ChatRequest, history: list[dict[str, Any]]) -> dict[str
     }
 
 
-def _history_for_model(
-    history: list[dict[str, Any]], request: ChatRequest
-) -> list[dict[str, str]]:
+def _history_for_model(history: list[dict[str, Any]], request: ChatRequest) -> list[dict[str, str]]:
     del request
     result: list[dict[str, str]] = []
     for item in history:
@@ -309,9 +305,7 @@ def _history_for_model(
     return result
 
 
-def _history_physical_time_index(
-    history: list[dict[str, Any]], request: ChatRequest
-) -> list[dict[str, Any]]:
+def _history_physical_time_index(history: list[dict[str, Any]], request: ChatRequest) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     for order, item in enumerate(history, start=1):
         local_time = _local_physical_time(item.get("physical_time") or item.get("timestamp"), request)
@@ -823,4 +817,3 @@ def build_messages(
         tool_hint,
         emotion_state,
     ).messages
-

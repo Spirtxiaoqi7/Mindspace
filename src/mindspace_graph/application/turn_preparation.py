@@ -35,6 +35,7 @@ class TurnPreparationService:
         self.settings = settings
         self.dependencies = dependencies
         self._retrieval_is_ready = retrieval_is_ready
+
     def prepare(
         self,
         request: ChatRequest,
@@ -42,8 +43,10 @@ class TurnPreparationService:
     ) -> ChatRequest:
         """用服务端模型地址/密钥/模型名覆盖客户端值，只保留本轮采样参数。"""
 
-        history = list(session_snapshot) if session_snapshot is not None else self.dependencies.sessions.load_all(
-            request.session_id
+        history = (
+            list(session_snapshot)
+            if session_snapshot is not None
+            else self.dependencies.sessions.load_all(request.session_id)
         )
 
         characters = self.dependencies.characters
@@ -109,7 +112,6 @@ class TurnPreparationService:
             ),
             max_tokens=effective_roleplay_max_tokens(request, history),
         )
-        retrieval_key = (request.session_id, character_id)
         explicit_recall = bool(_EXPLICIT_RECALL.search(request.message))
         default_retrieval_open = request.round > RETRIEVAL_INDEX_ONLY_ROUNDS
         index_ready = self._retrieval_is_ready(request.session_id, character_id)
@@ -148,5 +150,6 @@ class TurnPreparationService:
                 "retrieval": retrieval,
             }
         )
+
 
 __all__ = ["TurnPreparationService"]

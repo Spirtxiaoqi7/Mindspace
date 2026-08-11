@@ -88,14 +88,16 @@ def register_routes(app: FastAPI, context: ApiContext) -> None:
             body = response.json()
             rows = body.get("data", body.get("models", [])) if isinstance(body, dict) else body
             models = sorted(
-                {
-                    str(item.get("id") or item.get("name") or "").strip()
-                    for item in rows if isinstance(item, dict)
-                }
-                | {str(item).strip() for item in rows if isinstance(item, str)}
-                - {""}
+                {str(item.get("id") or item.get("name") or "").strip() for item in rows if isinstance(item, dict)}
+                | {str(item).strip() for item in rows if isinstance(item, str)} - {""}
             )
-            return {"provider": provider["id"], "base_url": base_url, "models": models or fallback, "source": "remote", "warning": ""}
+            return {
+                "provider": provider["id"],
+                "base_url": base_url,
+                "models": models or fallback,
+                "source": "remote",
+                "warning": "",
+            }
         except (httpx.HTTPError, ValueError) as exc:
             return {
                 "provider": provider["id"],

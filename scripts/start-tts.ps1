@@ -25,7 +25,7 @@ else {
 }
 $Worker = Join-Path $ProjectRoot 'vendor\cosyvoice_mindspace_worker.py'
 $ModelRoot = if ($env:MINDSPACE_MODEL_ROOT) { $env:MINDSPACE_MODEL_ROOT } else { Join-Path $ProjectRoot 'assets\models' }
-$RuntimeRoot = if ($env:MINDSPACE_RUNTIME_DIR) { $env:MINDSPACE_RUNTIME_DIR } else { Join-Path $ProjectRoot 'runtime' }
+$RuntimeRoot = if ($env:MINDSPACE_DATA_ROOT) { $env:MINDSPACE_DATA_ROOT } elseif ($env:MINDSPACE_RUNTIME_DIR) { $env:MINDSPACE_RUNTIME_DIR } else { Join-Path $ProjectRoot 'runtime' }
 $Model = Join-Path $ModelRoot 'tts\Fun-CosyVoice3-0.5B-2512'
 $Reference = Join-Path $ProjectRoot 'assets\audio\tts-reference.wav'
 $ReferenceText = ''

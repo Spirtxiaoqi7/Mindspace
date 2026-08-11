@@ -8,9 +8,9 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
-from mindspace_graph.infrastructure.storage.json_io import atomic_json_write
 from mindspace_graph.capabilities import DEFAULT_CAPABILITY_SETTINGS
 from mindspace_graph.gpt_sovits import GPT_SOVITS_VOICES
+from mindspace_graph.infrastructure.storage.json_io import atomic_json_write
 from mindspace_graph.llm_providers import infer_provider_id
 from mindspace_graph.settings import AppSettings
 
@@ -112,7 +112,10 @@ class ProductConfigStore:
                 self._config["llm"]["provider"] = infer_provider_id(self._config["llm"]["base_url"])
             deepseek_url = str(self._config["llm"].get("base_url") or "").rstrip("/").lower()
             legacy_deepseek_model = str(self._config["llm"].get("model") or "").strip().lower()
-            if deepseek_url in {"https://api.deepseek.com", "https://api.deepseek.com/v1"} and legacy_deepseek_model in {
+            if deepseek_url in {
+                "https://api.deepseek.com",
+                "https://api.deepseek.com/v1",
+            } and legacy_deepseek_model in {
                 "deepseek-chat",
                 "deepseek-reasoner",
             }:
@@ -336,9 +339,7 @@ class ProductConfigStore:
         self.settings.tts_reference_audio = str(audio["tts_reference_audio"])
         self.settings.tts_reference_text = str(audio["tts_reference_text"])
         self.settings.tts_siliconflow_base_url = str(audio["tts_siliconflow_base_url"])
-        self.settings.tts_siliconflow_api_key = self._runtime_secrets[
-            "tts_siliconflow_api_key"
-        ]
+        self.settings.tts_siliconflow_api_key = self._runtime_secrets["tts_siliconflow_api_key"]
         self.settings.tts_siliconflow_model = str(audio["tts_siliconflow_model"])
         self.settings.tts_siliconflow_voice = str(audio["tts_siliconflow_voice"])
         self.settings.tts_siliconflow_gain = float(audio["tts_siliconflow_gain"])
@@ -364,9 +365,7 @@ class ProductConfigStore:
         if redact:
             for section, _field, setting_name, status_prefix in _SECRET_FIELDS:
                 target = value[section]
-                target[f"{status_prefix}_configured"] = bool(
-                    self._runtime_secrets[setting_name]
-                )
+                target[f"{status_prefix}_configured"] = bool(self._runtime_secrets[setting_name])
                 target[f"{status_prefix}_source"] = self._secret_sources[setting_name]
                 target[f"{status_prefix}_persisted"] = False
                 target[f"{status_prefix}_persistence"] = "process_only"
@@ -401,12 +400,8 @@ class ProductConfigStore:
         if set(values) != expected or set(sources) != expected:
             raise ValueError("runtime secret rollback snapshot fields are invalid")
         with self._lock:
-            self._runtime_secrets = {
-                key: str(values[key] or "").strip() for key in expected
-            }
-            self._secret_sources = {
-                key: str(sources[key] or "none") for key in expected
-            }
+            self._runtime_secrets = {key: str(values[key] or "").strip() for key in expected}
+            self._secret_sources = {key: str(sources[key] or "none") for key in expected}
             self._apply_live_settings()
 
     def restore(self, snapshot: dict[str, Any]) -> None:

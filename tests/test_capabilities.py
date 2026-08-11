@@ -54,7 +54,10 @@ def test_retrieval_decision_is_zero_call_and_local_is_never_exposed(tmp_path):
     )
     assert service.retrieval_decision(ChatRequest(message="搜索 DeepSeek 最新模型")).mode == "force"
     assert service.retrieval_decision(ChatRequest(message="网络搜索一下有没有新鲜事")).mode == "force"
-    assert service.retrieval_decision(ChatRequest(message="朋友说 DeepSeek 已支持超长上下文，这个说法稳妥吗")).mode == "allow"
+    assert (
+        service.retrieval_decision(ChatRequest(message="朋友说 DeepSeek 已支持超长上下文，这个说法稳妥吗")).mode
+        == "allow"
+    )
     assert service.retrieval_decision(ChatRequest(message="我今天换美元，继续按旧汇率估算够不够")).mode == "force"
     assert service.retrieval_decision(ChatRequest(message="今天用 Python 写个排序脚本合适吗")).mode == "suppress"
     assert service.auxiliary_tool_hint(ChatRequest(message="你还记得我喜欢什么吗")) == "memory"
@@ -65,7 +68,8 @@ def test_retrieval_decision_is_zero_call_and_local_is_never_exposed(tmp_path):
 def web_transport(request: httpx.Request) -> httpx.Response:
     if request.url.host == "www.bing.com":
         xml = """<rss><channel>
-        <item><title>Mindspace Source A</title><link>https://example.com/a</link><description>Mindspace summary</description></item>
+        <item><title>Mindspace Source A</title><link>https://example.com/a</link>
+        <description>Mindspace summary</description></item>
         <item><title>Blocked</title><link>http://127.0.0.1/private</link><description>x</description></item>
         </channel></rss>"""
         return httpx.Response(200, text=xml, headers={"content-type": "application/rss+xml"})
@@ -95,7 +99,13 @@ def test_web_executor_uses_public_get_and_returns_bounded_sources(tmp_path):
 def test_native_original_platform_intent_reaches_web_execution_and_rejects_x_home(tmp_path):
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "search.brave.com":
-            return httpx.Response(200, text='<div data-type="web"><a href="https://x.com/OpenAI">OpenAI</a><div class="generic-snippet">Official profile</div></div>')
+            return httpx.Response(
+                200,
+                text=(
+                    '<div data-type="web"><a href="https://x.com/OpenAI">OpenAI</a>'
+                    '<div class="generic-snippet">Official profile</div></div>'
+                ),
+            )
         if request.url.host == "www.bing.com":
             return httpx.Response(200, text="<html></html>")
         if request.url.host == "www.baidu.com":
@@ -104,7 +114,9 @@ def test_native_original_platform_intent_reaches_web_execution_and_rejects_x_hom
             return httpx.Response(200, text="<html></html>")
         raise AssertionError(request.url)
 
-    service = ReadOnlyCapabilityService(config_provider=lambda: capability_config(), runtime_dir=tmp_path, http_transport=httpx.MockTransport(handler))
+    service = ReadOnlyCapabilityService(
+        config_provider=lambda: capability_config(), runtime_dir=tmp_path, http_transport=httpx.MockTransport(handler)
+    )
     instruction = native_call_to_instruction(
         {"id": "x1", "function": {"name": "web", "arguments": '{"query":"OpenAI posts"}'}},
         user_message="帮我在 X 查找 OpenAI 官方账号最近动态",

@@ -55,6 +55,16 @@ foreach ($name in $Services | Select-Object -Unique) {
     $stopped += @{ service = $name; port = $PortByService[$name]; pid = $processId; dry_run = [bool]$DryRun }
 }
 
+if ($IncludeQwen) {
+    $distro = if ($env:MINDSPACE_QWEN3_WSL_DISTRO) { [string]$env:MINDSPACE_QWEN3_WSL_DISTRO } else { 'MindspaceVLLM' }
+    if (-not $DryRun -and $PSCmdlet.ShouldProcess("WSL distro $distro", 'Terminate dedicated Mindspace Qwen runtime')) {
+        & wsl.exe --terminate $distro 2>$null | Out-Null
+        $runtimeRoot = if ($env:MINDSPACE_QWEN3_RUNTIME_ROOT) { [string]$env:MINDSPACE_QWEN3_RUNTIME_ROOT } else { Join-Path $ProjectRoot 'environment\qwen3-vllm' }
+        Remove-Item -LiteralPath (Join-Path $runtimeRoot 'qwen3-vllm.pid') -Force -ErrorAction SilentlyContinue
+    }
+    $stopped += @{ service = 'qwenTts-distro'; distro = $distro; dry_run = [bool]$DryRun }
+}
+
 $result = @{ ok = $conflicts.Count -eq 0; stopped = $stopped; conflicts = $conflicts }
 $result | ConvertTo-Json -Depth 6 -Compress
 if ($conflicts.Count) { exit 23 }

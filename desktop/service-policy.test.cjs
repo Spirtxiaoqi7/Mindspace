@@ -71,6 +71,14 @@ test("bulk startup starts local TTS without awaiting ASR cold load", () => {
   assert.doesNotMatch(bulkStart, /startLocalTtsAfterAsr/);
 });
 
+test("Qwen shutdown always reclaims its dedicated WSL distro", () => {
+  const supervisor = fs.readFileSync(path.join(__dirname, "service-supervisor.cjs"), "utf8");
+  const stopScript = fs.readFileSync(path.join(__dirname, "..", "scripts", "stop-services.ps1"), "utf8");
+  assert.match(supervisor, /\["--terminate", distro\]/);
+  assert.doesNotMatch(supervisor, /if \(!\/\^\\d\+\$\/\.test\(pid\)\) return false/);
+  assert.match(stopScript, /wsl\.exe --terminate \$distro/);
+});
+
 test("default launcher startup requests Core only", () => {
   const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
   const startup = main.match(/async function startDefaultCore\(\) \{[\s\S]*?\n\}/)?.[0] || "";

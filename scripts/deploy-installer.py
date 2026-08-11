@@ -426,7 +426,7 @@ def deploy_release(
     if launcher:
         launcher_version = str(launcher["version"])
         launcher_root = release_root / "launcher" / channel
-        installer = launcher_root / f"Mindspace-{launcher_version}-x64.exe"
+        installer = launcher_root / f"Mindspace-{launcher_version}-x64-offline.exe"
         blockmap = Path(f"{installer}.blockmap")
         latest = launcher_root / "latest.yml"
         feed_root = posixpath.join(remote_root, "launcher", channel)
@@ -499,7 +499,7 @@ def stage_release(
     ]
     if catalog.get("launcher"):
         launcher_root = release_root / "launcher" / channel
-        installer = launcher_root / f"Mindspace-{version}-x64.exe"
+        installer = launcher_root / f"Mindspace-{version}-x64-offline.exe"
         files.extend(
             [
                 (installer, f"launcher/{installer.name}"),

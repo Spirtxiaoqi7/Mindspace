@@ -120,7 +120,7 @@ def appearance_summary(value: Any) -> str:
     appearance = normalize_appearance(value)
     parts: list[str] = []
     if appearance["height_cm"]:
-        parts.append(f'{appearance["height_cm"]}cm')
+        parts.append(f"{appearance['height_cm']}cm")
     parts.extend(
         str(appearance[key])
         for key in ("body_shape", "body_features", "face", "hair", "eyes", "skin")
@@ -128,7 +128,7 @@ def appearance_summary(value: Any) -> str:
     )
     parts.extend(appearance["distinguishing_features"])
     if appearance["signature_outfit"]:
-        parts.append(f'标志穿着为{appearance["signature_outfit"]}')
+        parts.append(f"标志穿着为{appearance['signature_outfit']}")
     if appearance["intimate_features"]:
         parts.append(str(appearance["intimate_features"]))
     return "，".join(dict.fromkeys(parts))

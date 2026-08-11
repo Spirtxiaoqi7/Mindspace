@@ -63,7 +63,9 @@ class ReadOnlyCapabilityService:
         settings = self.settings()
         return bool(settings["master_enabled"] and settings.get(key, False))
 
-    def retrieval_decision(self, request: ChatRequest, *, history: list[dict[str, Any]] | None = None) -> RetrievalDecision:
+    def retrieval_decision(
+        self, request: ChatRequest, *, history: list[dict[str, Any]] | None = None
+    ) -> RetrievalDecision:
         return decide_retrieval(request, history)
 
     def auxiliary_tool_hint(self, request: ChatRequest) -> str:
@@ -93,7 +95,9 @@ class ReadOnlyCapabilityService:
             elapsed_ms=round(elapsed, 1),
             source_count=len(result.sources),
             data=result.tool_data(),
-            error="" if result.status == "success" else "; ".join(item.get("error", "") for item in result.failures)[:500],
+            error=""
+            if result.status == "success"
+            else "; ".join(item.get("error", "") for item in result.failures)[:500],
         )
         if self.audit is not None:
             self.audit.record("tool_web_executed", execution.model_dump(mode="json", exclude={"data"}))

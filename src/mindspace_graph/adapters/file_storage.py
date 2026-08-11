@@ -13,7 +13,6 @@ from mindspace_graph.infrastructure.storage.json_patch import (
     read_json_pointer,
 )
 
-
 _atomic_json = atomic_json_write
 _apply_patch = apply_json_patch
 _pointer_tokens = json_pointer_tokens

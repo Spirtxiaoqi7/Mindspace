@@ -911,6 +911,8 @@ def test_avatar_config_normalizes_legacy_values_and_upload_returns_config(tmp_pa
     )
     assert uploaded.status_code == 200
     assert uploaded.json()["config"]["assistant"]["src"].startswith("/api/v1/avatar/files/assistant-")
+
+
 def test_available_models_preserves_current_model_and_sorts_provider_results(monkeypatch, tmp_path) -> None:
     class FakeResponse:
         def raise_for_status(self) -> None:

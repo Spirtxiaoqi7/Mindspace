@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 
 from .models import WebQuery, WebSource
 
-
 _WEATHER_MARKER = re.compile(r"天气|气温|温度|降雨|下雨|下雪|风力|湿度|weather|forecast", re.I)
 _QUERY_NOISE = re.compile(
     r"今天|今日|明天|后天|现在|目前|最近|实时|当地|天气预报|天气|气温|温度|"
@@ -77,7 +76,9 @@ class WeatherProvider:
                 "longitude": place["longitude"],
                 "timezone": "auto",
                 "forecast_days": 3,
-                "current": "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m",
+                "current": (
+                    "temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m"
+                ),
                 "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
             },
         )
@@ -98,9 +99,7 @@ class WeatherProvider:
                     "precipitation_probability_percent": self._at(daily, "precipitation_probability_max", index),
                 }
             )
-        name = " ".join(
-            str(value) for value in (place.get("country"), place.get("admin1"), place.get("name")) if value
-        )
+        name = " ".join(str(value) for value in (place.get("country"), place.get("admin1"), place.get("name")) if value)
         data = {
             "location": name or location,
             "timezone": payload.get("timezone") or "",

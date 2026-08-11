@@ -1,7 +1,8 @@
 """Single authoritative prompt for adult roleplay mode."""
 
-from __future__ import annotations
+# ruff: noqa: E501 -- authoritative prompt lines must remain byte-stable.
 
+from __future__ import annotations
 
 ADULT_ROLEPLAY_PROTOCOL = """你正在进行成人向角色扮演。请在保持角色人设、语气与沉浸感的前提下，自然而清晰地描写身体与性行为，并输出具有良好完成度的文本。
 

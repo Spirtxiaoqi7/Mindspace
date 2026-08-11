@@ -35,6 +35,7 @@ class AppSettings:
     port: int = 8765
     debug: bool = False
     runtime_dir: Path = field(default_factory=lambda: Path.cwd() / "runtime")
+    data_root: Path | None = None
     model_root: Path = field(default_factory=lambda: Path.cwd() / "assets" / "models")
     llm_mode: str = "openai"
     llm_base_url: str = "https://api.deepseek.com"
@@ -86,15 +87,15 @@ class AppSettings:
         # process that only receives MINDSPACE_HOME must reopen that install's
         # existing runtime root. Product stores append data/config/logs below it.
         configured_home = os.environ.get("MINDSPACE_HOME", "").strip()
-        default_runtime = (
-            Path(configured_home).expanduser().resolve() if configured_home else project_root / "runtime"
-        )
+        default_runtime = Path(configured_home).expanduser().resolve() if configured_home else project_root / "runtime"
+        configured_data_root = os.environ.get("MINDSPACE_DATA_ROOT", "").strip()
         return cls(
             app_name=os.environ.get("MINDSPACE_APP_NAME", "Mindspace Graph"),
             host=os.environ.get("MINDSPACE_HOST", "127.0.0.1"),
             port=int(os.environ.get("MINDSPACE_PORT", "8765")),
             debug=_bool("MINDSPACE_DEBUG", False),
             runtime_dir=Path(os.environ.get("MINDSPACE_RUNTIME_DIR", str(default_runtime))).resolve(),
+            data_root=Path(configured_data_root).expanduser().resolve() if configured_data_root else None,
             model_root=Path(
                 os.environ.get(
                     "MINDSPACE_MODEL_ROOT",
@@ -150,15 +151,14 @@ class AppSettings:
         )
 
     def ensure_directories(self) -> None:
-        for relative in (
-            "config",
-            "data/profiles",
-            "data/sessions",
-            "data/audio",
-            "data/avatars",
-            "logs",
-        ):
-            (self.runtime_dir / relative).mkdir(parents=True, exist_ok=True)
+        root = self.data_root or self.runtime_dir
+        relatives = (
+            ("config", "profiles", "sessions", "audio", "avatars", "logs")
+            if self.data_root
+            else ("config", "data/profiles", "data/sessions", "data/audio", "data/avatars", "logs")
+        )
+        for relative in relatives:
+            (root / relative).mkdir(parents=True, exist_ok=True)
 
     def public_config(self) -> dict[str, object]:
         return {

@@ -1,11 +1,13 @@
 from mindspace_graph.event_memory import (
     EventMemoryStore,
+    build_event_extraction_messages,
     event_memory_lane,
-    parse_event_operation,
     normalize_event_operation,
+    parse_event_operation,
     resolve_event_target,
     should_consider_event,
 )
+from mindspace_graph.models import ApiConfig, ChatRequest, ChatResponse
 from mindspace_graph.product_database import ProductDatabase
 
 
@@ -86,3 +88,38 @@ def test_event_slot_and_lifecycle_are_normalized_from_user_evidence():
         "周六电影不看了，取消这个约定",
     )
     assert cancellation["operation"] == "remove"
+
+
+def test_event_extractor_receives_recent_dialogue_for_short_confirmation():
+    request = ChatRequest(
+        session_id="session-a",
+        character_id="char-a",
+        round=3,
+        message="真好",
+        api=ApiConfig(base_url="https://example.test/v1", api_key="test", model="test-model"),
+    )
+    response = ChatResponse(
+        session_id="session-a",
+        round=3,
+        status="success",
+        reply="那从今天开始，我就是你老婆。",
+    )
+    messages = build_event_extraction_messages(
+        request,
+        response,
+        {"pending": [], "subjects": {}},
+        [
+            {"round": 2, "role": "user", "content": "当我的什么"},
+            {"round": 2, "role": "assistant", "content": "我想当你老婆。"},
+            {"round": 3, "role": "user", "content": "真好"},
+            {"round": 3, "role": "assistant", "content": "那从今天开始，我就是你老婆。"},
+        ],
+        [{"source": "chat", "text": "两人此前一直以恋人相称", "round": 1}],
+        {"ai_profile": {"relationship": "恋人"}, "revisions": {"ai_profile": 2}},
+    )
+    assert "recent_dialogue" in messages[1]["content"]
+    assert "当我的什么" in messages[1]["content"]
+    assert "retrieved_context" in messages[1]["content"]
+    assert "structured_context" in messages[1]["content"]
+    assert "不要把 current_user 当成孤立句子" in messages[0]["content"]
+    assert "不能单独作为新增" in messages[0]["content"]

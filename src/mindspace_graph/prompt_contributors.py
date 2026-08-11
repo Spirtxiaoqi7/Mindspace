@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Iterable, Mapping
 
 from mindspace_graph.prompt_blocks import PromptBlock, PromptCompiler
 from mindspace_graph.prompt_templates import build_history_time_index_template
-
 
 PromptMessage = Mapping[str, object]
 PromptEvent = Mapping[str, object]
@@ -66,10 +65,7 @@ class RetrievalContributor:
 
     def contribute(self, compiler: PromptCompiler) -> PromptCompiler:
         return compiler.extend_messages(
-            (
-                {"role": str(event["role"]), "content": str(event["content"])}
-                for event in self.events
-            ),
+            ({"role": str(event["role"]), "content": str(event["content"])} for event in self.events),
             id_prefix="retrieval",
             phase="retrieval_context",
             cache_boundary="dynamic_tail",
@@ -113,10 +109,7 @@ class DynamicTailContributor:
 
     def contribute(self, compiler: PromptCompiler) -> PromptCompiler:
         return compiler.extend_messages(
-            (
-                {"role": str(event["role"]), "content": str(event["content"])}
-                for event in self.events
-            ),
+            ({"role": str(event["role"]), "content": str(event["content"])} for event in self.events),
             id_prefix="tail",
             phase="dynamic_tail",
             cache_boundary="dynamic_tail",

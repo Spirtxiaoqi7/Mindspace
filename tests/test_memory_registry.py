@@ -68,8 +68,7 @@ def test_memory_center_update_delete_and_restore_keep_supported_profile_and_inde
     assert "果断" not in profiles.load_document("ai_profile")["personality"]["core_traits"]
     assert service.list_items() == []
     assert any(
-        item["value"] == "果断" and item["status"] == "invalidated"
-        for item in service.list_items(include_history=True)
+        item["value"] == "果断" and item["status"] == "invalidated" for item in service.list_items(include_history=True)
     )
 
     restored = service.restore(updated["memory_key"])

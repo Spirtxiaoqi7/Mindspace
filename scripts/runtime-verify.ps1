@@ -8,7 +8,7 @@ $CorePython = if ($env:MINDSPACE_CORE_PYTHON) { $env:MINDSPACE_CORE_PYTHON } els
 $AsrVenv = if ($env:MINDSPACE_ASR_VENV) { $env:MINDSPACE_ASR_VENV } else { Join-Path $ProjectRoot '.venv-asr' }
 $AsrPython = Join-Path $AsrVenv 'Scripts\python.exe'
 $ModelRoot = if ($env:MINDSPACE_MODEL_ROOT) { $env:MINDSPACE_MODEL_ROOT } else { Join-Path $ProjectRoot 'assets\models' }
-$RuntimeRoot = if ($env:MINDSPACE_RUNTIME_DIR) { $env:MINDSPACE_RUNTIME_DIR } else { Join-Path $ProjectRoot 'runtime' }
+$RuntimeRoot = if ($env:MINDSPACE_DATA_ROOT) { $env:MINDSPACE_DATA_ROOT } elseif ($env:MINDSPACE_RUNTIME_DIR) { $env:MINDSPACE_RUNTIME_DIR } else { Join-Path $ProjectRoot 'runtime' }
 
 if ($PSVersionTable.PSVersion.Major -lt 7) {
     throw 'Mindspace requires PowerShell 7 or newer.'

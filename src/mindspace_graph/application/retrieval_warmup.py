@@ -19,6 +19,7 @@ class RetrievalWarmupCoordinator:
 
     def is_ready(self, session_id: str, character_id: str) -> bool:
         return (session_id, character_id) in self._retrieval_ready
+
     def kick(self, request: ChatRequest) -> None:
         """Warm retrieval only after the foreground turn has been committed."""
 
@@ -81,6 +82,7 @@ class RetrievalWarmupCoordinator:
             worker(),
             name=f"retrieval-warmup-{request.session_id[:12]}",
         )
+
     def close(self) -> None:
         for task in self._retrieval_warmups.values():
             task.cancel()

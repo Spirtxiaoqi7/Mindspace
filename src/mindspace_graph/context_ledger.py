@@ -450,9 +450,7 @@ class ContextLedger:
                 "context_epochs": {"character_id": "TEXT NOT NULL DEFAULT ''"},
                 "compaction_jobs": {"character_id": "TEXT NOT NULL DEFAULT ''"},
             }.items():
-                table_columns = {
-                    str(row["name"]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()
-                }
+                table_columns = {str(row["name"]) for row in db.execute(f"PRAGMA table_info({table})").fetchall()}
                 for name, definition in definitions.items():
                     if name not in table_columns:
                         db.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
@@ -1049,15 +1047,21 @@ class ContextLedger:
             active_epoch_id = int(active["active_epoch_id"] or 0)
             if active_epoch_id != epoch_id:
                 old_epoch = db.execute(
-                    "SELECT system_hash, profile_revisions_json, rewrite_version FROM context_epochs WHERE epoch_id = ?",
+                    "SELECT system_hash, profile_revisions_json, rewrite_version "
+                    "FROM context_epochs WHERE epoch_id = ?",
                     (epoch_id,),
                 ).fetchone()
                 new_epoch = db.execute(
-                    "SELECT system_hash, profile_revisions_json, rewrite_version FROM context_epochs WHERE epoch_id = ? AND status = 'active'",
+                    "SELECT system_hash, profile_revisions_json, rewrite_version "
+                    "FROM context_epochs WHERE epoch_id = ? AND status = 'active'",
                     (active_epoch_id,),
                 ).fetchone()
                 comparable = ("system_hash", "profile_revisions_json", "rewrite_version")
-                if old_epoch is None or new_epoch is None or any(old_epoch[key] != new_epoch[key] for key in comparable):
+                if (
+                    old_epoch is None
+                    or new_epoch is None
+                    or any(old_epoch[key] != new_epoch[key] for key in comparable)
+                ):
                     raise RuntimeError("context epoch changed before turn commit")
                 # Background compaction may atomically replace an epoch while
                 # a foreground model call is running. Identical authoritative

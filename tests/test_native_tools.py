@@ -36,7 +36,7 @@ def test_native_calls_map_to_validated_host_instructions():
             "function": {
                 "name": "task_create",
                 "arguments": '{"title":"交报告","due_at":"2026-08-10T18:00:00+08:00"}',
-            }
+            },
         },
         user_message="2026年8月10日18:00交报告",
     )
@@ -54,8 +54,20 @@ def test_web_call_merges_platform_scope_from_the_original_user_message():
         {"id": "w1", "function": {"name": "web", "arguments": '{"query":"translated query","platforms":["github"]}'}},
         user_message="帮我在 GitHub、X(Twitter)、小红书、Bilibili、Reddit、YouTube、Bluesky 和 Mastodon 查找。",
     )
-    assert instruction.command["platforms"] == ["x", "github", "youtube", "reddit", "bluesky", "mastodon", "bilibili", "xiaohongshu"]
-    assert instruction.command["original_intent"] == "帮我在 GitHub、X(Twitter)、小红书、Bilibili、Reddit、YouTube、Bluesky 和 Mastodon 查找。"
+    assert instruction.command["platforms"] == [
+        "x",
+        "github",
+        "youtube",
+        "reddit",
+        "bluesky",
+        "mastodon",
+        "bilibili",
+        "xiaohongshu",
+    ]
+    assert (
+        instruction.command["original_intent"]
+        == "帮我在 GitHub、X(Twitter)、小红书、Bilibili、Reddit、YouTube、Bluesky 和 Mastodon 查找。"
+    )
 
 
 def test_native_task_discards_model_invented_clock_time():

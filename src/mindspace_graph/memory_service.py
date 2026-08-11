@@ -69,7 +69,7 @@ class StructuredMemoryService:
         if character_id and character_id not in all_character_ids:
             raise KeyError("character not found")
         character_ids = [character_id] if character_id else all_character_ids
-        groups: dict[str, list[dict[str, Any]]] = ({character_id: []} if character_id else {"": []})
+        groups: dict[str, list[dict[str, Any]]] = {character_id: []} if character_id else {"": []}
         for field in self.registry.fields:
             if field.target == "user_profile":
                 owners = [] if character_id else [""]

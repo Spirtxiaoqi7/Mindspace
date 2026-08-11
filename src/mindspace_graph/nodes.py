@@ -9,6 +9,7 @@ from typing import Any
 from langgraph.types import StreamWriter
 
 from mindspace_graph.cancellation import GenerationCancelled
+from mindspace_graph.event_memory import event_memory_lane
 from mindspace_graph.models import (
     ChatResponse,
     JsonUpdatePlan,
@@ -29,7 +30,6 @@ from mindspace_graph.policies import rank_with_temporal_decay
 from mindspace_graph.ports import Dependencies
 from mindspace_graph.profile_bootstrap import evaluate_profile_bootstrap
 from mindspace_graph.prompting import build_prompt, resolve_initiative_request
-from mindspace_graph.event_memory import event_memory_lane
 from mindspace_graph.protocol import IncrementalResponseParser, ProtocolParser
 from mindspace_graph.roleplay import (
     allow_raw_chat_retrieval,
@@ -40,8 +40,8 @@ from mindspace_graph.roleplay import (
 from mindspace_graph.state import TurnState
 from mindspace_graph.tool_chain import (
     FINAL_AFTER_TOOL_PROTOCOL,
-    ToolInstruction,
     ToolExecutionResult,
+    ToolInstruction,
     enforce_tool_claims,
     execute_memory_tool,
     failed_result,
@@ -286,10 +286,7 @@ class NodeFactory:
                 include_raw_chat=allow_raw_chat_retrieval(request),
                 adult_mode=adult_recall,
             )
-            chunks = [
-                item for item in chunks
-                if item.source == "chat" and item.score >= settings.similarity_threshold
-            ]
+            chunks = [item for item in chunks if item.source == "chat" and item.score >= settings.similarity_threshold]
         return {
             "chat_chunks": chunks,
             "retrieval_query": query if settings.ready else request.message,
@@ -387,9 +384,23 @@ class NodeFactory:
             writer({"event": "tool.hinted", "data": {"hint": "", "model_calls": 0, "reason": "event_memory_lane"}})
             return {"tool_hint": "", "trace": ["tool_hint"]}
         service = self.deps.capabilities
-        decision = service.retrieval_decision(state["request"], history=state.get("recent_history", [])) if service else None
-        data = decision.model_dump(mode="json") if decision else {"mode": "suppress", "scope": "none", "reason_codes": ["capability_unavailable"], "confidence": 0.0}
-        hint = "web_force" if data["mode"] == "force" else "web" if data["mode"] == "allow" else service.auxiliary_tool_hint(state["request"]) if service else ""
+        decision = (
+            service.retrieval_decision(state["request"], history=state.get("recent_history", [])) if service else None
+        )
+        data = (
+            decision.model_dump(mode="json")
+            if decision
+            else {"mode": "suppress", "scope": "none", "reason_codes": ["capability_unavailable"], "confidence": 0.0}
+        )
+        hint = (
+            "web_force"
+            if data["mode"] == "force"
+            else "web"
+            if data["mode"] == "allow"
+            else service.auxiliary_tool_hint(state["request"])
+            if service
+            else ""
+        )
         writer({"event": "tool.hinted", "data": {"decision": data, "model_calls": 0}})
         return {"tool_hint": hint, "retrieval_decision": data, "trace": ["tool_hint"]}
 
@@ -408,8 +419,7 @@ class NodeFactory:
         # desktop settings carried forward from the pre-0.8.2 capability model.
         user_authorized_web = instruction.tool == "web" and str(state.get("tool_hint", "")).startswith("web")
         if instruction.tool == "web" and (
-            service is None
-            or (not service.enabled("web_search_enabled") and not user_authorized_web)
+            service is None or (not service.enabled("web_search_enabled") and not user_authorized_web)
         ):
             error = "web tool is disabled"
         elif instruction.tool == "memory" and (service is None or not service.enabled("local_knowledge_enabled")):
@@ -591,9 +601,7 @@ class NodeFactory:
         # The first call may intentionally cap a short user message at 200
         # tokens. Once a tool has returned multiple sources, that short-turn
         # cap is no longer an appropriate answer budget.
-        final_api = request.api.model_copy(
-            update={"max_tokens": max(int(request.api.max_tokens), 4096)}
-        )
+        final_api = request.api.model_copy(update={"max_tokens": max(int(request.api.max_tokens), 4096)})
         started = time.perf_counter()
         extractor = IncrementalResponseParser()
         chunks: list[str] = []
@@ -629,8 +637,10 @@ class NodeFactory:
         """把权威数据、账本历史和本轮临时上下文组装成主模型 messages。"""
 
         self._check_cancelled(state)
-        native_tools_enabled = not event_memory_lane(state["request"].message) and supports_native_tools(state["request"].api.base_url, state["request"].api.model) and callable(
-            getattr(self.deps.llm, "stream_with_tools", None)
+        native_tools_enabled = (
+            not event_memory_lane(state["request"].message)
+            and supports_native_tools(state["request"].api.base_url, state["request"].api.model)
+            and callable(getattr(self.deps.llm, "stream_with_tools", None))
         )
         built = build_prompt(
             state["request"],
@@ -681,9 +691,35 @@ class NodeFactory:
         self._check_cancelled(state)
         decision = state.get("retrieval_decision") or {}
         if not state.get("native_tools_enabled") and decision.get("mode") == "force":
-            instruction = ToolInstruction(tool="web", level=3, parameter=str(decision.get("query") or state["request"].message), command={"scope": decision.get("scope", "auto"), "platforms": decision.get("platforms", []), "recency": decision.get("recency", "any")})
-            writer({"event": "tool.requested", "data": {"call_id": instruction.call_id, "tool": "web", "level": 3, "parameter_summary": instruction.parameter_summary, "fallback": "host_prefetch"}})
-            return {"raw_candidate": "", "tool_instruction": instruction, "model_usage": state.get("model_usage", []), "provider_attempts": state.get("provider_attempts", []), "trace": ["host_prefetch"]}
+            instruction = ToolInstruction(
+                tool="web",
+                level=3,
+                parameter=str(decision.get("query") or state["request"].message),
+                command={
+                    "scope": decision.get("scope", "auto"),
+                    "platforms": decision.get("platforms", []),
+                    "recency": decision.get("recency", "any"),
+                },
+            )
+            writer(
+                {
+                    "event": "tool.requested",
+                    "data": {
+                        "call_id": instruction.call_id,
+                        "tool": "web",
+                        "level": 3,
+                        "parameter_summary": instruction.parameter_summary,
+                        "fallback": "host_prefetch",
+                    },
+                }
+            )
+            return {
+                "raw_candidate": "",
+                "tool_instruction": instruction,
+                "model_usage": state.get("model_usage", []),
+                "provider_attempts": state.get("provider_attempts", []),
+                "trace": ["host_prefetch"],
+            }
         if not self._call_allowed(state, "generation"):
             raise RuntimeError("generation model call budget exhausted")
         request = state["request"]
@@ -705,9 +741,7 @@ class NodeFactory:
             hint = state.get("tool_hint", "")
             tool_api = request.api
             if hint:
-                tool_api = request.api.model_copy(
-                    update={"max_tokens": max(int(request.api.max_tokens), 4096)}
-                )
+                tool_api = request.api.model_copy(update={"max_tokens": max(int(request.api.max_tokens), 4096)})
             token_stream = self.deps.llm.stream_with_tools(
                 state["prompt_messages"],
                 tool_api,
@@ -770,9 +804,24 @@ class NodeFactory:
                 tool="web",
                 level=3,
                 parameter=str(decision.get("query") or request.message),
-                command={"scope": decision.get("scope", "auto"), "platforms": decision.get("platforms", []), "recency": decision.get("recency", "any")},
+                command={
+                    "scope": decision.get("scope", "auto"),
+                    "platforms": decision.get("platforms", []),
+                    "recency": decision.get("recency", "any"),
+                },
             )
-            writer({"event": "tool.requested", "data": {"call_id": instruction.call_id, "tool": "web", "level": 3, "parameter_summary": instruction.parameter_summary, "fallback": "host_prefetch"}})
+            writer(
+                {
+                    "event": "tool.requested",
+                    "data": {
+                        "call_id": instruction.call_id,
+                        "tool": "web",
+                        "level": 3,
+                        "parameter_summary": instruction.parameter_summary,
+                        "fallback": "host_prefetch",
+                    },
+                }
+            )
             raw = ""
         usage = self._take_model_usage(writer)
         self._check_cancelled(state)
@@ -847,7 +896,11 @@ class NodeFactory:
             errors = []
             self.deps.audit.record(
                 "tool_result_deterministic_response",
-                {"request_id": state.get("request_id", ""), "status": tool_result.status, "coverage": tool_result.data.get("coverage", "")},
+                {
+                    "request_id": state.get("request_id", ""),
+                    "status": tool_result.status,
+                    "coverage": tool_result.data.get("coverage", ""),
+                },
             )
         if protocol is not None:
             self.deps.audit.record(
@@ -1194,6 +1247,18 @@ class NodeFactory:
             llm_call_count=state.get("llm_call_count", 0),
             model_usage=state.get("model_usage", []),
             model=self._model_diagnostics(state),
+            writeback_context={
+                "retrieval": [
+                    {
+                        "source": item.source,
+                        "text": item.text,
+                        "round": item.round_num,
+                        "physical_time": item.physical_time,
+                        "metadata": item.metadata,
+                    }
+                    for item in state.get("ranked_context", [])[:8]
+                ],
+            },
         )
         self.deps.audit.record("turn_completed", response.model_dump(mode="json"))
         writer(
@@ -1240,4 +1305,3 @@ class NodeFactory:
         if state.get("protocol") is not None and not state.get("protocol_errors"):
             return "valid"
         return "fail"
-

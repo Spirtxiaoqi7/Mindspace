@@ -472,8 +472,7 @@ class ProductDatabase:
                     "data": {"content": partial, "reason": "process_recovery"},
                 }
                 payload = (
-                    f"id: {sequence}\nevent: response.replace\n"
-                    f"data: {json.dumps(replacement, ensure_ascii=False)}\n\n"
+                    f"id: {sequence}\nevent: response.replace\ndata: {json.dumps(replacement, ensure_ascii=False)}\n\n"
                 )
                 db.execute(
                     """
@@ -494,10 +493,7 @@ class ProductDatabase:
                 "timestamp": now,
                 "data": {"partial_text": partial, "reason": "core_restarted"},
             }
-            payload = (
-                f"id: {sequence}\nevent: run.interrupted\n"
-                f"data: {json.dumps(interrupted, ensure_ascii=False)}\n\n"
-            )
+            payload = f"id: {sequence}\nevent: run.interrupted\ndata: {json.dumps(interrupted, ensure_ascii=False)}\n\n"
             db.execute(
                 """
                 INSERT OR REPLACE INTO conversation_run_events(

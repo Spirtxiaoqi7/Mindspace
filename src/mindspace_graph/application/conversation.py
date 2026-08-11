@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from collections.abc import AsyncIterator
 from typing import Any
 from uuid import uuid4
 
+from mindspace_graph.application.retrieval_warmup import RetrievalWarmupCoordinator
+from mindspace_graph.application.turn_preparation import TurnPreparationService
 from mindspace_graph.cancellation import CancellationRegistry, GenerationCancelled
 from mindspace_graph.compaction import ContextCompactionService
 from mindspace_graph.conversation_runs import (
@@ -27,8 +28,6 @@ from mindspace_graph.ports import Dependencies
 from mindspace_graph.role_audit import RoleAuditService
 from mindspace_graph.role_runtime import build_runtime_role_state
 from mindspace_graph.settings import AppSettings
-from mindspace_graph.application.retrieval_warmup import RetrievalWarmupCoordinator
-from mindspace_graph.application.turn_preparation import TurnPreparationService
 
 NODE_LABELS = {
     "validate_request": "校验请求",
@@ -380,5 +379,6 @@ class ConversationService:
 
     def interrupt(self, request_id: str) -> bool:
         return self.cancellation.cancel(request_id)
+
 
 __all__ = ["ConversationService"]

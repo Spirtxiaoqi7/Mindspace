@@ -6,12 +6,12 @@ import asyncio
 from collections.abc import Callable
 from typing import Any
 
+from mindspace_graph.event_memory import event_memory_lane
 from mindspace_graph.memory_update import (
     build_memory_extraction_messages,
     parse_memory_plan,
     should_extract_memory,
 )
-from mindspace_graph.event_memory import event_memory_lane
 from mindspace_graph.models import ApiConfig, ChatRequest, ChatResponse, JsonWriteReceipt
 from mindspace_graph.policies import validate_json_update
 from mindspace_graph.ports import Dependencies

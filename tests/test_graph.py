@@ -101,7 +101,11 @@ class ToolIgnoringModel(DeterministicLanguageModel):
 class NativeToolThenEmptyFinalModel(ToolIgnoringModel):
     def __init__(self) -> None:
         super().__init__()
-        self._call = {"id": "native-web", "type": "function", "function": {"name": "web", "arguments": '{"query":"LangGraph","platforms":["github"]}'}}
+        self._call = {
+            "id": "native-web",
+            "type": "function",
+            "function": {"name": "web", "arguments": '{"query":"LangGraph","platforms":["github"]}'},
+        }
 
     def stream_with_tools(self, _messages, _config, *, tools, tool_choice):
         self.tool_choices.append(tool_choice)
@@ -117,7 +121,14 @@ class NativeToolThenEmptyFinalModel(ToolIgnoringModel):
 
 class ForceWebCapabilities:
     def retrieval_decision(self, request, *, history=None):
-        return RetrievalDecision(mode="force", scope="developer", query=request.message, platforms=["github"], reason_codes=["explicit_platform_lookup"], confidence=1)
+        return RetrievalDecision(
+            mode="force",
+            scope="developer",
+            query=request.message,
+            platforms=["github"],
+            reason_codes=["explicit_platform_lookup"],
+            confidence=1,
+        )
 
     def auxiliary_tool_hint(self, _request):
         return ""
@@ -126,7 +137,18 @@ class ForceWebCapabilities:
         return True
 
     def execute_web(self, instruction):
-        return ToolExecutionResult(call_id=instruction.call_id, tool="web", level=3, status="success", parameter_summary=instruction.parameter_summary, source_count=1, data={"coverage": "partial", "sources": [{"url": "https://github.com/langchain-ai/langgraph", "platform": "github"}]})
+        return ToolExecutionResult(
+            call_id=instruction.call_id,
+            tool="web",
+            level=3,
+            status="success",
+            parameter_summary=instruction.parameter_summary,
+            source_count=1,
+            data={
+                "coverage": "partial",
+                "sources": [{"url": "https://github.com/langchain-ai/langgraph", "platform": "github"}],
+            },
+        )
 
 
 def test_force_web_prefetches_when_native_provider_ignores_required_tool_choice():
@@ -134,7 +156,11 @@ def test_force_web_prefetches_when_native_provider_ignores_required_tool_choice(
     model = ToolIgnoringModel()
     deps.llm = model
     deps.capabilities = ForceWebCapabilities()
-    result = invoke(deps, message="帮我在 GitHub 查找 LangGraph 官方仓库最近发布版本和更新时间。", api={"base_url": "https://provider.example/v1", "model": "test"})
+    result = invoke(
+        deps,
+        message="帮我在 GitHub 查找 LangGraph 官方仓库最近发布版本和更新时间。",
+        api={"base_url": "https://provider.example/v1", "model": "test"},
+    )
 
     assert model.tool_choices == ["auto"]
     assert result["response"].tool_execution is not None
@@ -151,7 +177,11 @@ def test_completed_web_tool_does_not_expose_structured_data_when_final_generatio
     model = NativeToolThenEmptyFinalModel()
     deps.llm = model
     deps.capabilities = ForceWebCapabilities()
-    result = invoke(deps, message="帮我在 GitHub 查找 LangGraph 官方仓库最近发布版本和更新时间。", api={"base_url": "https://provider.example/v1", "model": "test"})
+    result = invoke(
+        deps,
+        message="帮我在 GitHub 查找 LangGraph 官方仓库最近发布版本和更新时间。",
+        api={"base_url": "https://provider.example/v1", "model": "test"},
+    )
 
     response = result["response"]
     assert response.status == "success"

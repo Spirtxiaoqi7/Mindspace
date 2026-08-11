@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 
-from mindspace_graph.adapters.profile_repository import JsonProfileRepository
-from mindspace_graph.adapters.session_repository import JsonSessionRepository
 from mindspace_graph.adapters.in_memory import DeterministicLanguageModel, RegexRolePolicy
 from mindspace_graph.adapters.json_audit import JsonlAudit
 from mindspace_graph.adapters.local_retriever import LocalKnowledgeRetriever
 from mindspace_graph.adapters.openai_compatible import OpenAICompatibleLanguageModel
+from mindspace_graph.adapters.profile_repository import JsonProfileRepository
+from mindspace_graph.adapters.session_repository import JsonSessionRepository
 from mindspace_graph.adapters.structured_memory import StructuredMemoryStore
 from mindspace_graph.application.conversation import ConversationService
 from mindspace_graph.art_catalog import ArtCatalogService
-from mindspace_graph.static_paths import BUILTIN_ART_MANIFEST
 from mindspace_graph.asr_vocabulary import ASRVocabularyStore
 from mindspace_graph.cancellation import CancellationRegistry
 from mindspace_graph.capabilities import ReadOnlyCapabilityService
@@ -33,6 +31,7 @@ from mindspace_graph.prompt_inspection import PromptInspectionStore
 from mindspace_graph.role_audit import RoleAuditService
 from mindspace_graph.settings import AppSettings
 from mindspace_graph.shared_chapters import SharedChapterService
+from mindspace_graph.static_paths import BUILTIN_ART_MANIFEST
 
 
 @dataclass(slots=True)
@@ -75,35 +74,38 @@ class _ConfiguredLanguageModelFactory(LanguageModelFactoryPort):
 def build_container(settings: AppSettings | None = None) -> ProductContainer:
     settings = settings or AppSettings.from_env()
     settings.ensure_directories()
-    config = ProductConfigStore(settings.runtime_dir / "config" / "settings.json", settings)
+    data_root = settings.data_root or settings.runtime_dir / "data"
+    config_root = settings.data_root or settings.runtime_dir
+    log_root = settings.data_root or settings.runtime_dir
+    config = ProductConfigStore(config_root / "config" / "settings.json", settings)
     cancellation = CancellationRegistry()
-    database = ProductDatabase(settings.runtime_dir / "data" / "context" / "context.db")
+    database = ProductDatabase(data_root / "context" / "context.db")
     event_memory = EventMemoryStore(database)
     database.begin_projection_repair()
     prompt_inspector = PromptInspectionStore(database)
     entities = EntityRegistry(database)
-    profiles = JsonProfileRepository(settings.runtime_dir / "data" / "profiles", database=database)
+    profiles = JsonProfileRepository(data_root / "profiles", database=database)
     asr_vocabulary = ASRVocabularyStore(
-        settings.runtime_dir / "data" / "asr" / "vocabulary.json",
+        data_root / "asr" / "vocabulary.json",
         profiles,
     )
-    sessions = JsonSessionRepository(settings.runtime_dir / "data" / "sessions", database=database)
+    sessions = JsonSessionRepository(data_root / "sessions", database=database)
     characters = CharacterRepository(
-        settings.runtime_dir / "data" / "characters",
+        data_root / "characters",
         database=database,
         profiles=profiles,
         sessions=sessions,
-        avatar_config_path=settings.runtime_dir / "data" / "avatars" / "config.json",
+        avatar_config_path=data_root / "avatars" / "config.json",
     )
     profiles.bind_characters(characters)
-    context = ContextLedger(settings.runtime_dir / "data" / "context" / "context.db", database=database)
+    context = ContextLedger(data_root / "context" / "context.db", database=database)
     context.configure_hard_limit(
         context_window=settings.llm_context_window,
         hard_ratio=settings.context_compaction_hard_ratio,
         reserved_tokens=settings.context_compaction_max_tokens,
     )
     memory = StructuredMemoryStore(
-        settings.runtime_dir / "data" / "structured-memory.json",
+        data_root / "structured-memory.json",
         database=database,
         entity_registry=entities,
     )
@@ -111,7 +113,7 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
     memory_service = StructuredMemoryService(profiles, memory, database=database, entity_registry=entities)
     memory.migrate_entity_identities()
     knowledge = LocalKnowledgeRetriever(
-        settings.runtime_dir / "data" / "knowledge.json",
+        data_root / "knowledge.json",
         sessions=sessions,
         embedding_model_path=(settings.model_root / "shibing624" / "text2vec-base-chinese"),
         memory_store=memory,
@@ -121,7 +123,7 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
             else None
         ),
     )
-    audit = JsonlAudit(settings.runtime_dir / "logs" / "events.jsonl")
+    audit = JsonlAudit(log_root / "logs" / "events.jsonl")
     capabilities = ReadOnlyCapabilityService(
         config_provider=lambda: config.snapshot(redact=False),
         runtime_dir=settings.runtime_dir,
@@ -146,7 +148,7 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
     )
     art_catalog = ArtCatalogService(
         BUILTIN_ART_MANIFEST,
-        settings.runtime_dir / "data" / "assets" / "packs",
+        data_root / "assets" / "packs",
     )
     dependencies = Dependencies(
         retriever=knowledge,
@@ -196,5 +198,6 @@ def build_container(settings: AppSettings | None = None) -> ProductContainer:
         chapters=chapters,
         art_catalog=art_catalog,
     )
+
 
 __all__ = ["ProductContainer", "build_container"]

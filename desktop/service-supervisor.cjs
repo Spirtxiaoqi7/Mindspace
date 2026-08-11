@@ -62,10 +62,23 @@ function createServiceSupervisor(dependencies) {
     const pidPath = path.join(qwenRuntimeRoot(), "qwen3-vllm.pid");
     let pid = "";
     try { pid = fs.readFileSync(pidPath, "utf8").trim(); } catch {}
-    if (!/^\d+$/.test(pid)) return false;
     const distro = process.env.MINDSPACE_QWEN3_WSL_DISTRO || "MindspaceVLLM";
-    const result = spawnSync("wsl.exe", ["--distribution", distro, "--", "bash", "-lc", 'kill -TERM "$1" 2>/dev/null', "mindspace-qwen", pid], { windowsHide: true });
-    return result.status === 0;
+    let signalled = false;
+    if (/^\d+$/.test(pid)) {
+      const result = spawnSync(
+        "wsl.exe",
+        ["--distribution", distro, "--", "bash", "-lc", 'kill -TERM "$1" 2>/dev/null', "mindspace-qwen", pid],
+        { windowsHide: true, timeout: 5_000 },
+      );
+      signalled = result.status === 0;
+    }
+    // MindspaceVLLM is a dedicated application distro. The Windows wrapper can
+    // disappear while its Linux model server survives, so the PID file alone is
+    // not authoritative. Terminating the distro is the final ownership-safe
+    // cleanup and releases GPU memory before another voice service starts.
+    const terminated = spawnSync("wsl.exe", ["--terminate", distro], { windowsHide: true, timeout: 15_000 });
+    try { fs.rmSync(pidPath, { force: true }); } catch {}
+    return signalled || terminated.status === 0;
   }
 
   function recordServiceEvent(event, details = {}) {
@@ -242,13 +255,13 @@ function createServiceSupervisor(dependencies) {
     desiredServices.delete(name); clearServiceRecovery(name);
     startGenerations.set(name, (startGenerations.get(name) || 0) + 1);
     const child = children.get(name);
-    if (!child) {
-      if (name === "qwenTts" && stopExternalQwenSupervisor()) return { ok: true, external: true };
-      return { ok: false, error: "该服务不是由当前 Launcher 启动" };
+    if (child) {
+      spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
+      clearServiceIdentity(name); children.delete(name); serviceLaunchTimes.delete(name);
     }
-    spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
-    clearServiceIdentity(name); children.delete(name); serviceLaunchTimes.delete(name);
-    return { ok: true };
+    const external = name === "qwenTts" && stopExternalQwenSupervisor();
+    if (!child && !external) return { ok: false, error: "该服务不是由当前 Launcher 启动" };
+    return { ok: true, external: Boolean(external) };
   }
 
   async function waitForServiceOffline(name, timeoutMs = 9_000) {

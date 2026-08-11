@@ -191,7 +191,11 @@ def test_visible_stream_falls_back_when_compatibility_fields_are_rejected():
         bodies.append(body)
         if "stream_options" in body:
             return httpx.Response(400, json={"error": "unknown field"})
-        return httpx.Response(200, text=('data: {"choices":[{"delta":{"content":"兼容"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'), headers={"Content-Type": "text/event-stream"})
+        return httpx.Response(
+            200,
+            text=('data: {"choices":[{"delta":{"content":"兼容"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n'),
+            headers={"Content-Type": "text/event-stream"},
+        )
 
     client = httpx.Client(transport=httpx.MockTransport(handler))
     model = OpenAICompatibleLanguageModel(client=client)
@@ -240,7 +244,14 @@ def test_native_tool_stream_accumulates_fragmented_call_without_visible_text():
         }
     ]
 
-    assert list(model.stream_with_tools([], config, tools=tools, tool_choice={"type": "function", "function": {"name": "web"}})) == []
+    assert (
+        list(
+            model.stream_with_tools(
+                [], config, tools=tools, tool_choice={"type": "function", "function": {"name": "web"}}
+            )
+        )
+        == []
+    )
     assert model.take_native_tool_call() == {
         "id": "call_1",
         "type": "function",
@@ -306,7 +317,14 @@ def test_required_single_native_tool_keeps_first_duplicate_provider_call():
         }
     ]
 
-    assert list(model.stream_with_tools([], config, tools=tools, tool_choice={"type": "function", "function": {"name": "web"}})) == []
+    assert (
+        list(
+            model.stream_with_tools(
+                [], config, tools=tools, tool_choice={"type": "function", "function": {"name": "web"}}
+            )
+        )
+        == []
+    )
     assert model.take_native_tool_call() == {
         "id": "call_1",
         "type": "function",
@@ -402,8 +420,3 @@ def test_visible_stream_accepts_block_array_content():
     model = OpenAICompatibleLanguageModel(client=client)
     assert model.generate([], ApiConfig(api_key="test")) == "数组正文"
     client.close()
-
-
-
-
-

@@ -265,14 +265,14 @@
             "type": "string"
           },
           "max_tokens": {
-            "default": 2000,
-            "maximum": 8192.0,
+            "default": 4096,
+            "maximum": 32768.0,
             "minimum": 64.0,
             "title": "Max Tokens",
             "type": "integer"
           },
           "model": {
-            "default": "deepseek-chat",
+            "default": "deepseek-v4-flash",
             "title": "Model",
             "type": "string"
           },
@@ -2233,7 +2233,7 @@
   },
   "info": {
     "title": "Mindspace Graph",
-    "version": "0.9.0"
+    "version": "0.9.1"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -6133,6 +6133,60 @@
           }
         },
         "summary": "Get Available Models"
+      }
+    },
+    "/api/v1/models/discover": {
+      "post": {
+        "operationId": "discover_models_api_v1_models_discover_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Payload",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Discover Models"
+      }
+    },
+    "/api/v1/models/providers": {
+      "get": {
+        "operationId": "get_model_providers_api_v1_models_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Model Providers"
       }
     },
     "/api/v1/profiles/{name}": {

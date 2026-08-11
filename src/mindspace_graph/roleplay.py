@@ -51,9 +51,7 @@ _SCENE_ACTION = re.compile(
     r"你(?:走|坐|躺|靠|抱|吻|拉|推|伸手|转身|过来)|"
     r"抱住我|吻我|亲我|继续刚才|接着刚才|然后呢)"
 )
-_CONTINUATION = re.compile(
-    r"^\s*(?:继续|接着|然后呢|还有呢|还有吗|再来|别停|嗯+|好+)[。！!？?~～…]*\s*$"
-)
+_CONTINUATION = re.compile(r"^\s*(?:继续|接着|然后呢|还有呢|还有吗|再来|别停|嗯+|好+)[。！!？?~～…]*\s*$")
 _QUESTION_END = re.compile(r"[？?][”’\"']?\s*$")
 _ACTION_DIRECTION = re.compile(r"^[\s\n]*[（(]([^）)]{1,120})[）)]")
 _LEGACY_STAGE_ACTION = re.compile(

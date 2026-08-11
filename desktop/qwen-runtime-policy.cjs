@@ -1,4 +1,5 @@
 const MINIMUM_QWEN_VRAM_MIB = 15_500;
+const MINIMUM_QWEN_FREE_VRAM_MIB = 14_500;
 const MINIMUM_QWEN_RAM_BYTES = 31 * 1024 ** 3;
 
 function evaluateQwenRuntimePreflight(input = {}) {
@@ -31,6 +32,14 @@ function evaluateQwenRuntimePreflight(input = {}) {
       message: `Qwen3 实时语音需要标称 16 GB 总显存；检测到约 ${Math.round(vramMiB / 1024)} GB。为避免挤占 ASR/桌面显存，未开放安装。`,
     };
   }
+  const availableVramMiB = Number(input.availableVramMiB || 0);
+  if (availableVramMiB > 0 && availableVramMiB < MINIMUM_QWEN_FREE_VRAM_MIB) {
+    return {
+      eligible: false,
+      code: "VRAM_BUSY",
+      message: `Qwen3 实时语音需要约 ${Math.round(MINIMUM_QWEN_FREE_VRAM_MIB / 1024)} GB 可用显存；当前仅约 ${Math.round(availableVramMiB / 1024)} GB。请先停止 ASR 或其他 GPU 程序后再启动。`,
+    };
+  }
   if (input.portConflict) {
     return { eligible: false, code: "QWEN_PORT_CONFLICT", message: `端口 ${input.port || "Qwen"} 已被非 Qwen3 服务占用；Mindspace 不会终止未知进程。` };
   }
@@ -41,4 +50,4 @@ function evaluateQwenRuntimePreflight(input = {}) {
   };
 }
 
-module.exports = { MINIMUM_QWEN_RAM_BYTES, MINIMUM_QWEN_VRAM_MIB, evaluateQwenRuntimePreflight };
+module.exports = { MINIMUM_QWEN_RAM_BYTES, MINIMUM_QWEN_VRAM_MIB, MINIMUM_QWEN_FREE_VRAM_MIB, evaluateQwenRuntimePreflight };

@@ -57,6 +57,10 @@ function createQwenController({
       let installed = [];
       let wslGpuAvailable = false;
       let vramMiB = 0;
+      let availableVramMiB = 0;
+      const hostGpu = await runCommand("nvidia-smi.exe", ["--query-gpu=memory.free", "--format=csv,noheader,nounits"], 4_000);
+      const freeValues = String(hostGpu.stdout || "").match(/\d+/g) || [];
+      availableVramMiB = Math.max(0, ...freeValues.map(Number));
       if (wslExecutable) {
         const listed = await runCommand(wslExecutable, ["--list", "--quiet"], 5_000);
         installed = String(listed.stdout || "").split(/\r?\n/).map((value) => value.replace(/\0/g, "").trim()).filter(Boolean);
@@ -99,12 +103,13 @@ function createQwenController({
         distroAvailable: installed.includes(distro),
         wslGpuAvailable,
         vramMiB,
+        availableVramMiB,
         port: service.port,
         portConflict: !health.online && await isTcpPortOccupied(service.port),
       });
       const value = baseResult.eligible && !modelSourceReady
         ? { eligible: false, code: "QWEN_MODEL_REQUIRED", message: "未发现完整的本地 Qwen3 模型与启动脚本；此安装包不会自动下载 WSL、vLLM 或大模型。" }
-        : { ...baseResult, distro, vramMiB, modelReady: modelSourceReady };
+        : { ...baseResult, distro, vramMiB, availableVramMiB, modelReady: modelSourceReady };
       preflightCache = { expiresAt: Date.now() + 15_000, value };
       return value;
     })();

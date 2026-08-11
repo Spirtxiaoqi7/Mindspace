@@ -632,7 +632,7 @@ async function allServices(action) {
   }
   if (action === "stop") {
     serviceSupervisor.clearDesired();
-    for (const name of new Set([...children.keys(), ttsServiceName()])) stopService(name);
+    for (const name of new Set([...children.keys(), "tts", "qwenTts"])) stopService(name);
     activeVoiceController().resetTransition();
     return { ok: true };
   }

@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).parents[1]
 WEB_PACKAGE = ROOT / "src" / "mindspace_graph" / "web"
 SOURCE_SUFFIXES = {".py", ".pyi"}

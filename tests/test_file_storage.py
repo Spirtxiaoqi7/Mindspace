@@ -106,9 +106,7 @@ def test_session_projection_names_do_not_collide_and_legacy_files_still_load(tmp
         encoding="utf-8",
     )
     assert sum(item["session_id"] == "projection-upgrade" for item in sessions.list_sessions()) == 1
-    projection_chunks = [
-        item for item in sessions.list_chunks() if item["session_id"] == "projection-upgrade"
-    ]
+    projection_chunks = [item for item in sessions.list_chunks() if item["session_id"] == "projection-upgrade"]
     assert [item["text"] for item in projection_chunks] == ["新投影消息"]
 
 

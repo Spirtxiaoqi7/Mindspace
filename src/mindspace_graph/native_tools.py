@@ -8,10 +8,7 @@ from uuid import uuid4
 from .tool_chain import ToolInstruction, validate_task_command
 from .web.routing import infer_platforms
 
-NATIVE_TOOL_GUIDANCE = (
-    "需要外部信息或任务操作时使用结构化函数调用；"
-    "不要在聊天正文中模拟、预告或描述工具调用。"
-)
+NATIVE_TOOL_GUIDANCE = "需要外部信息或任务操作时使用结构化函数调用；不要在聊天正文中模拟、预告或描述工具调用。"
 _EXPLICIT_CLOCK = re.compile(
     r"(?:(?:[01]?\d|2[0-3]):[0-5]\d|"
     r"(?:凌晨|早上|上午|中午|下午|傍晚|晚上)?\s*[零一二两三四五六七八九十\d]{1,3}\s*"
@@ -120,10 +117,25 @@ def native_call_to_instruction(call: dict[str, Any], *, user_message: str) -> To
             raise ValueError(f"{name} query is required")
         if len(query) > 2000:
             raise ValueError(f"{name} query is too long")
-        command = {key: arguments[key] for key in ("scope", "platforms", "recency", "action", "url", "find") if key in arguments} if name == "web" else None
+        command = (
+            {
+                key: arguments[key]
+                for key in ("scope", "platforms", "recency", "action", "url", "find")
+                if key in arguments
+            }
+            if name == "web"
+            else None
+        )
         if name == "web":
             model_platforms = command.get("platforms") if isinstance(command.get("platforms"), list) else []
-            platforms = list(dict.fromkeys([*infer_platforms(user_message), *(str(item).strip().lower() for item in model_platforms if str(item).strip())]))
+            platforms = list(
+                dict.fromkeys(
+                    [
+                        *infer_platforms(user_message),
+                        *(str(item).strip().lower() for item in model_platforms if str(item).strip()),
+                    ]
+                )
+            )
             if platforms:
                 command["platforms"] = platforms
             command["original_intent"] = user_message
@@ -153,7 +165,10 @@ def supports_native_tools(base_url: str, model: str = "") -> bool:
     """Probe any configured OpenAI-compatible endpoint; never vendor-allowlist."""
     from mindspace_graph.provider_capabilities import PROVIDER_CAPABILITIES, ProviderCapabilityState
 
-    return bool((base_url or "").strip()) and PROVIDER_CAPABILITIES.get(base_url, model).state != ProviderCapabilityState.UNSUPPORTED
+    return (
+        bool((base_url or "").strip())
+        and PROVIDER_CAPABILITIES.get(base_url, model).state != ProviderCapabilityState.UNSUPPORTED
+    )
 
 
 def _function(

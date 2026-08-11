@@ -19,8 +19,6 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from mindspace_graph.adapters.profile_repository import DEFAULT_PROFILES
-from mindspace_graph.infrastructure.storage.json_io import atomic_json_write
-from mindspace_graph.infrastructure.storage.json_patch import apply_json_patch, read_json_pointer
 from mindspace_graph.character_card import (
     card_summary,
     empty_memory,
@@ -30,6 +28,8 @@ from mindspace_graph.character_card import (
     normalize_tasks_v2,
     prompt_profile_from_card,
 )
+from mindspace_graph.infrastructure.storage.json_io import atomic_json_write
+from mindspace_graph.infrastructure.storage.json_patch import apply_json_patch, read_json_pointer
 from mindspace_graph.models import JsonUpdatePlan, JsonWriteReceipt, ProfileBundle
 from mindspace_graph.product_database import ProductDatabase
 from mindspace_graph.profile_schema import DEFAULT_PROFILE_SCHEMA
@@ -716,9 +716,12 @@ class CharacterRepository:
         expected_revision: int,
     ) -> dict[str, Any]:
         idempotency_key = f"task-command:{character_id}:{request_id}:{command_hash}"
-        with self._lock, self.database.transaction(
-            operation="execute_task_command",
-            details={"character_id": character_id, "request_id": request_id},
+        with (
+            self._lock,
+            self.database.transaction(
+                operation="execute_task_command",
+                details={"character_id": character_id, "request_id": request_id},
+            ),
         ):
             replay = self.database.get_document(idempotency_key)
             if isinstance(replay, dict):

@@ -368,13 +368,7 @@ class LocalKnowledgeRetriever:
             messages if messages is not None else self.sessions.load_session(session_id).get("messages", [])
         )
         messages = (
-            [
-                item
-                for item in source_messages
-                if chat_message_retrieval_eligible(item)
-            ]
-            if include_raw_chat
-            else []
+            [item for item in source_messages if chat_message_retrieval_eligible(item)] if include_raw_chat else []
         )
         if include_raw_chat and character_id:
             # Historical dialogue is a RAG source, not prompt history.  Pull a

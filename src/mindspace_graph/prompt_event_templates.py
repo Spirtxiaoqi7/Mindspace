@@ -126,8 +126,7 @@ def build_asr_uncertain_evidence_template(
         "不得把它视为用户确认事实、偏好、事件或 JSON 写入证据；"
         "若它影响答案，应自然说明没有听清并请求澄清。\n\n"
         f"【已确认主干】\n{confirmed_text}\n"
-        "【低置信候选】\n"
-        + "\n".join(f"（可能是：{text}；原因：{reason}）" for text, reason in uncertain_segments)
+        "【低置信候选】\n" + "\n".join(f"（可能是：{text}；原因：{reason}）" for text, reason in uncertain_segments)
     )
 
 

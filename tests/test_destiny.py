@@ -381,9 +381,7 @@ def test_cards_accept_compact_matrix_top_level_array_and_harmless_json_damage():
     compact = compact_cards_payload(0, 6)["cards"]
 
     top_level = DestinyService._normalize_cards(json.dumps(compact, ensure_ascii=False), people, "女", slots)
-    trailing_comma = json.dumps({"cards": compact}, ensure_ascii=False, separators=(",", ":")).replace(
-        "]]}", "]],}"
-    )
+    trailing_comma = json.dumps({"cards": compact}, ensure_ascii=False, separators=(",", ":")).replace("]]}", "]],}")
     repaired = DestinyService._normalize_cards(trailing_comma, people, "女", slots)
 
     assert len(top_level) == 6

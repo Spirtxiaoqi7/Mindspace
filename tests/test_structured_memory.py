@@ -195,9 +195,7 @@ def test_targeted_rebuild_replaces_only_one_character_and_uses_distinct_episodes
     service.rebuild()
     before = store.snapshot()
     character_b = {
-        key: deepcopy(value)
-        for key, value in before["active"].items()
-        if value.get("character_id") == "character-b"
+        key: deepcopy(value) for key, value in before["active"].items() if value.get("character_id") == "character-b"
     }
     assert len(before["episodes"]) == 2
 
@@ -209,9 +207,9 @@ def test_targeted_rebuild_replaces_only_one_character_and_uses_distinct_episodes
     assert {
         key: value for key, value in after["active"].items() if value.get("character_id") == "character-b"
     } == character_b
-    assert [
-        value["value"] for value in after["active"].values() if value.get("character_id") == "character-a"
-    ] == ["草莓"]
+    assert [value["value"] for value in after["active"].values() if value.get("character_id") == "character-a"] == [
+        "草莓"
+    ]
 
 
 def test_opposing_preference_reuses_one_slot_and_multiple_tags_share_one_episode(tmp_path):

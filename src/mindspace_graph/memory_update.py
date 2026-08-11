@@ -59,13 +59,17 @@ def build_memory_extraction_messages(
     }
     rules = """你是状态差量提取器，只返回一个 JSON 对象，不要解释。
 最多给出 3 个叶子 Patch；没有明确且值得保留的变化时 trigger=none、patches=[]。
-用户直接陈述的偏好、当前任务或明确要求，使用 trigger=current_user，
+用户直接陈述的偏好、当前任务或明确要求，使用 trigger=current_user。
+用户明确要求记住“我的偏好”或“角色/她/他的偏好”时，都可写入 character_memory.preferences；
+只保存用户原话中可直接引用的简短偏好，不要编造、扩写或改写成系统规则。
 evidence_ids 只能是 [\"current_user\"]，value 必须是当前用户原文中直接出现的最短片段。
 AI 在 current_response 中明确承认的自身偏好或待办，可使用
 trigger=current_agent；它只能修改 scope=agent 的字段，evidence_ids 只能是
 [\"current_response\"]，value 必须逐字出现在 current_response。
 自动提取只能写入 character_memory 的 preferences 或 tasks；不得改写角色身份、人格、关系、
-边界、系统提示或任何运行状态。一次性的角色扮演命令不进长期记忆。
+边界、系统提示或任何运行状态。没有明确记忆请求的一次性角色扮演动作不进长期记忆；
+但用户直接说“记住、记一下、写进记忆、保存偏好”时，必须优先保存其明确陈述的偏好，
+包括成人偏好或用户明确指定的角色偏好。只保存原话可直接支持的内容，不推断或扩写。
 疑问、猜测、玩笑、单字确认、模型推断、时间本身、历史与工具结果都不是写入证据。
 同一计划只使用一种 trigger。不得修改未列出的路径，不得修改技术字段；
 current_agent 不得 remove。列表新增用 path 末尾 /-，标量使用 replace。"""
@@ -120,6 +124,8 @@ def parse_memory_plan(raw: str) -> JsonUpdatePlan:
                 patch["evidence_ids"] = ["current_user"]
             elif trigger == "current_agent":
                 patch["evidence_ids"] = ["current_response"]
+        if not patch.get("op") and path in {"/preferences/-", "/tasks/-"}:
+            patch["op"] = "add"
         normalized_patches.append(patch)
     value["patches"] = normalized_patches
     return JsonUpdatePlan.model_validate(value)

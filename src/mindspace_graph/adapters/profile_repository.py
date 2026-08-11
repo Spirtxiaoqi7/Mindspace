@@ -217,8 +217,6 @@ def _user_profile_read_view(document: dict[str, Any]) -> dict[str, Any]:
     return _CompatibleProfileView(document, _LEGACY_USER_READ_DEFAULTS)
 
 
-
-
 def _merge_missing(template: Any, value: Any) -> Any:
     if not isinstance(template, dict) or not isinstance(value, dict):
         return deepcopy(value)
@@ -229,12 +227,6 @@ def _merge_missing(template: Any, value: Any) -> Any:
         elif isinstance(default, dict) and isinstance(merged[key], dict):
             merged[key] = _merge_missing(default, merged[key])
     return merged
-
-
-
-
-
-
 
 
 class JsonProfileRepository:

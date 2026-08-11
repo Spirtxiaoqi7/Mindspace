@@ -7,15 +7,14 @@ import shutil
 import subprocess
 import sys
 import time
+from base64 import urlsafe_b64decode
 from email.utils import parsedate_to_datetime
 from threading import Lock
-from base64 import urlsafe_b64decode
 from urllib.parse import parse_qs, quote_plus, urlsplit
 
 import httpx
 
 from .models import WebQuery, WebSource
-from .readers import PublicHttpClient
 from .relevance import core_entities
 
 
@@ -82,7 +81,9 @@ class SearchProvider:
         if not isinstance(source, dict) or not str(source.get("url") or "").startswith("https://"):
             return None
         headers = {str(key): str(value) for key, value in (source.get("headers") or {}).items() if value}
-        response = self.http.get(str(source["url"]), params={str(source.get("query_param") or "q"): query.query}, headers=headers)
+        response = self.http.get(
+            str(source["url"]), params={str(source.get("query_param") or "q"): query.query}, headers=headers
+        )
         response.raise_for_status()
         return response.json()
 
@@ -91,18 +92,39 @@ class SearchProvider:
         if not isinstance(payload, dict):
             return []
         rows = payload.get("results") or (payload.get("web") or {}).get("results") or payload.get("data") or []
-        return [WebSource(source_type="api", url=str(item.get("url") or ""), title=str(item.get("title") or ""), text=str(item.get("description") or item.get("snippet") or ""), freshness="search_index", evidence_level="search_api") for item in rows if isinstance(item, dict) and item.get("url")]
+        return [
+            WebSource(
+                source_type="api",
+                url=str(item.get("url") or ""),
+                title=str(item.get("title") or ""),
+                text=str(item.get("description") or item.get("snippet") or ""),
+                freshness="search_index",
+                evidence_level="search_api",
+            )
+            for item in rows
+            if isinstance(item, dict) and item.get("url")
+        ]
 
     @staticmethod
     def _brave_links(raw: str) -> list[WebSource]:
         values = []
         for match in re.finditer(r'<a\b[^>]*\bhref="(https?://[^"]+)"[^>]*>(.*?)</a>', raw, re.I | re.S):
-            prefix = raw[max(0, match.start() - 1400):match.start()].lower()
-            if "data-type=\"web\"" not in prefix and "snippet" not in prefix:
+            prefix = raw[max(0, match.start() - 1400) : match.start()].lower()
+            if 'data-type="web"' not in prefix and "snippet" not in prefix:
                 continue
-            tail = raw[match.end():match.end() + 1800]
-            snippet = re.search(r'(?:generic-snippet|snippet-description|result-description)[^>]*>(.*?)</(?:div|p)>', tail, re.I | re.S)
-            values.append(WebSource(url=match.group(1), title=_clean(match.group(2), 300), text=_clean(snippet.group(1) if snippet else ""), freshness="search_index", evidence_level="indexed_summary"))
+            tail = raw[match.end() : match.end() + 1800]
+            snippet = re.search(
+                r"(?:generic-snippet|snippet-description|result-description)[^>]*>(.*?)</(?:div|p)>", tail, re.I | re.S
+            )
+            values.append(
+                WebSource(
+                    url=match.group(1),
+                    title=_clean(match.group(2), 300),
+                    text=_clean(snippet.group(1) if snippet else ""),
+                    freshness="search_index",
+                    evidence_level="indexed_summary",
+                )
+            )
         return values
 
     @staticmethod
@@ -110,15 +132,23 @@ class SearchProvider:
         values = []
         starts = list(re.finditer(r'<li\b[^>]*\bclass="[^"]*\bb_algo\b[^"]*"[^>]*>', raw, re.I))
         for index, match in enumerate(starts):
-            node = raw[match.end():starts[index + 1].start() if index + 1 < len(starts) else match.end() + 12000]
+            node = raw[match.end() : starts[index + 1].start() if index + 1 < len(starts) else match.end() + 12000]
             link = re.search(r'<h2[^>]*>.*?<a\b[^>]*href="([^"]+)"[^>]*>(.*?)</a>', node, re.I | re.S)
             if not link:
                 continue
             target = SearchProvider._result_url(link.group(1))
             if not target:
                 continue
-            snippet = re.search(r'<p[^>]*>(.*?)</p>', node, re.I | re.S)
-            values.append(WebSource(url=target, title=_clean(link.group(2), 300), text=_clean(snippet.group(1) if snippet else ""), freshness="search_index", evidence_level="indexed_summary"))
+            snippet = re.search(r"<p[^>]*>(.*?)</p>", node, re.I | re.S)
+            values.append(
+                WebSource(
+                    url=target,
+                    title=_clean(link.group(2), 300),
+                    text=_clean(snippet.group(1) if snippet else ""),
+                    freshness="search_index",
+                    evidence_level="indexed_summary",
+                )
+            )
         return values
 
     @staticmethod
@@ -140,28 +170,62 @@ class SearchProvider:
     @staticmethod
     def _baidu_links(raw: str) -> list[WebSource]:
         values = []
-        for node in re.findall(r'<div\b[^>]*\bclass="[^"]*\bresult\b[^"]*"[^>]*>(.*?)</div>\s*</div>', raw, re.I | re.S):
+        for node in re.findall(
+            r'<div\b[^>]*\bclass="[^"]*\bresult\b[^"]*"[^>]*>(.*?)</div>\s*</div>', raw, re.I | re.S
+        ):
             link = re.search(r'<h3[^>]*>.*?<a\b[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>', node, re.I | re.S)
             if link:
-                values.append(WebSource(url=link.group(1), title=_clean(link.group(2), 300), text=_clean(node), freshness="search_index", evidence_level="indexed_summary"))
+                values.append(
+                    WebSource(
+                        url=link.group(1),
+                        title=_clean(link.group(2), 300),
+                        text=_clean(node),
+                        freshness="search_index",
+                        evidence_level="indexed_summary",
+                    )
+                )
         return values
 
     @staticmethod
     def _ddg_links(raw: str) -> list[WebSource]:
         values = []
-        for node in re.findall(r'<(?:article|div)\b[^>]*(?:data-testid="result"|class="[^"]*\bresult\b[^"]*")[^>]*>(.*?)</(?:article|div)>', raw, re.I | re.S):
-            link = re.search(r'<a\b[^>]*\bclass="[^"]*result__a[^"]*"[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>', node, re.I | re.S)
+        for node in re.findall(
+            r'<(?:article|div)\b[^>]*(?:data-testid="result"|class="[^"]*\bresult\b[^"]*")[^>]*>(.*?)</(?:article|div)>',
+            raw,
+            re.I | re.S,
+        ):
+            link = re.search(
+                r'<a\b[^>]*\bclass="[^"]*result__a[^"]*"[^>]*href="(https?://[^"]+)"[^>]*>(.*?)</a>', node, re.I | re.S
+            )
             if link:
-                values.append(WebSource(url=link.group(1), title=_clean(link.group(2), 300), text=_clean(node), freshness="search_index", evidence_level="indexed_summary"))
+                values.append(
+                    WebSource(
+                        url=link.group(1),
+                        title=_clean(link.group(2), 300),
+                        text=_clean(node),
+                        freshness="search_index",
+                        evidence_level="indexed_summary",
+                    )
+                )
         return values
 
     @staticmethod
     def _rss_links(raw: str) -> list[WebSource]:
         values = []
         for item in re.findall(r"<item>(.*?)</item>", raw, re.I | re.S):
-            link = re.search(r"<link>(.*?)</link>", item, re.I | re.S); title = re.search(r"<title>(.*?)</title>", item, re.I | re.S); summary = re.search(r"<description>(.*?)</description>", item, re.I | re.S)
+            link = re.search(r"<link>(.*?)</link>", item, re.I | re.S)
+            title = re.search(r"<title>(.*?)</title>", item, re.I | re.S)
+            summary = re.search(r"<description>(.*?)</description>", item, re.I | re.S)
             if link and link.group(1).startswith("http"):
-                values.append(WebSource(url=link.group(1).strip(), title=_clean(title.group(1) if title else "", 300), text=_clean(summary.group(1) if summary else ""), freshness="search_index", evidence_level="indexed_summary"))
+                values.append(
+                    WebSource(
+                        url=link.group(1).strip(),
+                        title=_clean(title.group(1) if title else "", 300),
+                        text=_clean(summary.group(1) if summary else ""),
+                        freshness="search_index",
+                        evidence_level="indexed_summary",
+                    )
+                )
         return values
 
     @classmethod
@@ -194,14 +258,29 @@ class GitHubProvider:
 
     def _best_repository(self, query: WebQuery) -> str:
         terms = core_entities(query.query) or [query.query]
-        response = self.http.get(f"https://api.github.com/search/repositories?q={quote_plus(' '.join(terms))}&per_page=10", headers={"Accept": "application/vnd.github+json"})
+        response = self.http.get(
+            f"https://api.github.com/search/repositories?q={quote_plus(' '.join(terms))}&per_page=10",
+            headers={"Accept": "application/vnd.github+json"},
+        )
         response.raise_for_status()
         items = [item for item in response.json().get("items", []) if isinstance(item, dict) and item.get("full_name")]
         if not items:
             raise LookupError("GitHub repository search returned no match")
+
         def score(item):
-            name = str(item.get("name") or "").casefold(); full = str(item.get("full_name") or "").casefold(); owner = str((item.get("owner") or {}).get("login") or "").casefold(); description = str(item.get("description") or "").casefold()
-            return sum((40 if term == name else 18 if term in full else 8 if term in description or term in owner else 0) for term in terms) + (3 if not item.get("archived") else -20) + min(8, int(item.get("stargazers_count") or 0) // 10000)
+            name = str(item.get("name") or "").casefold()
+            full = str(item.get("full_name") or "").casefold()
+            owner = str((item.get("owner") or {}).get("login") or "").casefold()
+            description = str(item.get("description") or "").casefold()
+            return (
+                sum(
+                    (40 if term == name else 18 if term in full else 8 if term in description or term in owner else 0)
+                    for term in terms
+                )
+                + (3 if not item.get("archived") else -20)
+                + min(8, int(item.get("stargazers_count") or 0) // 10000)
+            )
+
         return str(max(items, key=score)["full_name"])
 
     def _release_or_fallback(self, repository: str) -> list[WebSource]:
@@ -216,19 +295,56 @@ class GitHubProvider:
             rows = tags.json()
             if rows:
                 tag = rows[0]
-                return [WebSource(source_type="tag", platform="github", url=f"https://github.com/{repository}/releases/tag/{tag.get('name')}", title=f"{repository} {tag.get('name') or 'tag'}", text="GitHub latest tag fallback", freshness="official_api", evidence_level="github_rest_tag", official_account=True, authority="official_github_org")]
+                return [
+                    WebSource(
+                        source_type="tag",
+                        platform="github",
+                        url=f"https://github.com/{repository}/releases/tag/{tag.get('name')}",
+                        title=f"{repository} {tag.get('name') or 'tag'}",
+                        text="GitHub latest tag fallback",
+                        freshness="official_api",
+                        evidence_level="github_rest_tag",
+                        official_account=True,
+                        authority="official_github_org",
+                    )
+                ]
         commits = self.http.get(f"https://api.github.com/repos/{repository}/commits?per_page=1", headers=headers)
         commits.raise_for_status()
         rows = commits.json()
         if not rows:
             raise LookupError("GitHub repository has no release, tag, or commit")
         commit = rows[0]
-        date = str((((commit.get("commit") or {}).get("author") or {}).get("date") or ""))
-        return [WebSource(source_type="commit", platform="github", url=str(commit.get("html_url") or f"https://github.com/{repository}/commits"), title=f"{repository} latest commit", text=str((commit.get("commit") or {}).get("message") or ""), freshness="official_api", evidence_level="github_rest_commit", official_account=True, authority="official_github_org", published_at=date)]
+        date = str(((commit.get("commit") or {}).get("author") or {}).get("date") or "")
+        return [
+            WebSource(
+                source_type="commit",
+                platform="github",
+                url=str(commit.get("html_url") or f"https://github.com/{repository}/commits"),
+                title=f"{repository} latest commit",
+                text=str((commit.get("commit") or {}).get("message") or ""),
+                freshness="official_api",
+                evidence_level="github_rest_commit",
+                official_account=True,
+                authority="official_github_org",
+                published_at=date,
+            )
+        ]
 
     @staticmethod
     def _release_source(repository: str, item: dict) -> WebSource:
-        return WebSource(source_type="release", platform="github", author=str((item.get("author") or {}).get("login") or ""), url=str(item.get("html_url") or f"https://github.com/{repository}/releases"), title=f"{repository} {item.get('tag_name') or item.get('name') or 'release'}", text=str(item.get("body") or item.get("name") or ""), published_at=str(item.get("published_at") or item.get("created_at") or ""), freshness="official_api", evidence_level="github_rest_release", official_account=True, authority="official_github_org")
+        return WebSource(
+            source_type="release",
+            platform="github",
+            author=str((item.get("author") or {}).get("login") or ""),
+            url=str(item.get("html_url") or f"https://github.com/{repository}/releases"),
+            title=f"{repository} {item.get('tag_name') or item.get('name') or 'release'}",
+            text=str(item.get("body") or item.get("name") or ""),
+            published_at=str(item.get("published_at") or item.get("created_at") or ""),
+            freshness="official_api",
+            evidence_level="github_rest_release",
+            official_account=True,
+            authority="official_github_org",
+        )
 
 
 class SocialProvider:
@@ -248,41 +364,132 @@ class SocialProvider:
         "douyin": "douyin.com",
     }
 
-    def __init__(self, http, search): self.http, self.search_provider = http, search
+    def __init__(self, http, search):
+        self.http, self.search_provider = http, search
+
     def search(self, query, platform):
-        if platform=="bilibili":
-            response=self.http.get(f"https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword={quote_plus(query.query)}"); response.raise_for_status(); return [WebSource(source_type="video",platform="bilibili",author=str(item.get("author")or""),url=str(item.get("arcurl")or""),title=re.sub(r"<[^>]+>","",str(item.get("title")or"")),text=re.sub(r"<[^>]+>","",str(item.get("description")or"")),freshness="public_api",evidence_level="bilibili_public_api") for item in (response.json().get("data")or{}).get("result",[]) if str(item.get("arcurl")or"").startswith("http")],"bilibili_public_api"
-        if platform=="bluesky": return self._bluesky(query),"bluesky_public"
-        if platform=="mastodon": return self._mastodon(query),"mastodon_public"
-        if platform=="reddit": return self._reddit(query),"reddit_public"
-        if platform=="x": return self._x(query),"x_oembed_or_index"
+        if platform == "bilibili":
+            response = self.http.get(
+                f"https://api.bilibili.com/x/web-interface/search/type?search_type=video&keyword={quote_plus(query.query)}"
+            )
+            response.raise_for_status()
+            return [
+                WebSource(
+                    source_type="video",
+                    platform="bilibili",
+                    author=str(item.get("author") or ""),
+                    url=str(item.get("arcurl") or ""),
+                    title=re.sub(r"<[^>]+>", "", str(item.get("title") or "")),
+                    text=re.sub(r"<[^>]+>", "", str(item.get("description") or "")),
+                    freshness="public_api",
+                    evidence_level="bilibili_public_api",
+                )
+                for item in (response.json().get("data") or {}).get("result", [])
+                if str(item.get("arcurl") or "").startswith("http")
+            ], "bilibili_public_api"
+        if platform == "bluesky":
+            return self._bluesky(query), "bluesky_public"
+        if platform == "mastodon":
+            return self._mastodon(query), "mastodon_public"
+        if platform == "reddit":
+            return self._reddit(query), "reddit_public"
+        if platform == "x":
+            return self._x(query), "x_oembed_or_index"
         domain = self._PLATFORM_DOMAINS.get(platform, f"{platform}.com")
         values, _, providers = self.search_provider.search(WebQuery(query=f"site:{domain} {query.query}"))
-        result = [item.model_copy(update={"platform": platform if self._matches_platform_url(platform, item.url) else "web", "evidence_level": "indexed_summary"}) for item in values]
+        result = [
+            item.model_copy(
+                update={
+                    "platform": platform if self._matches_platform_url(platform, item.url) else "web",
+                    "evidence_level": "indexed_summary",
+                }
+            )
+            for item in values
+        ]
         return result, providers[0] if providers else "search_index"
+
     @staticmethod
     def _matches_platform_url(platform: str, url: str) -> bool:
-        if platform == "xiaohongshu": return bool(re.search(r"(?:^|\.)xiaohongshu\.com/(?:explore|discovery/item)/[^/?#]+", url, re.I))
+        if platform == "xiaohongshu":
+            return bool(re.search(r"(?:^|\.)xiaohongshu\.com/(?:explore|discovery/item)/[^/?#]+", url, re.I))
         return bool(re.search(rf"(?:^|\.){re.escape(platform)}\.com/", url, re.I))
-    def _bluesky(self,q):
-        r=self.http.get(f"https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q={quote_plus(q.query)}&limit=5");r.raise_for_status();result=[]
-        for item in r.json().get("posts",[]):
-            author=item.get("author") or {};record=item.get("record") or {};uri=str(item.get("uri") or "");post_id=uri.rsplit("/",1)[-1];handle=str(author.get("handle") or "")
-            if handle and post_id: result.append(WebSource(source_type="social_post",platform="bluesky",author=str(author.get("displayName") or handle),handle=f"@{handle}",url=f"https://bsky.app/profile/{handle}/post/{post_id}",title=f"@{handle} on Bluesky",text=_clean(str(record.get("text") or "")),published_at=str(item.get("indexedAt") or record.get("createdAt") or ""),freshness="public_api",evidence_level="bluesky_public"))
+
+    def _bluesky(self, q):
+        r = self.http.get(f"https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q={quote_plus(q.query)}&limit=5")
+        r.raise_for_status()
+        result = []
+        for item in r.json().get("posts", []):
+            author = item.get("author") or {}
+            record = item.get("record") or {}
+            uri = str(item.get("uri") or "")
+            post_id = uri.rsplit("/", 1)[-1]
+            handle = str(author.get("handle") or "")
+            if handle and post_id:
+                result.append(
+                    WebSource(
+                        source_type="social_post",
+                        platform="bluesky",
+                        author=str(author.get("displayName") or handle),
+                        handle=f"@{handle}",
+                        url=f"https://bsky.app/profile/{handle}/post/{post_id}",
+                        title=f"@{handle} on Bluesky",
+                        text=_clean(str(record.get("text") or "")),
+                        published_at=str(item.get("indexedAt") or record.get("createdAt") or ""),
+                        freshness="public_api",
+                        evidence_level="bluesky_public",
+                    )
+                )
         return result
-    def _mastodon(self,q):
-        r=self.http.get(f"https://mastodon.social/api/v2/search?q={quote_plus(q.query)}&type=statuses");r.raise_for_status();result=[]
-        for item in r.json().get("statuses",[])[:5]:
-            account=item.get("account") or {};url=str(item.get("url") or "")
-            if url: result.append(WebSource(source_type="social_post",platform="mastodon",author=str(account.get("display_name") or account.get("acct") or ""),handle=str(account.get("acct") or ""),url=url,title="Mastodon post",text=_clean(str(item.get("content") or "")),published_at=str(item.get("created_at") or ""),freshness="public_api",evidence_level="mastodon_public"))
+
+    def _mastodon(self, q):
+        r = self.http.get(f"https://mastodon.social/api/v2/search?q={quote_plus(q.query)}&type=statuses")
+        r.raise_for_status()
+        result = []
+        for item in r.json().get("statuses", [])[:5]:
+            account = item.get("account") or {}
+            url = str(item.get("url") or "")
+            if url:
+                result.append(
+                    WebSource(
+                        source_type="social_post",
+                        platform="mastodon",
+                        author=str(account.get("display_name") or account.get("acct") or ""),
+                        handle=str(account.get("acct") or ""),
+                        url=url,
+                        title="Mastodon post",
+                        text=_clean(str(item.get("content") or "")),
+                        published_at=str(item.get("created_at") or ""),
+                        freshness="public_api",
+                        evidence_level="mastodon_public",
+                    )
+                )
         return result
-    def _reddit(self,q):
-        r=self.http.get(f"https://www.reddit.com/search.json?q={quote_plus(q.query)}&limit=5");r.raise_for_status();result=[]
-        for row in ((r.json().get("data") or {}).get("children") or []):
-            item=row.get("data") or {};permalink=str(item.get("permalink") or "")
-            if permalink: result.append(WebSource(source_type="social_post",platform="reddit",author=str(item.get("author") or ""),handle=str(item.get("author") or ""),url=f"https://www.reddit.com{permalink}",title=_clean(str(item.get("title") or ""),300),text=_clean(str(item.get("selftext") or item.get("title") or "")),published_at=str(item.get("created_utc") or ""),freshness="public_api",evidence_level="reddit_public"))
+
+    def _reddit(self, q):
+        r = self.http.get(f"https://www.reddit.com/search.json?q={quote_plus(q.query)}&limit=5")
+        r.raise_for_status()
+        result = []
+        for row in (r.json().get("data") or {}).get("children") or []:
+            item = row.get("data") or {}
+            permalink = str(item.get("permalink") or "")
+            if permalink:
+                result.append(
+                    WebSource(
+                        source_type="social_post",
+                        platform="reddit",
+                        author=str(item.get("author") or ""),
+                        handle=str(item.get("author") or ""),
+                        url=f"https://www.reddit.com{permalink}",
+                        title=_clean(str(item.get("title") or ""), 300),
+                        text=_clean(str(item.get("selftext") or item.get("title") or "")),
+                        published_at=str(item.get("created_utc") or ""),
+                        freshness="public_api",
+                        evidence_level="reddit_public",
+                    )
+                )
         return result
-    def _x(self,q):
+
+    def _x(self, q):
         handle = self._x_handle(q.query)
         if handle:
             for attempt in range(2):
@@ -294,11 +501,32 @@ class SocialProvider:
                     pass
                 if attempt == 0:
                     time.sleep(0.2)
-        values,_,_=self.search_provider.search(WebQuery(query=f"site:x.com {q.query}")); result=[]
+        values, _, _ = self.search_provider.search(WebQuery(query=f"site:x.com {q.query}"))
+        result = []
         for item in values:
-            if not re.search(r"(?:x\.com|twitter\.com)/[^/]+/status/\d+",item.url,re.I): continue
-            try: r=self.http.get(f"https://publish.twitter.com/oembed?url={quote_plus(item.url)}");r.raise_for_status();p=r.json();result.append(WebSource(source_type="oembed",platform="x",url=item.url,author=str(p.get("author_name")or""),text=re.sub(r"<[^>]+>","",str(p.get("html")or"")),freshness="public_api",evidence_level="x_oembed"))
-            except Exception: result.append(item.model_copy(update={"platform":"x","evidence_level":"indexed_summary","freshness":"search_index"}))
+            if not re.search(r"(?:x\.com|twitter\.com)/[^/]+/status/\d+", item.url, re.I):
+                continue
+            try:
+                r = self.http.get(f"https://publish.twitter.com/oembed?url={quote_plus(item.url)}")
+                r.raise_for_status()
+                p = r.json()
+                result.append(
+                    WebSource(
+                        source_type="oembed",
+                        platform="x",
+                        url=item.url,
+                        author=str(p.get("author_name") or ""),
+                        text=re.sub(r"<[^>]+>", "", str(p.get("html") or "")),
+                        freshness="public_api",
+                        evidence_level="x_oembed",
+                    )
+                )
+            except Exception:
+                result.append(
+                    item.model_copy(
+                        update={"platform": "x", "evidence_level": "indexed_summary", "freshness": "search_index"}
+                    )
+                )
         return result
 
     @classmethod
@@ -324,7 +552,18 @@ class SocialProvider:
                 response.raise_for_status()
             flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             completed = subprocess.run(
-                [curl, "--silent", "--show-error", "--fail", "--location", "--max-time", "12", "--max-filesize", "2000000", url],
+                [
+                    curl,
+                    "--silent",
+                    "--show-error",
+                    "--fail",
+                    "--location",
+                    "--max-time",
+                    "12",
+                    "--max-filesize",
+                    "2000000",
+                    url,
+                ],
                 capture_output=True,
                 check=True,
                 timeout=15,
@@ -352,10 +591,27 @@ class SocialProvider:
             screen_name = str(user.get("screen_name") or handle)
             if not tweet_id or not text:
                 continue
-            result.append(WebSource(source_type="social_post", platform="x", author=str(user.get("name") or screen_name), handle=f"@{screen_name}", url=f"https://x.com/{screen_name}/status/{tweet_id}", title=f"@{screen_name} on X", text=text, published_at=str(tweet.get("created_at") or ""), freshness="public_api", evidence_level="x_syndication", official_account=True, authority="official_x_account"))
+            result.append(
+                WebSource(
+                    source_type="social_post",
+                    platform="x",
+                    author=str(user.get("name") or screen_name),
+                    handle=f"@{screen_name}",
+                    url=f"https://x.com/{screen_name}/status/{tweet_id}",
+                    title=f"@{screen_name} on X",
+                    text=text,
+                    published_at=str(tweet.get("created_at") or ""),
+                    freshness="public_api",
+                    evidence_level="x_syndication",
+                    official_account=True,
+                    authority="official_x_account",
+                )
+            )
+
         def published(source: WebSource) -> float:
             try:
                 return parsedate_to_datetime(source.published_at).timestamp()
             except (TypeError, ValueError, OverflowError):
                 return 0.0
+
         return sorted(result, key=published, reverse=True)[:5]

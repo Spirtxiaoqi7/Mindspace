@@ -525,10 +525,8 @@ class FunASRRuntime:
             }
 
         import numpy as np
-        import torch
 
         samples = np.frombuffer(pcm, dtype="<i2").astype("float32") / 32768.0
-        tensor = torch.from_numpy(samples)
         timeout = max(0.05, options.final_refinement_timeout_ms / 1000)
         started = perf_counter()
         with self._scheduler.slot("final", timeout=timeout) as acquired:
@@ -536,7 +534,7 @@ class FunASRRuntime:
                 return {**fallback, "reason": "stream_priority_timeout"}
             try:
                 result = self.final_asr.generate(
-                    input=[tensor],
+                    input=[samples],
                     batch_size=1,
                     language="中文",
                     itn=True,

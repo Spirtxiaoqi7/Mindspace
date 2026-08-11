@@ -198,6 +198,7 @@ def _empty_card_batches() -> dict[str, dict[str, Any]]:
         for batch_id, slots in _CARD_BATCHES
     }
 
+
 _DEFAULT_SLOT_LABELS: dict[str, tuple[str, ...]] = {
     "emotional_baseline": (
         "温柔稳定",
@@ -522,10 +523,7 @@ def _recover_card_rows(text: str, expected_count: int, slots_per_person: int) ->
     if len(explicit_rows) == expected_count:
         return explicit_rows
     if len(compact_cells) == expected_count:
-        return [
-            compact_cells[index : index + slots_per_person]
-            for index in range(0, expected_count, slots_per_person)
-        ]
+        return [compact_cells[index : index + slots_per_person] for index in range(0, expected_count, slots_per_person)]
 
     delimited: list[list[str]] = []
     for raw_line in text.splitlines():
@@ -1188,11 +1186,7 @@ class DestinyService:
         expected = {(person_id, str(slot["id"])) for person_id in _PERSON_IDS for slot in selected_slots}
         seen: set[tuple[str, str]] = set()
         cards_by_slot: dict[str, list[dict[str, Any]]] = {str(slot["id"]): [] for slot in selected_slots}
-        ordered_pairs = [
-            (person_id, str(slot["id"]))
-            for person_id in _PERSON_IDS
-            for slot in selected_slots
-        ]
+        ordered_pairs = [(person_id, str(slot["id"])) for person_id in _PERSON_IDS for slot in selected_slots]
         for row_index, row in enumerate(rows):
             if isinstance(row, list) and len(row) == 5:
                 source_id, slot_id, label, summary, willingness = row
@@ -1319,9 +1313,7 @@ class DestinyService:
         cards_by_slot = {} if invalid_stored_cards else self._preserved_card_batches(journey)
         batch_states = _empty_card_batches() if invalid_stored_cards else self._card_batch_states(journey)
         pending_batches = [
-            (batch_id, slots)
-            for batch_id, slots in _CARD_BATCHES
-            if batch_states[batch_id]["status"] != "ready"
+            (batch_id, slots) for batch_id, slots in _CARD_BATCHES if batch_states[batch_id]["status"] != "ready"
         ]
         if not pending_batches:
             return self._save(
@@ -1551,10 +1543,7 @@ class DestinyService:
             journey,
             status="cards_ready",
             cards_by_slot=cards_by_slot,
-            card_batches={
-                batch_id: {**state, "status": "ready"}
-                for batch_id, state in _empty_card_batches().items()
-            },
+            card_batches={batch_id: {**state, "status": "ready"} for batch_id, state in _empty_card_batches().items()},
             selections={},
             final_card=None,
             fallbacks=fallbacks,

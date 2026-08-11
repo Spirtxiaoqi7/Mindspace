@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from urllib.parse import urlsplit
 
-
 _BRANDS = {
     "deepseek": ({"deepseek", "深度求索"}, {"deepseek.com"}, {"deepseek-ai"}),
     "openai": ({"openai"}, {"openai.com"}, {"openai"}),

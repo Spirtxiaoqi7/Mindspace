@@ -448,4 +448,5 @@ class ChatResponse(BaseModel):
     llm_call_count: int = 0
     model_usage: list[ModelUsage] = Field(default_factory=list)
     model: ModelDiagnostics = Field(default_factory=ModelDiagnostics)
+    writeback_context: dict[str, Any] = Field(default_factory=dict, exclude=True, repr=False)
     completed_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())

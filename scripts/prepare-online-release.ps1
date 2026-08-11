@@ -73,7 +73,7 @@ if ($IncludeLauncher) {
     }
     $LauncherRoot = Join-Path $SiteRoot "launcher\$Channel"
     New-Item -ItemType Directory -Path $LauncherRoot -Force | Out-Null
-    $Installer = Join-Path $ProjectRoot "dist-launcher\Mindspace-$Version-x64.exe"
+    $Installer = Join-Path $ProjectRoot "dist-launcher\Mindspace-$Version-x64-offline.exe"
     $Blockmap = "$Installer.blockmap"
     $Latest = Join-Path $ProjectRoot 'dist-launcher\latest.yml'
     if (-not (Test-Path -LiteralPath $Installer)) { throw "Launcher 发布文件缺失：$Installer" }

@@ -177,8 +177,7 @@ def test_regenerate_withdraws_old_memory_context_and_indexes_atomically(tmp_path
     snapshot = memory.snapshot()
     assert all("旧回答会被撤销" not in episode.get("text", "") for episode in snapshot["episodes"].values())
     assert all(
-        "旧回答会被撤销" not in item.get("source_episode", {}).get("text", "")
-        for item in snapshot["tombstones"]
+        "旧回答会被撤销" not in item.get("source_episode", {}).get("text", "") for item in snapshot["tombstones"]
     )
     with ledger._connect() as db:
         context_text = "\n".join(

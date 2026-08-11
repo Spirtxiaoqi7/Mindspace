@@ -85,9 +85,7 @@ class ConversationRunRepository:
             request_digest = request.idempotency_digest()
             now = time.monotonic()
             expired = [
-                key
-                for key, value in self.active_runs.items()
-                if value.completed and now - value.updated_at > 600
+                key for key, value in self.active_runs.items() if value.completed and now - value.updated_at > 600
             ]
             for key in expired:
                 self.active_runs.pop(key, None)

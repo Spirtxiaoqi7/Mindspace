@@ -377,8 +377,7 @@ class JsonSessionRepository:
                         "reply_to_message_id": request.reply_to_message_id,
                         "interactions": [item.model_dump(mode="json") for item in request.interactions],
                         "attachments": [
-                            item.model_dump(mode="json", exclude={"content"})
-                            for item in request.attachments
+                            item.model_dump(mode="json", exclude={"content"}) for item in request.attachments
                         ],
                     },
                     {
@@ -408,8 +407,7 @@ class JsonSessionRepository:
             )
             if session.get("title") == "新对话":
                 interaction_title = "、".join(
-                    item.action + (f"-{item.target}" if item.target else "")
-                    for item in request.interactions[:2]
+                    item.action + (f"-{item.target}" if item.target else "") for item in request.interactions[:2]
                 )
                 attachment_title = request.attachments[0].name if request.attachments else ""
                 session["title"] = (

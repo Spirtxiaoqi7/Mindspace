@@ -47,8 +47,11 @@ class WebSource(BaseModel):
     official_account: bool = False
     authority: str = ""
     source: str = ""
+
     def product_dict(self):
-        data = self.model_dump(mode="json"); data["content"] = data["text"]; return data
+        data = self.model_dump(mode="json")
+        data["content"] = data["text"]
+        return data
 
 
 class WebResult(BaseModel):
@@ -60,5 +63,16 @@ class WebResult(BaseModel):
     sources: list[WebSource] = Field(default_factory=list)
     failures: list[dict[str, str]] = Field(default_factory=list)
     reason_codes: list[str] = Field(default_factory=list)
+
     def tool_data(self):
-        return {"query": self.query, "status": self.status, "coverage": self.coverage, "freshness": self.freshness, "retrieved_at": self.retrieved_at, "sources": [item.product_dict() for item in self.sources], "partial_failures": self.failures, "reason_codes": self.reason_codes, "count": len(self.sources)}
+        return {
+            "query": self.query,
+            "status": self.status,
+            "coverage": self.coverage,
+            "freshness": self.freshness,
+            "retrieved_at": self.retrieved_at,
+            "sources": [item.product_dict() for item in self.sources],
+            "partial_failures": self.failures,
+            "reason_codes": self.reason_codes,
+            "count": len(self.sources),
+        }

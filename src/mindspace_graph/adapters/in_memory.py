@@ -352,4 +352,3 @@ def demo_dependencies() -> Dependencies:
         role_policy=RegexRolePolicy(),
         audit=InMemoryAudit(),
     )
-

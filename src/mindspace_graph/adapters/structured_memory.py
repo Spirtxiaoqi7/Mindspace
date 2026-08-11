@@ -613,16 +613,13 @@ class StructuredMemoryStore:
         with self._lock:
             data = self._load()
             removed_keys = {
-                key
-                for key, record in data["active"].items()
-                if str(record.get("character_id") or "") == owner
+                key for key, record in data["active"].items() if str(record.get("character_id") or "") == owner
             }
             data["active"] = {key: record for key, record in data["active"].items() if key not in removed_keys}
             removed_untagged = {
                 str(item.get("episode_id") or "")
                 for item in data["untagged"]
-                if str(data["episodes"].get(str(item.get("episode_id") or ""), {}).get("character_id") or "")
-                == owner
+                if str(data["episodes"].get(str(item.get("episode_id") or ""), {}).get("character_id") or "") == owner
             }
             data["untagged"] = [
                 item for item in data["untagged"] if str(item.get("episode_id") or "") not in removed_untagged
@@ -633,9 +630,9 @@ class StructuredMemoryStore:
                 if str(item.get("removed_record", {}).get("character_id") or "") != owner
                 and str(item.get("source_episode", {}).get("character_id") or "") != owner
             ]
-            referenced = {
-                str(record.get("episode_id") or "") for record in data["active"].values()
-            } | {str(item.get("episode_id") or "") for item in data["untagged"]}
+            referenced = {str(record.get("episode_id") or "") for record in data["active"].values()} | {
+                str(item.get("episode_id") or "") for item in data["untagged"]
+            }
             data["episodes"] = {
                 episode_id: episode
                 for episode_id, episode in data["episodes"].items()

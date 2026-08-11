@@ -11,6 +11,7 @@ def json_pointer_tokens(path: str) -> list[str]:
         raise ValueError("JSON pointer must start with /")
     return [token.replace("~1", "/").replace("~0", "~") for token in path[1:].split("/")]
 
+
 def read_json_pointer(document: dict[str, Any], path: str) -> Any:
     current: Any = document
     for token in json_pointer_tokens(path):
@@ -31,6 +32,7 @@ def read_json_pointer(document: dict[str, Any], path: str) -> Any:
         else:
             return None
     return deepcopy(current)
+
 
 def apply_json_patch(document: dict[str, Any], op: str, path: str, value: Any = None) -> None:
     tokens = json_pointer_tokens(path)

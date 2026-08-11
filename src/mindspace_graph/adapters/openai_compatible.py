@@ -184,36 +184,15 @@ class OpenAICompatibleLanguageModel:
         yield from self._stream(messages, config, request_kind="generation")
 
     @staticmethod
-    def _apply_provider_request_compat(body: dict[str, Any], config: ApiConfig) -> None:
-        """Apply vendor extensions only when the configured endpoint owns them."""
-
-        base_url = str(config.base_url or "").lower()
-        model = str(config.model or "").lower()
-        if "api.deepseek.com" in base_url and model in {"deepseek-v4-flash", "deepseek-v4-pro"}:
-            # V4 defaults to high-effort thinking. Mindspace roleplay and its
-            # one-tool handshake reserve a bounded budget for visible output;
-            # the default can consume that budget and return an empty turn.
-            body["thinking"] = {"type": "disabled"}
-
-    @staticmethod
-    def _apply_output_token_budget(
-        body: dict[str, Any], config: ApiConfig, max_tokens: int
-    ) -> None:
+    def _apply_output_token_budget(body: dict[str, Any], config: ApiConfig, max_tokens: int) -> None:
         """Map Mindspace's provider-neutral output budget to the wire field."""
 
         base_url = str(config.base_url or "").lower()
         model = str(config.model or "").lower()
         current_openai_model = (
-            model.startswith("gpt-5")
-            or model.startswith("o1")
-            or model.startswith("o3")
-            or model.startswith("o4")
+            model.startswith("gpt-5") or model.startswith("o1") or model.startswith("o3") or model.startswith("o4")
         )
-        field = (
-            "max_completion_tokens"
-            if "api.openai.com" in base_url and current_openai_model
-            else "max_tokens"
-        )
+        field = "max_completion_tokens" if "api.openai.com" in base_url and current_openai_model else "max_tokens"
         body[field] = max(64, int(max_tokens))
 
     def stream_with_tools(
@@ -242,7 +221,6 @@ class OpenAICompatibleLanguageModel:
         # default remains compatible with generic OpenAI-style endpoints.
         if tool_choice != "auto":
             body["tool_choice"] = tool_choice
-        self._apply_provider_request_compat(body, config)
         endpoint = f"{config.base_url.rstrip('/')}/chat/completions"
         headers = {"Content-Type": "application/json"}
         if config.api_key:
@@ -301,50 +279,71 @@ class OpenAICompatibleLanguageModel:
             if explicitly_rejects_tools(exc.response.status_code, exc.response.text):
                 self._tool_capabilities.unsupported(config.base_url, config.model, "unsupported_field")
             else:
-                self._tool_capabilities.transient_failure(config.base_url, config.model, f"http_{exc.response.status_code}")
+                self._tool_capabilities.transient_failure(
+                    config.base_url, config.model, f"http_{exc.response.status_code}"
+                )
             self._finish_provider_attempt(
-                attempt, "generation", status="http_error", compatibility_variant="native_tools",
-                http_status=exc.response.status_code, error=str(exc),
+                attempt,
+                "generation",
+                status="http_error",
+                compatibility_variant="native_tools",
+                http_status=exc.response.status_code,
+                error=str(exc),
             )
             raise
         except EmptyVisibleContentError as exc:
             self._finish_provider_attempt(
-                attempt, "generation", status="empty", compatibility_variant="native_tools",
-                http_status=response_status, error=str(exc),
+                attempt,
+                "generation",
+                status="empty",
+                compatibility_variant="native_tools",
+                http_status=response_status,
+                error=str(exc),
             )
             raise
         except (httpx.ConnectError, httpx.ReadError, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
             self._finish_provider_attempt(
-                attempt, "generation", status="transport_error", compatibility_variant="native_tools", error=str(exc),
+                attempt,
+                "generation",
+                status="transport_error",
+                compatibility_variant="native_tools",
+                error=str(exc),
             )
             raise
         except Exception as exc:
             self._finish_provider_attempt(
-                attempt, "generation", status="error", compatibility_variant="native_tools",
-                http_status=response_status, error=str(exc),
+                attempt,
+                "generation",
+                status="error",
+                compatibility_variant="native_tools",
+                http_status=response_status,
+                error=str(exc),
             )
             raise
         else:
             self._tool_capabilities.supported(config.base_url, config.model, protocol="tools")
             self._finish_provider_attempt(
-                attempt, "generation", status="success", compatibility_variant="native_tools",
+                attempt,
+                "generation",
+                status="success",
+                compatibility_variant="native_tools",
                 http_status=response_status,
             )
         if last_usage_event is not None:
             self._capture_usage(last_usage_event, config, "generation")
         if len(calls) > 1:
             configured_names = {
-                str((item.get("function") or {}).get("name") or "")
-                for item in tools
-                if isinstance(item, dict)
+                str((item.get("function") or {}).get("name") or "") for item in tools if isinstance(item, dict)
             } - {""}
             returned_names = {
-                str((item.get("function") or {}).get("name") or "")
-                for item in calls.values()
-                if isinstance(item, dict)
+                str((item.get("function") or {}).get("name") or "") for item in calls.values() if isinstance(item, dict)
             } - {""}
-            selected_name = str(((tool_choice.get("function") or {}).get("name") or "")) if isinstance(tool_choice, dict) else ""
-            forced_single_function = len(configured_names) == 1 and returned_names == configured_names and selected_name in configured_names
+            selected_name = (
+                str((tool_choice.get("function") or {}).get("name") or "") if isinstance(tool_choice, dict) else ""
+            )
+            forced_single_function = (
+                len(configured_names) == 1 and returned_names == configured_names and selected_name in configured_names
+            )
             if not forced_single_function:
                 raise ValueError("provider returned more than one tool call in a single turn")
         if calls:
@@ -468,10 +467,7 @@ class OpenAICompatibleLanguageModel:
             "temperature": 0,
             "stream": False,
         }
-        self._apply_output_token_budget(
-            base_body, config, min(max_tokens, config.max_tokens)
-        )
-        self._apply_provider_request_compat(base_body, config)
+        self._apply_output_token_budget(base_body, config, min(max_tokens, config.max_tokens))
         headers = {"Content-Type": "application/json"}
         if config.api_key:
             headers["Authorization"] = f"Bearer {config.api_key}"
@@ -482,7 +478,6 @@ class OpenAICompatibleLanguageModel:
         variants = [
             {
                 **base_body,
-                
                 "response_format": {"type": "json_object"},
             },
             base_body,
@@ -501,9 +496,13 @@ class OpenAICompatibleLanguageModel:
                 response.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 self._finish_provider_attempt(
-                    attempt, request_kind, status="http_error", compatibility_variant=variant,
+                    attempt,
+                    request_kind,
+                    status="http_error",
+                    compatibility_variant=variant,
                     retry_reason="compatibility_fallback" if variant_index > 1 else "",
-                    http_status=exc.response.status_code, error=str(exc),
+                    http_status=exc.response.status_code,
+                    error=str(exc),
                 )
                 if exc.response.status_code not in {400, 404, 422}:
                     raise
@@ -511,8 +510,12 @@ class OpenAICompatibleLanguageModel:
                 continue
             except (httpx.ConnectError, httpx.ReadError, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
                 self._finish_provider_attempt(
-                    attempt, request_kind, status="transport_error", compatibility_variant=variant,
-                    retry_reason="compatibility_fallback" if variant_index > 1 else "", error=str(exc),
+                    attempt,
+                    request_kind,
+                    status="transport_error",
+                    compatibility_variant=variant,
+                    retry_reason="compatibility_fallback" if variant_index > 1 else "",
+                    error=str(exc),
                 )
                 raise
             try:
@@ -537,16 +540,23 @@ class OpenAICompatibleLanguageModel:
                 raise
             if content.strip():
                 self._finish_provider_attempt(
-                    attempt, request_kind, status="success", compatibility_variant=variant,
+                    attempt,
+                    request_kind,
+                    status="success",
+                    compatibility_variant=variant,
                     retry_reason="compatibility_fallback" if variant_index > 1 else "",
                     http_status=response.status_code,
                 )
                 return content
             last_error = ValueError(f"{request_kind} response content is blank")
             self._finish_provider_attempt(
-                attempt, request_kind, status="empty", compatibility_variant=variant,
+                attempt,
+                request_kind,
+                status="empty",
+                compatibility_variant=variant,
                 retry_reason="compatibility_fallback" if variant_index > 1 else "",
-                http_status=response.status_code, error=str(last_error),
+                http_status=response.status_code,
+                error=str(last_error),
             )
         if last_error is not None:
             raise last_error
@@ -658,7 +668,6 @@ class OpenAICompatibleLanguageModel:
             "stream": True,
         }
         self._apply_output_token_budget(body, config, config.max_tokens)
-        self._apply_provider_request_compat(body, config)
         if include_usage:
             body["stream_options"] = {"include_usage": True}
         headers = {"Content-Type": "application/json"}
@@ -718,33 +727,53 @@ class OpenAICompatibleLanguageModel:
                 raise EmptyVisibleContentError(f"{request_kind} response content is blank ({detail})")
         except httpx.HTTPStatusError as exc:
             self._finish_provider_attempt(
-                attempt, request_kind, status="http_error", compatibility_variant=variant,
-                retry_reason=retry_reason, http_status=exc.response.status_code, error=str(exc),
+                attempt,
+                request_kind,
+                status="http_error",
+                compatibility_variant=variant,
+                retry_reason=retry_reason,
+                http_status=exc.response.status_code,
+                error=str(exc),
             )
             raise
         except EmptyVisibleContentError as exc:
             self._finish_provider_attempt(
-                attempt, request_kind, status="empty", compatibility_variant=variant,
-                retry_reason=retry_reason, http_status=response_status, error=str(exc),
+                attempt,
+                request_kind,
+                status="empty",
+                compatibility_variant=variant,
+                retry_reason=retry_reason,
+                http_status=response_status,
+                error=str(exc),
             )
             raise
         except (httpx.ConnectError, httpx.ReadError, httpx.ReadTimeout, httpx.RemoteProtocolError) as exc:
             self._finish_provider_attempt(
-                attempt, request_kind, status="transport_error", compatibility_variant=variant,
-                retry_reason=retry_reason, error=str(exc),
+                attempt,
+                request_kind,
+                status="transport_error",
+                compatibility_variant=variant,
+                retry_reason=retry_reason,
+                error=str(exc),
             )
             raise
         except Exception as exc:
             self._finish_provider_attempt(
-                attempt, request_kind, status="error", compatibility_variant=variant,
-                retry_reason=retry_reason, http_status=response_status, error=str(exc),
+                attempt,
+                request_kind,
+                status="error",
+                compatibility_variant=variant,
+                retry_reason=retry_reason,
+                http_status=response_status,
+                error=str(exc),
             )
             raise
         else:
             self._finish_provider_attempt(
-                attempt, request_kind, status="success", compatibility_variant=variant,
-                retry_reason=retry_reason, http_status=response_status,
+                attempt,
+                request_kind,
+                status="success",
+                compatibility_variant=variant,
+                retry_reason=retry_reason,
+                http_status=response_status,
             )
-
-
-
