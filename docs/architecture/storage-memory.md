@@ -26,7 +26,7 @@ Mindspace 的持久化以聚合仓储为边界。`JsonProfileRepository` 负责�
 - 删除校正事件：`data/memory-deletion-events.json`
 - 结构化记忆：`data/structured-memory.json`
 - 知识库：`data/knowledge.json`
-- 设置与审计：`config/settings.json`、`logs/events.jsonl`
+- 设置与审计：`<home>/config/settings.json`、`<home>/logs/events.jsonl`
 
 JSON 使用 UTF-8、`ensure_ascii=False` 和两个空格缩进。原子写必须在目标目录创建临时文件，刷新并 `fsync` 后以 `os.replace()` 替换，且不吞没文件系统或 JSON 异常。Profile 文件名由 `TARGET_FILES` 决定；Session 使用安全前缀加原始 session ID 的完整 SHA-256。旧 Session 路径只可在归属校验后兼容读取或迁移。
 
@@ -70,7 +70,7 @@ The deployment layer supplies the runtime root. Repositories must not rediscover
 - Deletion-reconciliation events: `data/memory-deletion-events.json`
 - Structured memory: `data/structured-memory.json`
 - Knowledge base: `data/knowledge.json`
-- Settings and audit: `config/settings.json`, `logs/events.jsonl`
+- Settings and audit: `<home>/config/settings.json`, `<home>/logs/events.jsonl`
 
 JSON uses UTF-8, `ensure_ascii=False`, and two-space indentation. Atomic writes must create a temporary file in the target directory, flush and `fsync` it, then replace with `os.replace()`, without swallowing filesystem or JSON exceptions. Profile names are defined by `TARGET_FILES`; Sessions use a safe prefix plus the full SHA-256 of the original session ID. A legacy Session path may be read or migrated only after ownership validation.
 

@@ -90,6 +90,10 @@ desktop/companion/
 desktop/assets/live2d/
 desktop/assets/companion-renderer/
 
+# Generated documentation indexes are local/CI artifacts, not maintained prose.
+docs/CODEBASE_INDEX_0.9.0.md
+docs/CODEBASE_FILE_INDEX_0.9.0.md
+
 # Brand production intermediates are reproducible; retain only the approved
 # transparent master, normalized asset and packaged ICO in source control.
 desktop/assets/brand/mindspace-icon-chroma-v1.png

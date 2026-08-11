@@ -123,26 +123,35 @@ if (JSON.stringify(payload.targets ?? []) !== JSON.stringify(releaseTargets)) {
 const currentDocs = [
   "README.md",
   "SECURITY.md",
-  "docs/INDEX.md",
-  "docs/APPLICATION_FULL_CHAIN.md",
-  "docs/CODE_READING_GUIDE.md",
-  "docs/MINDSPACE_FUNCTION_MAP.md",
-  "docs/ONLINE_UPDATE_RELEASE.md",
-  "docs/PACKAGING.md",
-  "docs/READ_ONLY_CAPABILITIES.md",
-  "docs/RUNTIME_RUNBOOK.md",
-  "docs/VERIFICATION.md",
-  `docs/DEVELOPMENT_WORKFLOW_${productVersion}.md`,
-  "docs/LOCAL_REPORT_POLICY.md",
-  "docs/VERSIONING_AND_GENERATED_ASSETS.md",
+  "docs/README.md",
+  "docs/architecture/overview.md",
+  "docs/architecture/frontend.md",
+  "docs/architecture/backend.md",
+  "docs/architecture/storage-memory.md",
+  "docs/architecture/prompts-tools.md",
+  "docs/architecture/desktop-runtime.md",
+  "docs/development/workflow.md",
+  "docs/development/testing.md",
+  "docs/development/deprecations.md",
+  "docs/operations/runtime.md",
+  "docs/operations/packaging.md",
+  "docs/operations/release.md",
+  "docs/product/overview.md",
+  "docs/product/characters-destiny.md",
+  "docs/product/memory-context.md",
+  "docs/product/voice.md",
+  "docs/adr/0001-runtime-home.md",
+  "docs/adr/0002-modular-boundaries.md",
+  "docs/adr/0003-character-card-v2.md",
+  "docs/adr/0004-single-tool-protocol.md",
+  "docs/readme/ASSETS.md",
 ];
-const documentIndex = read("docs/INDEX.md");
-for (const name of fs.readdirSync(path.join(root, "docs")).filter((name) => name.endsWith(".md"))) {
-  if (name === "INDEX.md") continue;
-  if (!documentIndex.includes(`\`${name}\``)) failures.push(`docs/INDEX.md does not classify ${name}`);
-  const source = read(`docs/${name}`);
+const documentIndex = read("docs/README.md");
+for (const relative of currentDocs.filter((name) => name.startsWith("docs/") && name !== "docs/README.md")) {
+  if (!documentIndex.includes(path.basename(relative))) failures.push(`docs/README.md does not link ${relative}`);
+  const source = read(relative);
   if (/(?:A:\\Mindscape|A:\\RAG\\langgarph-rag)/i.test(source) && !/^> 文档状态：(historical|prototype|report)/m.test(source)) {
-    failures.push(`docs/${name}: obsolete path is allowed only in visibly non-current documentation`);
+    failures.push(`${relative}: current documentation contains an obsolete path`);
   }
 }
 for (const relative of currentDocs) {
@@ -171,15 +180,9 @@ if (!bootstrapSource.includes("bootstrap/manifest.json") && !bootstrapSource.inc
 if (fs.existsSync(path.join(root, "desktop/bootstrap/manifest.json"))) failures.push("generated desktop/bootstrap/manifest.json must not be committed or precreated outside formal packaging");
 
 const workflow = read(".github/workflows/ci.yml");
-for (const command of ["uv run pytest -q", "test_api_route_contract.py", "npm run check", "npm test", "npm run build", "verify-version-consistency.mjs", "generate-codebase-index.mjs --check", "verify-current-doc-paths.mjs", "verify-repository-policy.mjs", "verify-cjs-syntax.mjs", "verify-powershell-syntax.ps1", `build-update.ps1 -Version ${productVersion} -SkipBuild -DryRun`]) {
+for (const command of ["uv run pytest -q", "test_api_route_contract.py", "npm run check", "npm test", "npm run build", "verify-version-consistency.mjs", "generate-codebase-index.mjs", "verify-current-doc-paths.mjs", "verify-repository-policy.mjs", "verify-cjs-syntax.mjs", "verify-powershell-syntax.ps1", `build-update.ps1 -Version ${productVersion} -SkipBuild -DryRun`]) {
   if (!workflow.includes(command)) failures.push(`CI workflow is missing required gate: ${command}`);
 }
-
-const indexCheck = spawnSync(process.execPath, [path.join(root, "scripts/generate-codebase-index.mjs"), "--check"], {
-  cwd: root,
-  encoding: "utf8",
-});
-if (indexCheck.status !== 0) failures.push(`codebase index completeness failed: ${(indexCheck.stderr || indexCheck.stdout).trim()}`);
 
 const currentDocPathCheck = spawnSync(process.execPath, [path.join(root, "scripts/verify-current-doc-paths.mjs")], {
   cwd: root,

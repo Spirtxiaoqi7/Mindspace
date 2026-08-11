@@ -5,10 +5,15 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const productVersion = JSON.parse(fs.readFileSync(path.join(root, "config/version.json"), "utf8")).product_version;
 const currentDocs = [
-  "README.md", "SECURITY.md", "docs/INDEX.md", "docs/APPLICATION_FULL_CHAIN.md", "docs/CODE_READING_GUIDE.md",
-  "docs/MINDSPACE_FUNCTION_MAP.md", "docs/ONLINE_UPDATE_RELEASE.md", "docs/PACKAGING.md",
-  "docs/READ_ONLY_CAPABILITIES.md", "docs/RUNTIME_RUNBOOK.md", "docs/VERIFICATION.md",
-  `docs/DEVELOPMENT_WORKFLOW_${productVersion}.md`, "docs/LOCAL_REPORT_POLICY.md", "docs/VERSIONING_AND_GENERATED_ASSETS.md",
+  "README.md", "SECURITY.md", "docs/README.md",
+  "docs/architecture/overview.md", "docs/architecture/frontend.md", "docs/architecture/backend.md",
+  "docs/architecture/storage-memory.md", "docs/architecture/prompts-tools.md", "docs/architecture/desktop-runtime.md",
+  "docs/development/workflow.md", "docs/development/testing.md", "docs/development/deprecations.md",
+  "docs/operations/runtime.md", "docs/operations/packaging.md", "docs/operations/release.md",
+  "docs/product/overview.md", "docs/product/characters-destiny.md", "docs/product/memory-context.md", "docs/product/voice.md",
+  "docs/adr/0001-runtime-home.md", "docs/adr/0002-modular-boundaries.md",
+  "docs/adr/0003-character-card-v2.md", "docs/adr/0004-single-tool-protocol.md",
+  "docs/readme/ASSETS.md",
 ];
 const rootFiles = new Set(["Dockerfile", "README.md", "SECURITY.md", "payload.json", "pyproject.toml", "uv.lock"]);
 const relativePrefix = /^(?:src|frontend|desktop|scripts|config|tests|docs|\.github)\//;

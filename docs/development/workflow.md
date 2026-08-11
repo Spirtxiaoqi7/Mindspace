@@ -25,7 +25,7 @@ last_reviewed: 2026-08-11
 ### 文档维护
 
 - current 文档必须短、可执行，并在顶部保留 status、scope 和 last_reviewed。
-- 旧说明保留为 historical，并链接到 `docs/INDEX.md` 指定的 current 权威；不得把 historical 内容当作操作指令。
+- 旧说明由 Git 历史保留；当前权威入口统一由 `docs/README.md` 提供，不得把历史内容当作操作指令。
 - 行为、门禁或权威来源变化时，必须在同一变更中更新相应 current 文档。
 
 ## English
@@ -47,5 +47,5 @@ last_reviewed: 2026-08-11
 ### Documentation maintenance
 
 - Current documents must be short and actionable, with status, scope, and last_reviewed at the top.
-- Retain obsolete guidance as historical and point to the current authority named by `docs/INDEX.md`; do not use historical content as operational instruction.
+- Preserve obsolete guidance through Git history; use `docs/README.md` as the single current authority and never treat historical content as operational instruction.
 - When behavior, gates, or the source of authority changes, update the relevant current document in the same change.

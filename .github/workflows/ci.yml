@@ -18,7 +18,7 @@ jobs:
           node-version: 22
       - run: node scripts/verify-version-consistency.mjs
       - run: node scripts/sync-gpt-sovits-catalog.mjs --check
-      - run: node scripts/generate-codebase-index.mjs --check
+      - run: node scripts/generate-codebase-index.mjs
       - run: node scripts/verify-current-doc-paths.mjs
       - run: node scripts/verify-repository-policy.mjs
 
