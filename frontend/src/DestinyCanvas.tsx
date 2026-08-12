@@ -150,6 +150,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
   const dissolveTimer = useRef<number | null>(null);
   const cameraMotionTimer = useRef<number | null>(null);
   const selectionEffectTimer = useRef<number | null>(null);
+  const generationTriggerInFlight = useRef(false);
   const sceneRef = useRef<HTMLDivElement | null>(null);
   const worldCameraRef = useRef<HTMLDivElement | null>(null);
 
@@ -485,6 +486,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
   }
 
   async function generateJourney() {
+    if (generationTriggerInFlight.current) return;
     const invalid = validateSeed();
     if (invalid) { setError(invalid); return; }
     if (journey?.status === "committed" || journey?.character_id) {
@@ -493,13 +495,23 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     }
     if (journey && (journey.archetypes.length || completedCount)
       && !window.confirm("修改种子会重新生成 8 个角色方向和 96 张命签，现有十二项选择将清空。")) return;
+    generationTriggerInFlight.current = true;
     setError("");
     setFallbackStage("");
     try {
+      let currentJourney = journey;
+      if (currentJourney) {
+        currentJourney = await apiV1Request<Journey>(`/destiny/journeys/${currentJourney.journey_id}`);
+        setJourney(currentJourney);
+        if (["archetypes_generating", "cards_generating"].includes(currentJourney.status)) {
+          await recoverStaleJourney(currentJourney);
+          return;
+        }
+      }
       const nextAvatar = await uploadAvatar();
-      const reusingJourney = Boolean(journey);
+      const reusingJourney = Boolean(currentJourney);
       const created = await apiV1Request<Journey>(reusingJourney
-        ? `/destiny/journeys/${journey!.journey_id}/seed?expected_revision=${journey!.revision}`
+        ? `/destiny/journeys/${currentJourney!.journey_id}/seed?expected_revision=${currentJourney!.revision}`
         : "/destiny/journeys", {
         method: reusingJourney ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
@@ -513,11 +525,14 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
       if (journey && isStaleJourneyRevision(reason) && await recoverStaleJourney(journey)) return;
       setModelState("idle");
       setError(reason instanceof Error ? reason.message : "角色种子创建失败");
+    } finally {
+      generationTriggerInFlight.current = false;
     }
   }
 
   async function useDefaultTemplate() {
-    if (!journey || !fallbackStage) return;
+    if (!journey || !fallbackStage || generationTriggerInFlight.current) return;
+    generationTriggerInFlight.current = true;
     setError("");
     try {
       const latest = await apiV1Request<Journey>(`/destiny/journeys/${journey.journey_id}`);
@@ -526,6 +541,8 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
       else await runCards(latest, true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "读取最新旅程失败");
+    } finally {
+      generationTriggerInFlight.current = false;
     }
   }
 

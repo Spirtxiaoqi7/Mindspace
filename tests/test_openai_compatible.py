@@ -61,6 +61,53 @@ def test_character_structured_generation_records_compatible_usage_kind():
     client.close()
 
 
+def test_destiny_structured_generation_disables_thinking_for_official_deepseek_v4():
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"people":[]}'}}]})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    model = OpenAICompatibleLanguageModel(client=client)
+
+    assert model.generate_structured(
+        [{"role": "user", "content": "json"}],
+        ApiConfig(api_key="test", base_url="https://api.deepseek.com/v1", model="deepseek-v4-pro", max_tokens=4096),
+        request_kind="destiny_archetypes",
+        max_tokens=4096,
+    ) == '{"people":[]}'
+    assert bodies[0]["thinking"] == {"type": "disabled"}
+    assert bodies[0]["response_format"] == {"type": "json_object"}
+    client.close()
+
+
+def test_destiny_structured_generation_falls_back_when_thinking_field_is_rejected():
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if "thinking" in body:
+            return httpx.Response(400, json={"error": "unknown field thinking"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"people":[]}'}}]})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    model = OpenAICompatibleLanguageModel(client=client)
+
+    assert model.generate_structured(
+        [],
+        ApiConfig(api_key="test", base_url="https://api.deepseek.com/v1", model="deepseek-v4-flash"),
+        request_kind="destiny_cards",
+        max_tokens=160,
+    ) == '{"people":[]}'
+    assert len(bodies) == 3
+    assert bodies[0]["thinking"] == {"type": "disabled"}
+    assert bodies[1]["thinking"] == {"type": "disabled"}
+    assert "thinking" not in bodies[2]
+    client.close()
+
+
 def test_compaction_disables_thinking_and_requests_json():
     bodies = []
 

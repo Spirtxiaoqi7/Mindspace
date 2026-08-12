@@ -471,18 +471,31 @@ class OpenAICompatibleLanguageModel:
         headers = {"Content-Type": "application/json"}
         if config.api_key:
             headers["Authorization"] = f"Bearer {config.api_key}"
-        # DeepSeek V4 enables thinking by default. Small structured background calls need visible
-        # JSON, not a reasoning trace that consumes their entire output budget.
-        # Retry progressively for generic OpenAI-compatible servers that reject
-        # vendor fields or JSON mode.
-        variants = [
-            {
-                **base_body,
-                "response_format": {"type": "json_object"},
-            },
-            base_body,
-            base_body,
-        ]
+        is_official_deepseek_v4 = (
+            "api.deepseek.com" in str(config.base_url or "").lower()
+            and str(config.model or "").lower().startswith("deepseek-v4-")
+        )
+        is_destiny_generation = request_kind in {
+            "destiny_archetypes",
+            "destiny_cards",
+            "destiny_synthesis",
+        }
+        json_body = {**base_body, "response_format": {"type": "json_object"}}
+        # DeepSeek V4 defaults to thinking mode. For every Destiny generation
+        # stage the response is compact JSON, so hidden reasoning only steals
+        # output from the JSON document and can leave it truncated. Keep the
+        # provider-specific field off generic OpenAI-compatible endpoints, and
+        # retain a no-thinking fallback if an intermediary rejects it.
+        if is_official_deepseek_v4 and is_destiny_generation:
+            non_thinking = {"thinking": {"type": "disabled"}}
+            variants = [
+                {**json_body, **non_thinking},
+                {**base_body, **non_thinking},
+                json_body,
+                base_body,
+            ]
+        else:
+            variants = [json_body, base_body]
         last_error: Exception | None = None
         for variant_index, body in enumerate(variants, start=1):
             variant = f"structured_variant_{variant_index}"
