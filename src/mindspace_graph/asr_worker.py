@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import json
 import os
+import secrets
 import time
 from array import array
 from contextlib import asynccontextmanager
@@ -26,7 +27,7 @@ from mindspace_graph.streaming_asr import (
 from mindspace_graph.version import APP_VERSION
 
 
-def create_worker_app(model_root: Path, device: str) -> FastAPI:
+def create_worker_app(model_root: Path, device: str, shutdown_token: str = "") -> FastAPI:
     runtime = FunASRRuntime(model_root, device=device)
     native_capture = NativeMicrophoneCapture()
 
@@ -54,6 +55,7 @@ def create_worker_app(model_root: Path, device: str) -> FastAPI:
                 capture_supervisor.cancel()
                 await asyncio.gather(capture_supervisor, return_exceptions=True)
             await asyncio.to_thread(native_capture.stop)
+            await asyncio.to_thread(runtime.close)
 
     app = FastAPI(title="Mindspace FunASR Worker", version=APP_VERSION, lifespan=lifespan)
 
@@ -68,6 +70,20 @@ def create_worker_app(model_root: Path, device: str) -> FastAPI:
             "emotion": {"enabled": False, "status": "disabled"},
             "native_capture": native_capture.status(),
         }
+
+    @app.post("/shutdown")
+    async def shutdown(request: Request) -> dict[str, bool]:
+        client_host = request.client.host if request.client else ""
+        supplied = request.headers.get("x-mindspace-service-token", "")
+        if client_host not in {"127.0.0.1", "::1"}:
+            raise HTTPException(status_code=403, detail="loopback only")
+        if not shutdown_token or not secrets.compare_digest(supplied, shutdown_token):
+            raise HTTPException(status_code=403, detail="invalid service token")
+        callback = getattr(request.app.state, "request_shutdown", None)
+        if callback is None:
+            raise HTTPException(status_code=503, detail="shutdown unavailable")
+        asyncio.get_running_loop().call_soon(callback)
+        return {"ok": True}
 
     @app.post("/emotion/results")
     async def emotion_results(payload: dict[str, Any]) -> dict[str, Any]:
@@ -311,8 +327,15 @@ def main() -> None:
     )
     parser.add_argument("--device", default=os.environ.get("MINDSPACE_ASR_DEVICE", "cuda:0"))
     args = parser.parse_args()
-    app = create_worker_app(args.model_root.resolve(), args.device)
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    app = create_worker_app(
+        args.model_root.resolve(),
+        args.device,
+        shutdown_token=os.environ.get("MINDSPACE_SERVICE_SHUTDOWN_TOKEN", ""),
+    )
+    config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
+    server = uvicorn.Server(config)
+    app.state.request_shutdown = lambda: setattr(server, "should_exit", True)
+    server.run()
 
 
 if __name__ == "__main__":

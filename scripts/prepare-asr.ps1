@@ -10,6 +10,10 @@ $PSNativeCommandUseErrorActionPreference = $true
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $VenvRoot = if ($env:MINDSPACE_ASR_VENV) { $env:MINDSPACE_ASR_VENV } else { Join-Path $ProjectRoot '.venv-asr' }
 $SeedRoot = if ($env:MINDSPACE_TTS_VENV) { $env:MINDSPACE_TTS_VENV } else { Join-Path $ProjectRoot '.venv-tts' }
+$OriginalVenvRoot = $VenvRoot
+$RebuildRoot = "$VenvRoot.rebuild-$PID"
+$BackupRoot = "$VenvRoot.backup-$PID"
+if ($Rebuild) { $VenvRoot = $RebuildRoot }
 $PythonExe = Join-Path $VenvRoot 'Scripts\python.exe'
 $ReadyMarker = Join-Path $VenvRoot '.mindspace-asr-ready.json'
 $ModelRoot = if ($env:MINDSPACE_MODEL_ROOT) { Join-Path $env:MINDSPACE_MODEL_ROOT 'asr' } else { Join-Path $ProjectRoot 'assets\models\asr' }
@@ -33,14 +37,24 @@ Write-Output 'ASR_STAGE=venv'
 if (Test-Path -LiteralPath $ReadyMarker) {
     Remove-Item -LiteralPath $ReadyMarker -Force
 }
-if ($Rebuild -and (Test-Path -LiteralPath $VenvRoot)) {
-    $resolvedTarget = (Resolve-Path -LiteralPath $VenvRoot).Path
+if ($Rebuild -and (Test-Path -LiteralPath $OriginalVenvRoot)) {
+    $resolvedTarget = (Resolve-Path -LiteralPath $OriginalVenvRoot).Path
     $AllowedEnvironmentRoot = if ($env:MINDSPACE_ENVIRONMENT) { [IO.Path]::GetFullPath($env:MINDSPACE_ENVIRONMENT).TrimEnd('\') } else { $ProjectRoot }
     if (-not $resolvedTarget.StartsWith($AllowedEnvironmentRoot, [StringComparison]::OrdinalIgnoreCase) -or
         (Split-Path -Leaf $resolvedTarget) -notin @('.venv-asr', 'asr-cuda')) {
         throw "Refusing to rebuild unsafe ASR environment path: $resolvedTarget"
     }
-    Remove-Item -LiteralPath $resolvedTarget -Recurse -Force
+    # Build beside the current runtime. Cancellation or network failure must
+    # never turn a previously usable environment into an empty shell.
+    Remove-Item -LiteralPath $RebuildRoot -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $RebuildRoot | Out-Null
+    $PSNativeCommandUseErrorActionPreference = $false
+    robocopy $OriginalVenvRoot $RebuildRoot /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 /NFL /NDL /NJH /NJS /NP
+    $copyCode = $LASTEXITCODE
+    $PSNativeCommandUseErrorActionPreference = $true
+    if ($copyCode -ge 8) {
+        throw "ASR runtime staging copy failed with robocopy code $copyCode; the current runtime was not changed."
+    }
 }
 if (-not (Test-Path -LiteralPath $PythonExe)) {
     if (Test-Path -LiteralPath (Join-Path $SeedRoot 'Scripts\python.exe')) {
@@ -107,4 +121,19 @@ $RuntimeProbe = (& $PythonExe -c "import json,sys,torch,funasr,sounddevice; prin
     verified_at = [DateTime]::UtcNow.ToString('o')
 } | ConvertTo-Json | Set-Content -LiteralPath "$ReadyMarker.next" -Encoding utf8
 Move-Item -LiteralPath "$ReadyMarker.next" -Destination $ReadyMarker -Force
+if ($Rebuild) {
+    if (Test-Path -LiteralPath $OriginalVenvRoot) {
+        Move-Item -LiteralPath $OriginalVenvRoot -Destination $BackupRoot
+    }
+    try {
+        Move-Item -LiteralPath $RebuildRoot -Destination $OriginalVenvRoot
+        Remove-Item -LiteralPath $BackupRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    catch {
+        if ((Test-Path -LiteralPath $BackupRoot) -and -not (Test-Path -LiteralPath $OriginalVenvRoot)) {
+            Move-Item -LiteralPath $BackupRoot -Destination $OriginalVenvRoot
+        }
+        throw
+    }
+}
 Write-Output 'ASR_STAGE=done'

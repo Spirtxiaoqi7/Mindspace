@@ -110,6 +110,7 @@ export function SettingsWorkspace({ value, avatars, initialTab = "model", onClos
   const [gptVoices, setGptVoices] = useState<{ active_voice: string; items: Array<{ id: string; label: string; family: string; installed: boolean; selected: boolean }> }>({ active_voice: "v4-changli", items: [] });
   const [qwenVoices, setQwenVoices] = useState<{ active_voice: string; items: Array<{ id: string; label: string; installed: boolean; selected: boolean }> }>({ active_voice: "serena", items: [] });
   const [avatarBusy, setAvatarBusy] = useState<Role | "">("");
+  const [saveBusy, setSaveBusy] = useState(false);
   const [llmApiKey, setLlmApiKey] = useState("");
   const [llmProviders, setLlmProviders] = useState<LlmProviderOption[]>([]);
   const [availableModels, setAvailableModels] = useState<string[]>([str(normalizedValue.llm.model)].filter(Boolean));
@@ -322,11 +323,19 @@ export function SettingsWorkspace({ value, avatars, initialTab = "model", onClos
     } finally { setProviderBusy(false); }
   };
   const save = async () => {
+    if (saveBusy) return;
+    setSaveBusy(true);
     try {
       const next = await persistSettings();
-      const avatarResult = await request<{ config: AvatarConfig }>("/api/v1/avatar/config", { method: "PUT", body: JSON.stringify(avatarDraft) });
-      notify("设置和头像已保存并立即生效"); onSaved(next, normalizeAvatarConfig(avatarResult.config));
-    } catch (error) { notify((error as Error).message); }
+      try {
+        const avatarResult = await request<{ config: AvatarConfig }>("/api/v1/avatar/config", { method: "PUT", body: JSON.stringify(avatarDraft) });
+        notify("设置和头像已保存并立即生效"); onSaved(next, normalizeAvatarConfig(avatarResult.config));
+      } catch (error) {
+        onSaved(next, normalizeAvatarConfig(avatars));
+        notify(`设置已保存，但头像未保存：${(error as Error).message}`);
+      }
+    } catch (error) { notify(`保存设置失败：${(error as Error).message}`); }
+    finally { setSaveBusy(false); }
   };
   const uploadReference = async (file: File) => {
     if (file.size > 20 * 1024 * 1024) { notify("参考音频不能超过 20 MiB"); return; }
@@ -413,7 +422,7 @@ export function SettingsWorkspace({ value, avatars, initialTab = "model", onClos
     { id: "advanced", label: "高级", tabs: [["protocol", "协议与诊断"]] },
   ] as const;
   const activeGroup = settingGroups.find((group) => group.tabs.some(([id]) => id === tab)) || settingGroups[0];
-  return <Modal title="设置中心" kicker="SETTINGS HUB" onClose={onClose} footer={<><button className="secondary" onClick={onClose}>取消</button><button className="primary" onClick={() => void save()}>保存设置</button></>}>
+  return <Modal title="设置中心" kicker="SETTINGS HUB" onClose={onClose} footer={<><button className="secondary" disabled={saveBusy} onClick={onClose}>取消</button><button className="primary" disabled={saveBusy} onClick={() => void save()}>{saveBusy ? "正在保存…" : "保存设置"}</button></>}>
     <div className="settings-layout settings-hub-layout">
       <nav>{settingGroups.map((group) => <button key={group.id} className={activeGroup.id === group.id ? "active" : ""} onClick={() => setTab(group.tabs[0][0])}><span aria-hidden="true">{group.id === "connection" ? "⌁" : group.id === "memory" ? "◇" : group.id === "voice" ? "◉" : group.id === "interface" ? "▣" : "⌘"}</span>{group.label}</button>)}</nav>
       <div className="settings-panel">

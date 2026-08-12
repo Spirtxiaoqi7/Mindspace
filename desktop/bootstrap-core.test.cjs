@@ -4,7 +4,7 @@ const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 
-const { bootstrapResidues, ensureCoreRoot, resolveWorkspaceRoot } = require("./bootstrap-core.cjs");
+const { bootstrapResidues, ensureCoreRoot, isCoreRoot, resolveWorkspaceRoot } = require("./bootstrap-core.cjs");
 
 test("packaged launcher uses a writable user workspace instead of the build-machine hint", (context) => {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-user-data-"));
@@ -18,6 +18,28 @@ test("packaged launcher uses a writable user workspace instead of the build-mach
     dirname: __dirname,
   });
   assert.equal(root, path.join(userData, "app"));
+});
+
+test("core root rejects a declared but missing project README", (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-core-readme-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(root, "pyproject.toml"), '[project]\nreadme = "README.md"\n');
+  fs.writeFileSync(path.join(root, "scripts", "start.ps1"), "Write-Output ready\n");
+  assert.equal(isCoreRoot(root), false);
+  fs.writeFileSync(path.join(root, "README.md"), "# Mindspace\n");
+  assert.equal(isCoreRoot(root), true);
+});
+
+test("core root rejects any declared license metadata missing from the payload", (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-core-license-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(root, "pyproject.toml"), '[project]\nlicense = { file = "LICENSE" }\n');
+  fs.writeFileSync(path.join(root, "scripts", "start.ps1"), "Write-Output ready\n");
+  assert.equal(isCoreRoot(root), false);
+  fs.writeFileSync(path.join(root, "LICENSE"), "Mindspace license\n");
+  assert.equal(isCoreRoot(root), true);
 });
 
 test("first launch expands the bundled core into the selected workspace", async (context) => {
@@ -66,6 +88,32 @@ test("newer bundled core atomically replaces code so stale files disappear while
   assert.equal(fs.readFileSync(path.join(dataRoot, "session.json"), "utf8"), "keep\n");
   assert.equal(result.backup_cleaned, true);
   assert.deepEqual(bootstrapResidues(parent), []);
+});
+
+test("same-version bundled core replaces stale code when the package fingerprint changed", async (context) => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-same-version-"));
+  context.after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  const root = path.join(parent, "app");
+  const archive = path.join(parent, "mindspace-core.zip");
+  fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(root, "pyproject.toml"), "version = \"0.9.1\"\n");
+  fs.writeFileSync(path.join(root, "payload.json"), '{"version":"0.9.1"}\n');
+  fs.writeFileSync(path.join(root, "scripts", "start.ps1"), "stale\n");
+  fs.writeFileSync(path.join(root, ".mindspace-bootstrap.json"), '{"archive_sha256":"old"}\n');
+  fs.writeFileSync(archive, "new package bytes");
+  const extract = (_source, staging) => {
+    const payload = path.join(staging, "payload");
+    fs.mkdirSync(path.join(payload, "scripts"), { recursive: true });
+    fs.writeFileSync(path.join(payload, "pyproject.toml"), "version = \"0.9.1\"\n");
+    fs.writeFileSync(path.join(payload, "payload.json"), '{"version":"0.9.1"}\n');
+    fs.writeFileSync(path.join(payload, "scripts", "start.ps1"), "current\n");
+  };
+
+  const result = await ensureCoreRoot({ root, archive, version: "0.9.1", extract });
+  assert.equal(result.upgraded, true);
+  assert.equal(fs.readFileSync(path.join(root, "scripts", "start.ps1"), "utf8"), "current\n");
+  const marker = JSON.parse(fs.readFileSync(path.join(root, ".mindspace-bootstrap.json"), "utf8"));
+  assert.match(marker.archive_sha256, /^[a-f0-9]{64}$/);
 });
 
 test("failed post-switch validation restores the previous Core", async (context) => {
@@ -161,7 +209,7 @@ test("upgrade refuses a Core directory that still contains legacy user state", a
   assert.equal(fs.readFileSync(path.join(root, "runtime", "data", "session.json"), "utf8"), "keep\n");
 });
 
-test("a hot-updated Core uses current.json instead of stale bootstrap payload version", async (context) => {
+test("a newer hot-updated Core uses current.json instead of a stale bootstrap payload version", async (context) => {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-hot-updated-"));
   context.after(() => fs.rmSync(parent, { recursive: true, force: true }));
   const root = path.join(parent, "app");
@@ -169,9 +217,9 @@ test("a hot-updated Core uses current.json instead of stale bootstrap payload ve
   fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
   fs.mkdirSync(path.join(root, "runtime", "data"), { recursive: true });
   fs.mkdirSync(path.join(root, "runtime", "updates"), { recursive: true });
-  fs.writeFileSync(path.join(root, "pyproject.toml"), "version = \"0.8.3\"\n");
+  fs.writeFileSync(path.join(root, "pyproject.toml"), "version = \"0.8.4\"\n");
   fs.writeFileSync(path.join(root, "payload.json"), '{"version":"0.8.0"}\n');
-  fs.writeFileSync(path.join(root, "runtime", "updates", "current.json"), '{"version":"0.8.3"}\n');
+  fs.writeFileSync(path.join(root, "runtime", "updates", "current.json"), '{"version":"0.8.4"}\n');
   fs.writeFileSync(path.join(root, "scripts", "start.ps1"), "updated\n");
   fs.writeFileSync(path.join(root, "runtime", "data", "session.json"), "keep\n");
   fs.writeFileSync(archive, "fixture");

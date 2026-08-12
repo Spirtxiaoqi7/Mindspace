@@ -2,6 +2,18 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const ASR_MODULES = ["torch", "torchaudio", "numpy", "funasr", "fastapi", "uvicorn", "websockets", "sounddevice"];
+const QWEN3_CUSTOM_VOICE = "Qwen3-TTS-12Hz-1.7B-CustomVoice";
+
+function pythonModuleInstalled(sitePackages, name) {
+  if (fs.existsSync(path.join(sitePackages, name)) || fs.existsSync(path.join(sitePackages, `${name}.py`))) return true;
+  try {
+    const prefix = `${name.replaceAll("-", "_")}-`;
+    return fs.readdirSync(sitePackages, { withFileTypes: true }).some((entry) => {
+      const normalized = entry.name.toLowerCase().replaceAll("-", "_");
+      return normalized.startsWith(prefix) && normalized.endsWith(".dist_info");
+    });
+  } catch { return false; }
+}
 
 function readJson(file, fallback = null) {
   try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return fallback; }
@@ -144,16 +156,8 @@ function createEnvironmentRegistry(options) {
     return [...new Set([
       path.join(paths.home, "experimental", "qwen3-tts"),
       localAppData && path.join(localAppData, "Mindspace", "experimental", "qwen3-tts"),
-    ].filter(Boolean).map((root) => path.resolve(root)))].filter((root) => {
-      const model = path.join(root, "models", "Qwen3-TTS-12Hz-1.7B-CustomVoice");
-      const weight = path.join(model, "model.safetensors");
-      const launcher = path.join(path.dirname(root), "vllm-omni", "start-qwen3-tts.sh");
-      try {
-        return fs.existsSync(path.join(model, "config.json"))
-          && fs.existsSync(launcher)
-          && fs.statSync(weight).size >= 3 * 1024 ** 3;
-      } catch { return false; }
-    });
+      ...legacyHomes().map((home) => path.join(home, "experimental", "qwen3-tts")),
+    ].filter(Boolean).map((root) => path.resolve(root)))];
   }
 
   function componentCandidates(component, defaultTarget) {
@@ -258,12 +262,16 @@ function createEnvironmentRegistry(options) {
     }
     const marker = readJson(path.join(root, ".mindspace-asr-ready.json"), {});
     const sitePackages = path.join(root, "Lib", "site-packages");
-    const missing = ASR_MODULES.filter((name) => !fs.existsSync(path.join(sitePackages, name)) && !fs.existsSync(path.join(sitePackages, `${name}.py`)))
+    const missing = ASR_MODULES.filter((name) => !pythonModuleInstalled(sitePackages, name))
       .map((name) => `Python 模块 ${name}`);
-    if (marker.ready !== true) missing.push("运行时验证凭证");
     const report = {
       root, source: candidate.source, exists: true, ready: missing.length === 0, partial: true,
       missing: [...new Set(missing)], probeError: "", probe: marker,
+      markerNeedsRebuild: missing.length === 0 && (
+        marker.ready !== true
+        || marker.environment_id !== "asr-cuda"
+        || marker.schema_version !== "2.0.0"
+      ),
     };
     cache.set(root.toLowerCase(), { stamp, report });
     return report;
@@ -273,7 +281,7 @@ function createEnvironmentRegistry(options) {
     if (!report.ready) return;
     const marker = path.join(report.root, ".mindspace-asr-ready.json");
     const current = readJson(marker, {});
-    if (current.ready === true && current.environment_id === "asr-cuda" && current.schema_version === "2.0.0") return;
+    if (!report.markerNeedsRebuild && current.ready === true && current.environment_id === "asr-cuda" && current.schema_version === "2.0.0") return;
     try {
       writeJsonAtomic(marker, {
         schema_version: "2.0.0",
@@ -285,6 +293,7 @@ function createEnvironmentRegistry(options) {
         torch_version: report.probe.torch || "",
         funasr_version: report.probe.funasr || "",
         cuda: report.probe.cuda_build || "",
+        adopted: report.markerNeedsRebuild,
         verified_at: new Date().toISOString(),
       });
     } catch (error) {
@@ -328,15 +337,60 @@ function createEnvironmentRegistry(options) {
   }
 
   function inspectGenericCandidate(component, candidate) {
-    if (component.id === "qwen3-vllm-runtime" && candidate.source === "legacy-qwen3-source") {
+    if (component.id === "qwen3-vllm-runtime") {
+      const modelRoot = path.join(candidate.root, "models");
+      let modelNames = [];
+      try {
+        modelNames = fs.readdirSync(modelRoot, { withFileTypes: true })
+          .filter((entry) => entry.isDirectory() && entry.name.startsWith("Qwen3-TTS-"))
+          .map((entry) => entry.name);
+      } catch {}
+      const model = path.join(modelRoot, QWEN3_CUSTOM_VOICE);
+      const weight = path.join(model, "model.safetensors");
+      const launcher = path.join(path.dirname(candidate.root), "vllm-omni", "start-qwen3-tts.sh");
+      const config = path.join(model, "config.json");
+      const complete = fs.existsSync(config) && fs.existsSync(launcher) && (() => {
+        try { return fs.statSync(weight).size >= 3 * 1024 ** 3; } catch { return false; }
+      })();
+      if (complete) {
+        return {
+          root: candidate.root,
+          source: candidate.source,
+          ready: false,
+          partial: true,
+          reusable: true,
+          resourceState: "attachable",
+          version: "1.7B CustomVoice",
+          present: [`models/${QWEN3_CUSTOM_VOICE}/config.json`, `models/${QWEN3_CUSTOM_VOICE}/model.safetensors`, "../vllm-omni/start-qwen3-tts.sh"],
+          missing: ["受管启动凭证 ready.json（可直接生成，无需下载模型）"],
+          probeError: "",
+        };
+      }
+      if (modelNames.length) {
+        return {
+          root: candidate.root,
+          source: candidate.source,
+          ready: false,
+          partial: true,
+          reusable: false,
+          resourceState: "incompatible",
+          version: modelNames.join(", "),
+          present: modelNames.map((name) => `models/${name}`),
+          missing: [`需要 ${QWEN3_CUSTOM_VOICE}（至少 3 GiB）与 vLLM 启动脚本`],
+          incompatibleReason: `发现的模型版本不符合当前受支持的 ${QWEN3_CUSTOM_VOICE}。`,
+          probeError: "",
+        };
+      }
       return {
         root: candidate.root,
         source: candidate.source,
         ready: false,
-        partial: true,
-        reusable: true,
-        present: ["Qwen3-TTS-12Hz-1.7B-CustomVoice/model.safetensors", "vllm-omni/start-qwen3-tts.sh"],
-        missing: ["受管启动凭证（可直接生成，无需下载模型）"],
+        partial: false,
+        reusable: false,
+        resourceState: "missing",
+        version: "",
+        present: [],
+        missing: [`models/${QWEN3_CUSTOM_VOICE}`, "../vllm-omni/start-qwen3-tts.sh"],
         probeError: "",
       };
     }
@@ -352,7 +406,10 @@ function createEnvironmentRegistry(options) {
     }
     return {
       root: candidate.root, source: candidate.source, ready: missing.length === 0,
-      partial: present.length > 0 && missing.length > 0, present, missing: [...new Set(missing)], probeError: "",
+      partial: present.length > 0 && missing.length > 0,
+      resourceState: missing.length === 0 ? "ready" : present.length ? "partial" : "missing",
+      version: component.version || "",
+      present, missing: [...new Set(missing)], probeError: "",
     };
   }
 
@@ -366,6 +423,7 @@ function createEnvironmentRegistry(options) {
       rememberComponent(component, ready);
       const report = {
         path: ready.root, ready: true, partial: false, missing: [], discoveryState: "ready",
+        resourceState: "ready", version: ready.version || component.version || "",
         candidateCount: reports.length, selectedSource: ready.source,
         discoveryMessage: ready.source === "managed" ? `${component.name} 已验证` : `已找到并复用现有 ${component.name}`,
       };
@@ -375,14 +433,22 @@ function createEnvironmentRegistry(options) {
     const managed = reports.find((report) => report.root.toLowerCase() === path.resolve(defaultTarget).toLowerCase());
     const partials = reports.filter((report) => report.partial);
     if (managed?.partial || partials.length) {
-      const selected = managed || { root: path.resolve(defaultTarget), missing: partials[0]?.missing || [] };
-      const reusable = partials.find((report) => report.reusable);
+      const reusable = partials.find((report) => report.resourceState === "attachable");
+      const incompatible = partials.find((report) => report.resourceState === "incompatible");
+      const selected = reusable || incompatible || managed || { root: path.resolve(defaultTarget), missing: partials[0]?.missing || [] };
       const report = {
         path: selected.root, ready: false, partial: Boolean(managed?.partial), missing: selected.missing,
-        discoveryState: "repairable", candidateCount: reports.length, partialCandidateCount: partials.length,
+        discoveryState: selected.resourceState === "incompatible" ? "incompatible" : "repairable",
+        resourceState: selected.resourceState || (reusable ? "attachable" : "partial"),
+        version: selected.version || component.version || "",
+        incompatibleReason: selected.incompatibleReason || "",
+        present: selected.present || [],
+        candidateCount: reports.length, partialCandidateCount: partials.length,
         selectedSource: managed?.source || "managed",
         discoveryMessage: reusable
           ? "已找到完整的本地 Qwen3 模型与 WSL 启动资源；可直接接入，无需下载"
+          : selected.resourceState === "incompatible"
+            ? selected.incompatibleReason
           : `已找到本地资源但验证未通过；可继续修复 ${selected.missing.slice(0, 2).join("、")}`,
       };
       genericCache.set(cacheKey, { expiresAt: Date.now() + 3_000, report });
@@ -390,7 +456,8 @@ function createEnvironmentRegistry(options) {
     }
     const report = {
       path: path.resolve(defaultTarget), ready: false, partial: false, missing: component.required || [],
-      discoveryState: "missing", candidateCount: reports.length, partialCandidateCount: 0, selectedSource: "managed",
+      discoveryState: "missing", resourceState: "missing", version: component.version || "",
+      candidateCount: reports.length, partialCandidateCount: 0, selectedSource: "managed",
       discoveryMessage: `未找到可复用的 ${component.name}；可按需下载`,
     };
     genericCache.set(cacheKey, { expiresAt: Date.now() + 3_000, report });
@@ -440,7 +507,126 @@ function createEnvironmentRegistry(options) {
     return inspectTarget(component, defaultTarget)?.path || defaultTarget;
   }
 
-  return { inspectTarget, resolveModelRoot, resolveTarget };
+  function selectedCandidate(component, selectedRoot) {
+    if (!selectedRoot || !path.isAbsolute(selectedRoot)) throw new Error("请选择有效的本地资源目录。");
+    const root = path.resolve(selectedRoot);
+    if (root === path.parse(root).root) throw new Error("不能接入磁盘根目录。");
+    return { root, source: "user-selected", priority: -1, component };
+  }
+
+  function reportSelectedResource(component, selectedRoot) {
+    const report = inspectGenericCandidate(component, selectedCandidate(component, selectedRoot));
+    return {
+      ...report,
+      path: report.root,
+      state: report.resourceState || (report.ready ? "ready" : report.partial ? "partial" : "missing"),
+    };
+  }
+
+  function assertAttachable(component, report) {
+    if (report.ready || report.resourceState === "attachable") return;
+    const reason = report.incompatibleReason || report.missing?.slice(0, 3).join("、") || "目录不包含所需资源";
+    throw new Error(`${component.name || component.id} 无法接入：${reason}`);
+  }
+
+  function persistSelectedResource(component, report, mode) {
+    const registry = storedRecord();
+    writeRegistry({
+      schema_version: "1.0.0",
+      environments: {
+        ...(registry.environments || {}),
+        [component.id]: {
+          path: report.root,
+          source: "user-selected",
+          mode,
+          version: report.version || component.version || "",
+          verified_at: new Date().toISOString(),
+        },
+      },
+    });
+  }
+
+  function migrationTarget(component, defaultTarget) {
+    if (component.id === "qwen3-vllm-runtime") return path.join(paths.home, "experimental", "qwen3-tts");
+    return path.resolve(defaultTarget);
+  }
+
+  function migrateSelectedResource(component, selectedRoot, defaultTarget) {
+    const sourceReport = reportSelectedResource(component, selectedRoot);
+    assertAttachable(component, sourceReport);
+    const target = migrationTarget(component, defaultTarget);
+    if (sourceReport.root.toLowerCase() === target.toLowerCase()) {
+      persistSelectedResource(component, sourceReport, "registered");
+      return { ok: true, action: "registered", report: sourceReport };
+    }
+    const parent = path.dirname(target);
+    const leaf = path.basename(target);
+    const stamp = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const staging = path.join(parent, `.${leaf}.staging-${stamp}`);
+    const backup = path.join(parent, `.${leaf}.backup-${stamp}`);
+    let replaced = false;
+    try {
+      fs.mkdirSync(parent, { recursive: true });
+      fs.cpSync(sourceReport.root, staging, { recursive: true, errorOnExist: true, force: false });
+      const stagedReport = reportSelectedResource(component, staging);
+      assertAttachable(component, stagedReport);
+      if (fs.existsSync(target)) {
+        fs.renameSync(target, backup);
+        replaced = true;
+      }
+      fs.renameSync(staging, target);
+      const targetReport = reportSelectedResource(component, target);
+      assertAttachable(component, targetReport);
+      persistSelectedResource(component, { ...targetReport, root: target }, "migrated");
+      if (replaced) fs.rmSync(backup, { recursive: true, force: true });
+      return { ok: true, action: "migrated", report: { ...targetReport, path: target, state: targetReport.resourceState || "ready" } };
+    } catch (error) {
+      try {
+        if (fs.existsSync(target) && replaced) fs.rmSync(target, { recursive: true, force: true });
+        if (replaced && fs.existsSync(backup) && !fs.existsSync(target)) fs.renameSync(backup, target);
+      } catch (restoreError) {
+        log("environment.resource_migration_restore_failed", { component: component.id, target, backup, error: String(restoreError.message || restoreError) });
+      }
+      throw error;
+    } finally {
+      try { if (fs.existsSync(staging)) fs.rmSync(staging, { recursive: true, force: true }); } catch {}
+      try { if (fs.existsSync(backup) && (!replaced || fs.existsSync(target))) fs.rmSync(backup, { recursive: true, force: true }); } catch {}
+    }
+  }
+
+  function attachSelectedResource(component, selectedRoot, defaultTarget, mode = "register") {
+    const report = reportSelectedResource(component, selectedRoot);
+    assertAttachable(component, report);
+    if (mode === "migrate") return migrateSelectedResource(component, selectedRoot, defaultTarget);
+    persistSelectedResource(component, report, "registered");
+    return { ok: true, action: "registered", report };
+  }
+
+  function discoverLocalResources(components, resolveDefaultTarget) {
+    return (components || []).map((component) => {
+      const fallback = typeof resolveDefaultTarget === "function"
+        ? resolveDefaultTarget(component)
+        : path.join(paths.home, component.target || component.id);
+      const report = inspectTarget(component, fallback) || {
+        path: path.resolve(fallback), ready: false, partial: false, resourceState: "missing",
+        version: "", missing: component.required || [], selectedSource: "managed", candidateCount: 0,
+      };
+      return {
+        id: component.id,
+        name: component.name || component.id,
+        state: report.resourceState || (report.ready ? "ready" : report.partial ? "partial" : "missing"),
+        path: report.path,
+        version: report.version || component.version || "",
+        source: report.selectedSource || "managed",
+        missing: report.missing || [],
+        present: report.present || [],
+        incompatibleReason: report.incompatibleReason || "",
+        candidateCount: Number(report.candidateCount || 0),
+      };
+    });
+  }
+
+  return { inspectTarget, resolveModelRoot, resolveTarget, discoverLocalResources, reportSelectedResource, attachSelectedResource };
 }
 
 module.exports = { ASR_MODULES, createEnvironmentRegistry };

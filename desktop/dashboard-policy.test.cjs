@@ -52,6 +52,30 @@ test("voice providers stay switchable after onboarding and the wizard can go bac
   assert.match(main, /createVoiceController/);
 });
 
+test("launcher snapshot exposes local voice discovery without an implicit install action", () => {
+  const source = fs.readFileSync(path.join(__dirname, "src", "main.tsx"), "utf8");
+  const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
+  assert.match(main, /discoverLocalResources/);
+  assert.match(main, /localResources/);
+  assert.match(source, /本地语音资源发现/);
+  assert.match(source, /发现可接入/);
+  assert.match(source, /不兼容/);
+  assert.match(source, /不会扫描磁盘、下载、复制或移动文件/);
+  assert.doesNotMatch(source, /localResources[\s\S]{0,1000}runtimeAction\("install"/);
+});
+
+test("local resource attachment is explicit and preserves a no-download boundary", () => {
+  const source = fs.readFileSync(path.join(__dirname, "src", "main.tsx"), "utf8");
+  const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
+  const preload = fs.readFileSync(path.join(__dirname, "preload.cjs"), "utf8");
+  assert.match(main, /launcher:local-resource/);
+  assert.match(main, /showOpenDialog/);
+  assert.match(preload, /localResource:/);
+  assert.match(source, /选择并登记/);
+  assert.match(source, /选择并迁入/);
+  assert.match(source, /不能接入/);
+});
+
 test("diagnostics are redacted and exposed through a dedicated IPC contract", () => {
   const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
   const diagnostics = fs.readFileSync(path.join(__dirname, "diagnostics-controller.cjs"), "utf8");

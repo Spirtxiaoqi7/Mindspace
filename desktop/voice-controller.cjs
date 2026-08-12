@@ -70,11 +70,12 @@ function createVoiceController(dependencies) {
     const supervisor = getServiceSupervisor();
     supervisor.setDesired(target, false);
     if (supervisor.hasChild(target)) {
-      stopService(target);
-      await waitForServiceOffline(target);
+      const stopped = await stopService(target);
+      if (!stopped.ok) throw new Error(stopped.error || "本地语音服务未能安全退出");
     } else if (target === "qwenTts") {
-      stopExternalQwenSupervisor();
-      await waitForServiceOffline(target);
+      const stopped = await stopExternalQwenSupervisor();
+      const offline = await waitForServiceOffline(target);
+      if (!stopped && !offline) throw new Error("Qwen3 服务归属无法确认；未结束未知 WSL 进程");
     }
   }
 
@@ -117,8 +118,8 @@ function createVoiceController(dependencies) {
       const supervisor = getServiceSupervisor();
       supervisor.setDesired(inactive, false);
       if (supervisor.child(inactive)) {
-        stopService(inactive);
-        if (!(await waitForServiceOffline(inactive))) {
+        const stopped = await stopService(inactive);
+        if (!stopped.ok || !(await waitForServiceOffline(inactive))) {
           const error = "旧 TTS 引擎未在 9 秒内退出；为避免两个本地模型同时占用显存，已取消切换。";
           transition = { state: "failed", target, error, startedAt: transition.startedAt };
           return { ok: false, error };
@@ -183,8 +184,8 @@ function createVoiceController(dependencies) {
     if (!startIfReady && !wasActive) return { ok: true, warning, ready: true, started: false, onboarding: getOnboardingSnapshot(), ...snapshot() };
     const targetService = serviceName(selected);
     if (previousProvider !== selected && supervisor.hasChild(targetService)) {
-      stopService(targetService);
-      await waitForServiceOffline(targetService);
+      const stopped = await stopService(targetService);
+      if (!stopped.ok || !(await waitForServiceOffline(targetService))) throw new Error(stopped.error || "旧声音服务未能安全退出");
     }
     supervisor.setDesired(targetService);
     const started = await ensureSelectedService();

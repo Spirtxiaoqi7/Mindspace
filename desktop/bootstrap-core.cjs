@@ -2,10 +2,26 @@ const fs = require("node:fs");
 const path = require("node:path");
 const extractZip = require("extract-zip");
 
+function declaredProjectMetadata(root, pyproject) {
+  const relativeFiles = [];
+  const readme = pyproject.match(/^readme\s*=\s*["']([^"']+)["']/m)?.[1];
+  if (readme) relativeFiles.push(readme);
+  const license = pyproject.match(/^license\s*=\s*\{\s*file\s*=\s*["']([^"']+)["']\s*\}/m)?.[1]
+    || pyproject.match(/^license-file\s*=\s*["']([^"']+)["']/m)?.[1];
+  if (license) relativeFiles.push(license);
+  return relativeFiles.filter((relative) => !path.isAbsolute(relative) && !relative.split(/[\\/]+/).includes(".."));
+}
+
 function isCoreRoot(root) {
   if (!root) return false;
-  return fs.existsSync(path.join(root, "pyproject.toml"))
-    && fs.existsSync(path.join(root, "scripts", "start.ps1"));
+  const pyproject = path.join(root, "pyproject.toml");
+  if (!fs.existsSync(pyproject) || !fs.existsSync(path.join(root, "scripts", "start.ps1"))) return false;
+  try {
+    const project = fs.readFileSync(pyproject, "utf8");
+    return declaredProjectMetadata(root, project).every((relative) => fs.existsSync(path.join(root, relative)));
+  } catch {
+    return false;
+  }
 }
 
 function defaultUserRoot(app) {
@@ -34,6 +50,28 @@ function installedVersion(root) {
     } catch {}
   }
   return "";
+}
+
+function installedUpdateVersion(root) {
+  try {
+    return String(JSON.parse(fs.readFileSync(path.join(root, "runtime", "updates", "current.json"), "utf8")).version || "");
+  } catch {
+    return "";
+  }
+}
+
+function fileSha256(file) {
+  return fs.existsSync(file)
+    ? require("node:crypto").createHash("sha256").update(fs.readFileSync(file)).digest("hex")
+    : "";
+}
+
+function installedBootstrapSha256(root) {
+  try {
+    return String(JSON.parse(fs.readFileSync(path.join(root, ".mindspace-bootstrap.json"), "utf8")).archive_sha256 || "");
+  } catch {
+    return "";
+  }
 }
 
 const PROTECTED_CORE_PATHS = Object.freeze([
@@ -154,6 +192,8 @@ async function ensureCoreRoot({
 }) {
   const existed = isCoreRoot(root);
   const currentVersion = installedVersion(root);
+  const updateVersion = installedUpdateVersion(root);
+  const archiveSha256 = fileSha256(archive);
   const parent = path.dirname(root);
   const existingResidues = bootstrapResidues(parent);
   if (existed) cleanupBootstrapResidues(parent, remove);
@@ -162,7 +202,13 @@ async function ensureCoreRoot({
     blocked.code = "CORE_BOOTSTRAP_RECOVERY_REQUIRED";
     throw blocked;
   }
-  if (existed && (!version || compareVersions(currentVersion, version) >= 0)) {
+  const newerThanBundle = version && compareVersions(currentVersion, version) > 0;
+  const currentHotUpdate = version && updateVersion && compareVersions(updateVersion, version) > 0;
+  const identicalBootstrap = version
+    && compareVersions(currentVersion, version) === 0
+    && archiveSha256
+    && installedBootstrapSha256(root) === archiveSha256;
+  if (existed && (!version || newerThanBundle || currentHotUpdate || identicalBootstrap)) {
     return { root, created: false, upgraded: false, message: "基础核心已是最新版本" };
   }
   if (!archive || !fs.existsSync(archive)) throw new Error(`安装器缺少基础核心包：${archive}`);
@@ -184,7 +230,7 @@ async function ensureCoreRoot({
     assertSafeExtractedTree(payload);
     fs.writeFileSync(
       path.join(payload, ".mindspace-bootstrap.json"),
-      `${JSON.stringify({ installed_at: new Date().toISOString(), source: path.basename(archive) }, null, 2)}\n`,
+      `${JSON.stringify({ installed_at: new Date().toISOString(), source: path.basename(archive), archive_sha256: archiveSha256 }, null, 2)}\n`,
     );
     if (fs.existsSync(root)) {
       fs.renameSync(root, backup);
@@ -232,6 +278,7 @@ module.exports = {
   bundledVersion,
   bootstrapResidues,
   compareVersions,
+  declaredProjectMetadata,
   assertReplaceableCore,
   assertSafeExtractedTree,
   defaultUserRoot,

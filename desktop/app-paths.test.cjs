@@ -17,6 +17,27 @@ test("Mindspace uses one LocalAppData application root", (context) => {
   assert.equal(fs.existsSync(paths.logs), true);
 });
 
+test("a saved custom Home is retained instead of importing legacy packaged storage", (context) => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-custom-home-"));
+  context.after(() => fs.rmSync(fixture, { recursive: true, force: true }));
+  const install = path.join(fixture, "Apps", "Mindspace");
+  const userData = path.join(fixture, "user-data");
+  const custom = path.join(fixture, "custom", "Mindspace");
+  const sibling = path.join(fixture, "Apps", "MindspaceData");
+  fs.mkdirSync(path.join(sibling, "data"), { recursive: true });
+  fs.writeFileSync(path.join(sibling, "data", "legacy.json"), "legacy");
+  fs.mkdirSync(userData, { recursive: true });
+  fs.writeFileSync(path.join(userData, "storage-location.json"), JSON.stringify({ home: custom }));
+  const app = {
+    isPackaged: true,
+    getPath: (name) => name === "exe" ? path.join(install, "Mindspace.exe") : userData,
+  };
+
+  const paths = ensureAppPaths(appPaths(app, {}));
+  assert.equal(paths.home, custom);
+  assert.equal(fs.existsSync(path.join(custom, "data", "legacy.json")), false);
+});
+
 test("0.3.4 data and models migrate without copying virtual environments", (context) => {
   const local = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-migration-"));
   context.after(() => fs.rmSync(local, { recursive: true, force: true }));

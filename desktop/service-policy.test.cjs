@@ -71,12 +71,15 @@ test("bulk startup starts local TTS without awaiting ASR cold load", () => {
   assert.doesNotMatch(bulkStart, /startLocalTtsAfterAsr/);
 });
 
-test("Qwen shutdown always reclaims its dedicated WSL distro", () => {
+test("Qwen shutdown never terminates a WSL distro and verifies process ownership", () => {
   const supervisor = fs.readFileSync(path.join(__dirname, "service-supervisor.cjs"), "utf8");
   const stopScript = fs.readFileSync(path.join(__dirname, "..", "scripts", "stop-services.ps1"), "utf8");
-  assert.match(supervisor, /\["--terminate", distro\]/);
-  assert.doesNotMatch(supervisor, /if \(!\/\^\\d\+\$\/\.test\(pid\)\) return false/);
-  assert.match(stopScript, /wsl\.exe --terminate \$distro/);
+  assert.doesNotMatch(supervisor, /\["--terminate", distro\]/);
+  assert.doesNotMatch(stopScript, /wsl\.exe --terminate \$distro/);
+  assert.match(supervisor, /proc\/\$1\/cmdline/);
+  assert.match(stopScript, /MINDSPACE_QWEN_OWNER/);
+  assert.match(supervisor, /MINDSPACE_QWEN_OWNER/);
+  assert.match(stopScript, /qwen-owner-missing-or-invalid/);
 });
 
 test("default launcher startup requests Core only", () => {

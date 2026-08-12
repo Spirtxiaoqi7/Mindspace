@@ -230,11 +230,8 @@ export function prepareRegeneration(request: ChatTurnRequest): RegenerationPrepa
 export const shouldRenderToolExecution = (tool: ToolExecution | null | undefined): tool is ToolExecution =>
   Boolean(tool?.tool && tool.call_id);
 
-export const shouldShowComposerAction = (generating: boolean, hasPayload: boolean, asrReady: boolean) =>
-  generating || hasPayload || asrReady;
-
 export const composerAction = (generating: boolean, hasPayload: boolean, asrReady: boolean) =>
-  generating ? "cancel" : hasPayload ? "send" : asrReady ? "voice" : "hidden";
+  generating ? "cancel" : hasPayload ? "send" : asrReady ? "voice" : "voice-disabled";
 
 const PUBLIC_RUN_ERRORS: Record<string, string> = {
   model_timeout: "模型服务响应超时，请重试。",

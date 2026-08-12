@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import math
 import re
 from contextlib import contextmanager, nullcontext
@@ -254,6 +255,13 @@ class GPUInferenceScheduler:
                 "waiting_finals": self._waiting_finals,
             }
 
+    @contextmanager
+    def shutdown_slot(self, timeout: float = 30.0):
+        """Wait for active inference before releasing CUDA-backed models."""
+
+        with self.slot("shutdown", timeout=timeout) as acquired:
+            yield acquired
+
 
 class ASRTextCorrector:
     """Small deterministic corrector; no chat-model call and no prompt mutation."""
@@ -468,6 +476,30 @@ class FunASRRuntime:
                 self.final_error = str(exc)
                 self.final_asr = None
             return self.final_asr is not None
+
+    def close(self) -> None:
+        """Release model references and CUDA allocations before process exit."""
+
+        with self._scheduler.shutdown_slot() as acquired:
+            if not acquired:
+                raise RuntimeError("ASR inference did not quiesce before shutdown timeout")
+            with self._final_lock:
+                self.final_asr = None
+                self._final_attempted = False
+            with self._lock:
+                self.asr = None
+                self.vad = None
+                self.punc = None
+                self._attempted = False
+            gc.collect()
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                    torch.cuda.empty_cache()
+            except Exception:  # noqa: BLE001 - process exit still releases CUDA
+                pass
 
     def status(self) -> dict[str, Any]:
         installed = find_spec("funasr") is not None

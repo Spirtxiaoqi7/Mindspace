@@ -61,7 +61,10 @@ function createStorageController({
     modelPathCheck = reconcileLegacyModelPaths(currentLayout());
     await cleanupMigratedSource(currentLayout());
     const legacyConfig = readLauncherConfig();
-    if (process.env.MINDSPACE_SKIP_LEGACY_MIGRATION !== "1") {
+    // Packaged installs import legacy data once in ensureAppPaths. Re-running
+    // the old runtime-layout merger here would silently overlay AppData after
+    // the fixed installation Home has already become authoritative.
+    if (!app.isPackaged && process.env.MINDSPACE_SKIP_LEGACY_MIGRATION !== "1") {
       migrateLegacyLayout({
         paths: currentLayout(),
         legacyRoots: [legacyConfig.root, path.join(app.getPath("userData"), "app")],

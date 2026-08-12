@@ -319,9 +319,9 @@ function createRuntimeController({
     }
     if (actionName === "remove") {
       if (!modelComponent) throw new Error("只有可选模型与语音组件可以卸载");
-      if (["asr-runtime", "asr", "asr-final", "vad", "punc"].includes(id)) stopService("asr");
-      if (id === "qwen3-vllm-runtime") stopService("qwenTts");
-      if (id === "tts" || id === "tts-runtime" || id.startsWith("gpt-sovits-")) stopService("tts");
+      if (["asr-runtime", "asr", "asr-final", "vad", "punc"].includes(id)) await stopService("asr");
+      if (id === "qwen3-vllm-runtime") await stopService("qwenTts");
+      if (id === "tts" || id === "tts-runtime" || id.startsWith("gpt-sovits-")) await stopService("tts");
       await componentManager.remove(id);
       return snapshot();
     }

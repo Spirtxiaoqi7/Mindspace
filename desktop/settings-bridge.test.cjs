@@ -37,7 +37,7 @@ function fixture(context) {
   return { root, secretFile, publicFile, store, received, patchCore };
 }
 
-test("desktop save applies Core first, encrypts secrets, and survives store restart", async (context) => {
+test("desktop save encrypts secrets, applies them to Core, and survives store restart", async (context) => {
   const state = fixture(context);
   const coordinator = createSettingsSaveCoordinator({ secretStore: state.store, patchCore: state.patchCore });
 
@@ -59,6 +59,34 @@ test("desktop save applies Core first, encrypts secrets, and survives store rest
   assert.equal(restarted.get("tts_siliconflow_api_key"), "tts-secret");
 });
 
+test("a Core rejection rolls encrypted credentials back to their exact prior state", async (context) => {
+  const state = fixture(context);
+  state.store.set("llm_api_key", "old-secret");
+  const before = fs.readFileSync(state.secretFile, "utf8");
+  const coordinator = createSettingsSaveCoordinator({
+    secretStore: state.store,
+    patchCore: async () => { const error = new Error("Core rejected public model"); error.status = 422; throw error; },
+  });
+
+  const result = await coordinator.save({ llm: { api_key: "new-secret" } });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.phase, "core");
+  assert.equal(state.store.get("llm_api_key"), "old-secret");
+  assert.equal(fs.readFileSync(state.secretFile, "utf8"), before);
+});
+
+test("a credential file scoped to another installation is never read", async (context) => {
+  const state = fixture(context);
+  const first = createSecretStore({ file: state.secretFile, safeStorage: secureStorage(), scopeRoot: path.join(state.root, "first") });
+  first.set("llm_api_key", "first-install-secret");
+  const second = createSecretStore({ file: state.secretFile, safeStorage: secureStorage(), scopeRoot: path.join(state.root, "second") });
+
+  assert.equal(second.get("llm_api_key"), "");
+  assert.equal(second.status("llm_api_key").source, "secure_storage_scope_mismatch");
+  assert.equal(fs.readFileSync(state.secretFile, "utf8").includes("first-install-secret"), false);
+});
+
 test("Core failure leaves the prior encrypted secret unchanged", async (context) => {
   const state = fixture(context);
   state.store.set("llm_api_key", "old-secret");
@@ -76,7 +104,7 @@ test("Core failure leaves the prior encrypted secret unchanged", async (context)
   assert.equal(fs.readFileSync(state.secretFile, "utf8").includes("new-secret"), false);
 });
 
-test("secure-store failure reports a retryable partial state without replacing the old secret", async (context) => {
+test("secure-store failure prevents Core from receiving a replacement secret", async (context) => {
   const state = fixture(context);
   state.store.set("llm_api_key", "old-secret");
   const failingStore = createSecretStore({
@@ -92,9 +120,10 @@ test("secure-store failure reports a retryable partial state without replacing t
 
   assert.equal(result.ok, false);
   assert.equal(result.phase, "secret_store");
-  assert.equal(result.core_applied, true);
+  assert.equal(result.core_applied, false);
   assert.equal(result.secret_persisted, false);
   assert.equal(result.retryable, true);
+  assert.equal(state.received.length, 0);
   assert.equal(state.store.get("llm_api_key"), "old-secret");
   assert.equal(fs.readFileSync(state.secretFile, "utf8").includes("new-secret"), false);
 });

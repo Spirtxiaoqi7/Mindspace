@@ -43,8 +43,13 @@ else {
     Write-Warning 'ASR CUDA 运行时未安装；基础文字、RAG 与云端语音功能不受影响。'
 }
 $settings = Get-Content -Raw -LiteralPath (Join-Path $RuntimeRoot 'config\settings.json') | ConvertFrom-Json
-if ($settings.llm.mode -eq 'openai' -and -not $settings.llm.api_key) {
-    throw 'LLM 已选择真实 API，但尚未配置密钥。'
+if ($settings.llm.mode -eq 'openai') {
+    if ($env:MINDSPACE_LLM_API_KEY) {
+        Write-Output 'LLM_CREDENTIALS=injected-by-desktop'
+    }
+    else {
+        Write-Warning 'LLM API 凭据由桌面安全存储管理，当前独立维护进程未收到受控注入；跳过 API 凭据验证。'
+    }
 }
 if ($settings.audio.tts_provider -eq 'siliconflow' -and -not $settings.audio.tts_siliconflow_api_key) {
     Write-Warning 'SiliconFlow TTS 尚未配置密钥；文字对话和 ASR 不受影响。'

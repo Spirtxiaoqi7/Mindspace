@@ -14,6 +14,8 @@ def main() -> None:
     source = payload / "src"
     if not (source / "mindspace_graph" / "server.py").is_file():
         raise RuntimeError("packaged Core source is missing")
+    if not (payload / "README.md").is_file():
+        raise RuntimeError("packaged Core README.md is missing")
     sys.path.insert(0, str(source))
     os.environ["MINDSPACE_RUNTIME_DIR"] = str(runtime)
     os.environ["MINDSPACE_PORT"] = "9876"

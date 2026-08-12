@@ -1103,8 +1103,9 @@ function App() {
       characterName,
       onProfile: setProfileCardRole,
       onCopy: (text: string) => {
-        void navigator.clipboard.writeText(text);
-        notify("已复制回复");
+        void navigator.clipboard.writeText(text)
+          .then(() => notify("已复制回复"))
+          .catch((error) => notify(`复制失败：${(error as Error).message || "系统剪贴板不可用"}`));
       },
       onSpeak: speakMessage,
       onRegenerate: regenerateMessage,

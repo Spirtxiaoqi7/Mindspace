@@ -220,6 +220,9 @@ def test_failed_second_half_preserves_successful_first_half_and_retries_only_sec
     assert persisted["card_batches"]["first"]["status"] == "ready"
     assert persisted["card_batches"]["second"]["status"] == "failed"
     assert len(persisted["cards_by_slot"]) == 6
+    assert persisted["operation_id"] == ""
+    assert persisted["progress"]["current"] == 48
+    assert "当前已完成 48/96 张" in failed.json()["detail"]
     assert call_count == 3
 
     retried = client.post(f"/api/v1/destiny/journeys/{journey_id}/cards")
@@ -365,10 +368,10 @@ def test_destiny_prompts_keep_the_simple_character_creation_contract():
     assert (
         archetypes[0]["content"] == '你是聊天角色创作者。只返回 JSON：{"people":[{"id":"p1","label":"","summary":""}]}'
     )
-    assert '[[["慢热敏感","会先观察语气再回应","normal"]]]' in cards[0]["content"]
+    assert '[[["慢热","先观察再回应",2]]]' in cards[0]["content"]
     assert "6 个分类，共 48 张" in cards[1]["content"]
-    assert "分类名、分类 ID 或人物方向标签" in cards[1]["content"]
-    assert "不超过 32 个汉字" in cards[1]["content"]
+    assert "分类名、ID 或人物方向标签" in cards[1]["content"]
+    assert "表现 6-16 字" in cards[1]["content"]
     assert not any(
         word in "\n".join(message["content"] for message in [*archetypes, *cards])
         for word in ("玄学", "命宫", "宿", "推演", "阴阳")
@@ -386,6 +389,12 @@ def test_cards_accept_compact_matrix_top_level_array_and_harmless_json_damage():
 
     assert len(top_level) == 6
     assert sum(len(cards) for cards in repaired.values()) == 48
+
+
+def test_destiny_numeric_willingness_codes_preserve_zero():
+    assert [DestinyService._normalize_willingness(value) for value in range(4)] == [
+        "low", "neutral", "normal", "high"
+    ]
 
 
 def test_cards_recover_rows_when_outer_json_is_missing_a_comma():
@@ -472,7 +481,7 @@ def test_destiny_avatar_upload_is_local_to_the_journey(tmp_path):
 
     assert response.status_code == 200
     avatar = response.json()["avatar"]
-    assert avatar["src"].startswith("/api/v1/avatar/files/destiny-")
+    assert avatar["src"].startswith("/api/v1/avatar/files/destiny-upload-")
     assert avatar["scale"] == 1.0
 
     filename = avatar["src"].rsplit("/", maxsplit=1)[-1]
@@ -528,6 +537,123 @@ def test_committed_destiny_avatar_moves_to_the_character_directory(tmp_path, mon
     assert character["avatar"]["src"].startswith("/api/v1/character/files/")
     destination = character["avatar"]["src"].removeprefix("/api/v1/character/files/")
     assert (tmp_path / "runtime" / "data" / "characters" / destination).is_file()
+
+
+def test_legacy_destiny_avatar_is_still_promoted_when_an_old_journey_is_committed(tmp_path, monkeypatch):
+    app = create_app(make_settings(tmp_path))
+
+    async def scripted_synthesis(*args, **kwargs):  # noqa: ANN001, ARG001
+        return json.dumps(card_payload(), ensure_ascii=False)
+
+    monkeypatch.setattr(app.state.destiny, "_generate", scripted_synthesis)
+    client = TestClient(app)
+    avatar = client.post(
+        "/api/v1/destiny/avatars",
+        files={"file": ("portrait.png", b"\x89PNG\r\n\x1a\nminimal", "image/png")},
+    ).json()["avatar"]
+    legacy_avatar = {**avatar, "src": avatar["src"].replace("destiny-upload-", "destiny-")}
+    old_name = avatar["src"].rsplit("/", 1)[-1]
+    legacy_name = legacy_avatar["src"].rsplit("/", 1)[-1]
+    avatar_root = tmp_path / "runtime" / "data" / "avatars"
+    (avatar_root / old_name).replace(avatar_root / legacy_name)
+    journey = client.post("/api/v1/destiny/journeys", json={**seed_payload(), "avatar": legacy_avatar}).json()
+
+    archetype_url = f"/api/v1/destiny/journeys/{journey['journey_id']}/archetypes"
+    journey = client.post(archetype_url, params={"use_default": True, "expected_revision": journey["revision"]}).json()
+    cards_url = f"/api/v1/destiny/journeys/{journey['journey_id']}/cards"
+    journey = client.post(cards_url, params={"use_default": True, "expected_revision": journey["revision"]}).json()
+    for slot in public_destiny_definition()["slots"]:
+        response = client.put(
+            f"/api/v1/destiny/journeys/{journey['journey_id']}/selections/{slot['id']}",
+            json={
+                "card_id": journey["cards_by_slot"][slot["id"]][0]["card_id"],
+                "expected_revision": journey["revision"],
+            },
+        )
+        journey = response.json()
+    synthesized = client.post(
+        f"/api/v1/destiny/journeys/{journey['journey_id']}/synthesize",
+        params={"expected_revision": journey["revision"]},
+    ).json()
+    committed = client.post(
+        f"/api/v1/destiny/journeys/{journey['journey_id']}/commit",
+        params={"expected_revision": synthesized["revision"]},
+    )
+
+    assert committed.status_code == 200
+    assert committed.json()["character"]["avatar"]["src"].startswith("/api/v1/character/files/")
+
+
+def test_destiny_avatar_becomes_a_journey_snapshot_before_generation(tmp_path):
+    client = TestClient(create_app(make_settings(tmp_path)))
+    uploaded = client.post(
+        "/api/v1/destiny/avatars",
+        files={"file": ("portrait.jfif", b"\xff\xd8\xffminimal", "")},
+    ).json()["avatar"]
+
+    created = client.post("/api/v1/destiny/journeys", json={**seed_payload(), "avatar": uploaded})
+
+    assert created.status_code == 200
+    avatar = created.json()["seed"]["avatar"]
+    assert "/destiny-journey-" in avatar["src"]
+    assert avatar["src"] != uploaded["src"]
+    assert avatar["scale"] == uploaded["scale"]
+    assert not (tmp_path / "runtime" / "data" / "avatars" / uploaded["src"].rsplit("/", 1)[-1]).exists()
+
+
+def test_reset_seed_reuses_journey_and_replaces_uncommitted_avatar_snapshot(tmp_path):
+    client = TestClient(create_app(make_settings(tmp_path)))
+    first_upload = client.post(
+        "/api/v1/destiny/avatars",
+        files={"file": ("first.png", b"\x89PNG\r\n\x1a\nfirst", "image/png")},
+    ).json()["avatar"]
+    created = client.post("/api/v1/destiny/journeys", json={**seed_payload(), "avatar": first_upload}).json()
+    prepared = client.post(
+        f"/api/v1/destiny/journeys/{created['journey_id']}/archetypes?use_default=true&expected_revision={created['revision']}"
+    ).json()
+    old_snapshot = prepared["seed"]["avatar"]["src"].rsplit("/", 1)[-1]
+    avatar_root = tmp_path / "runtime" / "data" / "avatars"
+    assert (avatar_root / old_snapshot).is_file()
+
+    second_upload = client.post(
+        "/api/v1/destiny/avatars",
+        files={"file": ("second.png", b"\x89PNG\r\n\x1a\nsecond", "image/png")},
+    ).json()["avatar"]
+    reset = client.put(
+        f"/api/v1/destiny/journeys/{created['journey_id']}/seed?expected_revision={prepared['revision']}",
+        json={**seed_payload(), "ai_name": "顾晚清", "avatar": second_upload},
+    )
+
+    assert reset.status_code == 200
+    updated = reset.json()
+    assert updated["journey_id"] == created["journey_id"]
+    assert updated["seed"]["ai_name"] == "顾晚清"
+    assert updated["status"] == "seed_ready"
+    assert updated["archetypes"] == []
+    assert updated["cards_by_slot"] == {}
+    assert updated["selections"] == {}
+    assert updated["model_calls"] == {"archetypes": 0, "cards": 0, "synthesis": 0}
+    assert updated["seed"]["avatar"]["src"].startswith("/api/v1/avatar/files/destiny-journey-")
+    assert not (avatar_root / old_snapshot).exists()
+    assert not (avatar_root / second_upload["src"].rsplit("/", 1)[-1]).exists()
+
+
+def test_destiny_avatar_rejects_damaged_or_oversized_files_in_chinese(tmp_path):
+    client = TestClient(create_app(make_settings(tmp_path)))
+
+    damaged = client.post(
+        "/api/v1/destiny/avatars",
+        files={"file": ("portrait.png", b"not-an-image", "image/png")},
+    )
+    oversized = client.post(
+        "/api/v1/destiny/avatars",
+        files={"file": ("portrait.png", b"\x89PNG\r\n\x1a\n" + b"x" * (5 * 1024 * 1024), "image/png")},
+    )
+
+    assert damaged.status_code == 422
+    assert "已损坏或格式不受支持" in damaged.json()["detail"]
+    assert oversized.status_code == 422
+    assert "超过 5 MiB" in oversized.json()["detail"]
 
 
 def test_destiny_seed_never_persists_a_browser_blob_avatar(tmp_path):

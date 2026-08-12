@@ -10,27 +10,25 @@ last_reviewed: 2026-08-11
 
 Mindspace 不要求固定盘符。本文用 `<repo>` 表示源码仓库根目录，用 `<home>` 表示用户选择的可写运行目录。无论采用哪种方式，都应将 `MINDSPACE_HOME` 指向 `<home>`，并保护 `<home>\data`、`config`、`logs`、`models` 和 `environment`。
 
-### 方案一：源码运行
+### 方案一：源码运行完整桌面产品（推荐）
 
 适合开发和调试。需要 Python 3.11、uv、Node.js 与 npm。
 
 ```powershell
+git clone https://github.com/Spirtxiaoqi7/Mindspace.git <repo>
 Set-Location <repo>
-uv sync --frozen --extra dev
-npm --prefix frontend ci
-npm --prefix frontend run build
-npm --prefix desktop ci
-$env:MINDSPACE_HOME = '<home>'
-uv run mindspace-server
+pwsh -NoProfile -File .\scripts\bootstrap-source.ps1 -Home '<home>' -Port 8876 -Desktop
 ```
 
-另开终端运行桌面壳：
+该命令会按锁文件创建 `<home>\environment\core`，构建 Web 与 Electron，验证 Core 健康状态后打开桌面窗口。关闭桌面窗口后，本次命令启动的源码 Core 会一并退出。它不会复用或覆盖已安装版目录。
+
+只需要浏览器产品界面时使用：
 
 ```powershell
-Set-Location <repo>\desktop
-$env:MINDSPACE_HOME = '<home>'
-npm run dev
+pwsh -NoProfile -File .\scripts\bootstrap-source.ps1 -Home '<home>' -Port 8876 -OpenBrowser
 ```
+
+`frontend npm run dev` 只启动 Vite 开发服务器，不是完整部署方式。
 
 ### 方案二：免安装目录版
 
@@ -44,7 +42,7 @@ npm --prefix desktop ci
 npm --prefix desktop run dist
 ```
 
-分发 `desktop\release\win-unpacked` 的完整内容。启动前设置 `MINDSPACE_HOME`，或在 Launcher 首次启动时选择 Home。升级时替换应用目录，不覆盖 `<home>`。
+分发仓库根目录 `dist-launcher\win-unpacked` 的完整内容。启动前设置 `MINDSPACE_HOME`，或在 Launcher 首次启动时选择 Home。升级时替换应用目录，不覆盖 `<home>`。
 
 ### 方案三：Core-only
 
@@ -70,27 +68,25 @@ uv run mindspace-server
 
 Mindspace does not require a fixed drive letter. This guide uses `<repo>` for the source repository root and `<home>` for a user-selected writable runtime directory. In every setup, point `MINDSPACE_HOME` to `<home>` and protect `<home>\data`, `config`, `logs`, `models`, and `environment`.
 
-### Option 1: Run from source
+### Option 1: Run the complete desktop product from source (recommended)
 
 Use this for development and debugging. Python 3.11, uv, Node.js, and npm are required.
 
 ```powershell
+git clone https://github.com/Spirtxiaoqi7/Mindspace.git <repo>
 Set-Location <repo>
-uv sync --frozen --extra dev
-npm --prefix frontend ci
-npm --prefix frontend run build
-npm --prefix desktop ci
-$env:MINDSPACE_HOME = '<home>'
-uv run mindspace-server
+pwsh -NoProfile -File .\scripts\bootstrap-source.ps1 -Home '<home>' -Port 8876 -Desktop
 ```
 
-In another terminal, start the desktop shell:
+This command creates `<home>\environment\core` from the lock file, builds Web and Electron, verifies Core health, and opens the desktop window. Closing the desktop also stops the source Core owned by this command. It does not reuse or overwrite an installed Mindspace directory.
+
+For the browser product only:
 
 ```powershell
-Set-Location <repo>\desktop
-$env:MINDSPACE_HOME = '<home>'
-npm run dev
+pwsh -NoProfile -File .\scripts\bootstrap-source.ps1 -Home '<home>' -Port 8876 -OpenBrowser
 ```
+
+`frontend npm run dev` starts only Vite and is not a complete deployment path.
 
 ### Option 2: Portable unpacked desktop
 
@@ -104,7 +100,7 @@ npm --prefix desktop ci
 npm --prefix desktop run dist
 ```
 
-Distribute the complete `desktop\release\win-unpacked` directory. Set `MINDSPACE_HOME` before launch or select a Home on first launch. Replace only the application directory during upgrades; never overwrite `<home>`.
+Distribute the complete repository-root `dist-launcher\win-unpacked` directory. Set `MINDSPACE_HOME` before launch or select a Home on first launch. Replace only the application directory during upgrades; never overwrite `<home>`.
 
 ### Option 3: Core only
 

@@ -307,6 +307,28 @@ function createComponentManager(options) {
     try { return JSON.parse(fs.readFileSync(markerPath(component), "utf8")); } catch { return {}; }
   }
 
+  function rememberDiscoveredComponent(component, report) {
+    const current = markerFor(component);
+    const componentPath = path.resolve(report.path || targetFor(component));
+    const source = report.selectedSource || "managed";
+    if (current.id === component.id && current.path && path.resolve(current.path).toLowerCase() === componentPath.toLowerCase() && current.source === source) return current;
+    const marker = {
+      ...current,
+      id: component.id,
+      path: componentPath,
+      source,
+      adopted: true,
+      verified_at: new Date().toISOString(),
+    };
+    try {
+      fs.mkdirSync(path.dirname(markerPath(component)), { recursive: true });
+      fs.writeFileSync(markerPath(component), `${JSON.stringify(marker, null, 2)}\n`);
+    } catch (error) {
+      log("component.marker_write_failed", { component: component.id, path: componentPath, error: describeError(error) });
+    }
+    return marker;
+  }
+
   function reportFor(component) {
     return options.inspectTarget?.(component)
       || reportReady(options.rootPath(), component, options.resolveTarget);
@@ -321,7 +343,7 @@ function createComponentManager(options) {
   function itemSnapshot(component) {
     const report = reportFor(component);
     const state = stateFor(component);
-    const marker = markerFor(component);
+    const marker = report.ready ? rememberDiscoveredComponent(component, report) : markerFor(component);
     const dependents = readyDependents(component);
     const installedBytes = report.ready ? Number(marker.bytes || component.estimatedBytes || 0) : 0;
     const removable = Boolean(component.optional && report.ready && dependents.length === 0);
@@ -495,7 +517,7 @@ function createComponentManager(options) {
       const report = reportFor(component);
       if (!report.ready) throw new Error(`下载完成但组件仍不完整：${report.missing.join("、")}`);
       fs.mkdirSync(path.dirname(markerPath(component)), { recursive: true });
-      fs.writeFileSync(markerPath(component), `${JSON.stringify({ id, source: downloadSource, repository: componentForSource(component, downloadSource).repo || component.provider, downloaded_at: new Date().toISOString(), bytes: totalBytes, files: fileCount }, null, 2)}\n`);
+      fs.writeFileSync(markerPath(component), `${JSON.stringify({ id, path: targetRoot, source: downloadSource, repository: componentForSource(component, downloadSource).repo || component.provider, downloaded_at: new Date().toISOString(), bytes: totalBytes, files: fileCount }, null, 2)}\n`);
       setState(component, { status: "ready", progress: 100, downloadedBytes: totalBytes, totalBytes, speedBps: 0, message: "下载、校验并安装完成", error: "" });
       log("component.ready", { component: id, operation_id: operationId, files: fileCount, bytes: totalBytes });
     } catch (error) {

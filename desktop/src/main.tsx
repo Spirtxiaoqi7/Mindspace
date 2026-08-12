@@ -83,6 +83,31 @@ const dashboardVoiceOptions = [
   },
 ] as const;
 
+type LocalResourceReport = {
+  id: string;
+  name: string;
+  state: "ready" | "attachable" | "partial" | "incompatible" | "missing";
+  path: string;
+  version: string;
+  source: string;
+  missing: string[];
+  present: string[];
+  incompatibleReason: string;
+  candidateCount: number;
+};
+
+type LocalResourceAction = { ok: boolean; cancelled?: boolean; action?: "registered" | "migrated"; report?: LocalResourceReport; snapshot?: LauncherSnapshot };
+type MaintenanceJob = { id: string; action: string; status: "running" | "succeeded" | "failed"; pid: number; exitCode: number | null; signal: string; error: string; log: string; startedAt: string; finishedAt: string };
+type MaintenanceResult = ActionResult & { job?: MaintenanceJob; jobs?: MaintenanceJob[]; alreadyRunning?: boolean };
+
+const localResourceState = (state: LocalResourceReport["state"]) => ({
+  ready: "已就绪",
+  attachable: "发现可接入",
+  partial: "部分存在",
+  incompatible: "不兼容",
+  missing: "未发现",
+}[state]);
+
 function OnboardingWizard({
   state,
   runtime,
@@ -333,18 +358,24 @@ function App() {
   });
   const [onboardingMode, setOnboardingMode] = useState<"auto" | "open" | "closed">("auto");
   const refresh = useCallback(async () => {
-    const next = await window.launcher.snapshot();
-    setData(next); setRuntime(next.runtime); setDownloadSource(next.runtime.downloadSource || "china"); setVoices(next.voices);
-    return next;
+    try {
+      const next = await window.launcher.snapshot();
+      setData(next); setRuntime(next.runtime); setDownloadSource(next.runtime.downloadSource || "china"); setVoices(next.voices);
+      return next;
+    } catch (error) {
+      const message = launcherErrorMessage(error, "读取启动器状态失败");
+      setNotice(message);
+      throw new Error(message);
+    }
   }, []);
 
   useEffect(() => {
-    refresh().then((next) => setNotice(next.workspace.error || next.workspace.message || "本地状态已同步"));
-    window.launcher.update("snapshot").then((next) => { setUpdate(next); setUpdateChannel(next.channel); });
-    window.launcher.runtime("snapshot").then((next) => { setRuntime(next); setDownloadSource(next.downloadSource || "china"); });
-    window.launcher.voice("snapshot").then(setVoices);
-    const timer = window.setInterval(refresh, 3000);
-    const updateTimer = window.setInterval(() => window.launcher.update("snapshot").then(setUpdate), 5000);
+    void refresh().then((next) => setNotice(next.workspace.error || next.workspace.message || "本地状态已同步")).catch(() => undefined);
+    void window.launcher.update("snapshot").then((next) => { setUpdate(next); setUpdateChannel(next.channel); }).catch((error) => setNotice(launcherErrorMessage(error, "读取更新状态失败")));
+    void window.launcher.runtime("snapshot").then((next) => { setRuntime(next); setDownloadSource(next.downloadSource || "china"); }).catch((error) => setNotice(launcherErrorMessage(error, "读取运行时状态失败")));
+    void window.launcher.voice("snapshot").then(setVoices).catch((error) => setNotice(launcherErrorMessage(error, "读取语音状态失败")));
+    const timer = window.setInterval(() => { void refresh().catch(() => undefined); }, 3000);
+    const updateTimer = window.setInterval(() => { void window.launcher.update("snapshot").then(setUpdate).catch((error) => setNotice(launcherErrorMessage(error, "读取更新状态失败"))); }, 5000);
     return () => { window.clearInterval(timer); window.clearInterval(updateTimer); };
   }, [refresh]);
 
@@ -358,7 +389,7 @@ function App() {
 
   useEffect(() => {
     const interval = runtime.active ? 500 : 3500;
-    const timer = window.setInterval(() => window.launcher.runtime("snapshot").then(setRuntime), interval);
+    const timer = window.setInterval(() => { void window.launcher.runtime("snapshot").then(setRuntime).catch((error) => setNotice(launcherErrorMessage(error, "读取运行时状态失败"))); }, interval);
     return () => window.clearInterval(timer);
   }, [runtime.active]);
 
@@ -389,6 +420,7 @@ function App() {
   }, [update]);
 
   const qwenSelected = data?.ttsProvider === "qwen3-vllm";
+  const localResources = (data as (LauncherSnapshot & { localResources?: LocalResourceReport[] }) | undefined)?.localResources || [];
   const selectedVoicePreference = dashboardVoiceOptions.some((option) => option.id === data?.ttsProvider)
     ? data!.ttsProvider
     : "none";
@@ -494,59 +526,62 @@ function App() {
 
   async function launchMindspace() {
     setBusy("launch");
-    if (!runtime.ready) {
-      setNotice("正在按顺序准备应用私有环境，请保持网络连接…");
-      try {
+    try {
+      if (!runtime.ready) {
+        setNotice("正在按顺序准备应用私有环境，请保持网络连接…");
         const next = await window.launcher.runtime("install-all");
         setRuntime(next);
-      } catch (error) {
-        setNotice((error as Error).message || "环境初始化失败，请查看对应组件和日志");
-        setBusy("");
-        return;
       }
-    }
-    if (!coreOnline) {
-      setNotice("正在启动 Mindspace Core…");
-      const result = await window.launcher.action("api", "start");
-      if (!result.ok) {
-        setNotice(result.error || "启动失败，请查看日志");
-        setBusy("");
-        return;
-      }
-      let ready = false;
-      for (let attempt = 0; attempt < 40; attempt += 1) {
-        const next = await refresh();
-        if (next.services.api?.online) {
-          ready = true;
-          break;
+      if (!coreOnline) {
+        setNotice("正在启动 Mindspace Core…");
+        const result = await window.launcher.action("api", "start");
+        if (!result.ok) throw new Error(result.error || "启动失败，请查看日志");
+        let ready = false;
+        for (let attempt = 0; attempt < 40; attempt += 1) {
+          const next = await refresh();
+          if (next.services.api?.online) {
+            ready = true;
+            break;
+          }
+          await sleep(500);
         }
-        await sleep(500);
+        if (!ready) throw new Error("Core 未在 20 秒内就绪，请展开 Mindspace Core 查看启动日志或执行修复");
       }
-      if (!ready) {
-        setNotice("Core 未在 20 秒内就绪，请展开 Mindspace Core 查看启动日志或执行修复");
-        setBusy("");
-        return;
+      setNotice("Mindspace 已准备好");
+      const opened = await window.launcher.open("app");
+      if (opened && typeof opened === "object" && "ok" in opened && !opened.ok) {
+        throw new Error(String((opened as ActionResult).error || "无法打开 Mindspace 窗口"));
       }
+    } catch (error) {
+      setNotice(launcherErrorMessage(error, "Mindspace 启动失败"));
+    } finally {
+      setBusy("");
     }
-    setNotice("Mindspace 已准备好");
-    await window.launcher.open("app");
-    setBusy("");
   }
 
   async function maintenance(action: string, label: string) {
     setBusy(action);
-    const result = await window.launcher.maintenance(action);
-    setNotice(result.ok ? `${label}已在后台运行` : result.error || "启动失败");
-    setBusy("");
+    try {
+      const result = await window.launcher.maintenance(action) as MaintenanceResult;
+      setNotice(result.ok
+        ? result.alreadyRunning ? `${label}仍在执行；正在跟踪同一任务` : `${label}正在执行；完成后会显示真实结果`
+        : result.error || "维护任务启动失败");
+      await refresh();
+    } catch (error) {
+      setNotice(launcherErrorMessage(error, `${label}启动失败`));
+    } finally { setBusy(""); }
   }
 
   async function stopAll() {
     setBusy("stop-all");
-    const result = await window.launcher.all("stop");
-    setNotice(result.ok ? "已停止由启动器创建的服务" : result.error || "停止失败");
-    await sleep(500);
-    await refresh();
-    setBusy("");
+    try {
+      const result = await window.launcher.all("stop");
+      setNotice(result.ok ? "已停止由启动器创建的服务" : result.error || "停止失败");
+      await sleep(500);
+      await refresh();
+    } catch (error) {
+      setNotice(launcherErrorMessage(error, "停止服务失败"));
+    } finally { setBusy(""); }
   }
 
   async function updateAction(action: string) {
@@ -557,7 +592,8 @@ function App() {
         : await window.launcher.update(action);
       setUpdate(next); setNotice(next.message || "更新操作完成");
     } catch (error) {
-      setNotice((error as Error).message); setUpdate(await window.launcher.update("snapshot"));
+      setNotice(launcherErrorMessage(error, "更新操作失败"));
+      try { setUpdate(await window.launcher.update("snapshot")); } catch {}
     } finally { setBusy(""); }
   }
 
@@ -571,6 +607,23 @@ function App() {
       setNotice((error as Error).message);
       setRuntime(await window.launcher.runtime("snapshot"));
     }
+  }
+
+  async function attachLocalResource(resource: LocalResourceReport, mode: "register" | "migrate") {
+    setBusy(`resource:${resource.id}:${mode}`);
+    try {
+      const bridge = window.launcher as typeof window.launcher & { localResource: (id: string, action: "register" | "migrate") => Promise<LocalResourceAction> };
+      const result = await bridge.localResource(resource.id, mode);
+      if (result.cancelled) return;
+      if (result.snapshot) {
+        setData(result.snapshot);
+        setRuntime(result.snapshot.runtime);
+        setVoices(result.snapshot.voices);
+      } else await refresh();
+      setNotice(result.action === "migrated" ? `${resource.name} 已迁入当前安装目录并完成校验` : `${resource.name} 已登记原路径并完成校验`);
+    } catch (error) {
+      setNotice(launcherErrorMessage(error, `${resource.name} 接入失败`));
+    } finally { setBusy(""); }
   }
 
   async function selectVoice(id: string) {
@@ -687,6 +740,15 @@ function App() {
     } finally { setBusy(""); }
   }
 
+  async function openLauncherPath(kind: "logs" | "models" | "root", label: string) {
+    try {
+      const result = await window.launcher.open(kind);
+      setNotice(result.ok ? `${label}已打开` : result.error || `无法打开${label}`);
+    } catch (error) {
+      setNotice(launcherErrorMessage(error, `无法打开${label}`));
+    }
+  }
+
   const releaseHistory = update?.releaseHistory?.length ? update.releaseHistory : bundledReleaseHistory;
   const currentAnnouncement = releaseHistory.find((entry) => entry.version === update?.latestVersion) || {
     version: update?.latestVersion || "",
@@ -740,6 +802,8 @@ function App() {
   }
 
   const forceDashboard = new URLSearchParams(window.location.search).has("dashboard");
+  const maintenanceJobs = ((data as LauncherSnapshot & { maintenance?: { jobs?: MaintenanceJob[] } } | undefined)?.maintenance?.jobs || []);
+  const activeMaintenanceJob = maintenanceJobs.find((job) => job.status === "running");
   const showOnboarding = !forceDashboard && Boolean(data?.onboarding) && (
     onboardingMode === "open"
     || (onboardingMode === "auto" && data!.onboarding.showWizard)
@@ -828,7 +892,7 @@ function App() {
 
       {failedItems.length > 0 && <section className="failure-banner" role="alert">
         <div><strong>{failedItems[0].name}未完成</strong><span>{failedItems[0].errorCode || "INSTALL_FAILED"} · {failedItems[0].error || "打开详情查看失败原因"}</span></div>
-        <div><button onClick={() => { setExpanded((value) => ({ ...value, [baseIds.has(failedItems[0].id) ? "base" : "capabilities"]: true })); window.setTimeout(() => document.getElementById(`component-${failedItems[0].id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 60); }}>定位组件</button><button onClick={() => window.launcher.open("logs")}>打开日志</button><button onClick={() => void exportDiagnostics()}>导出诊断报告</button></div>
+        <div><button onClick={() => { setExpanded((value) => ({ ...value, [baseIds.has(failedItems[0].id) ? "base" : "capabilities"]: true })); window.setTimeout(() => document.getElementById(`component-${failedItems[0].id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 60); }}>定位组件</button><button onClick={() => void openLauncherPath("logs", "运行日志")}>打开日志</button><button onClick={() => void exportDiagnostics()}>导出诊断报告</button></div>
       </section>}
 
       <section className="runtime-panel overview-panel" id="advanced-management">
@@ -910,6 +974,23 @@ function App() {
         {expanded.capabilities && <div className="accordion-body">
           <div className="model-pills">{data?.models.map((model) => <span className={model.ready ? "ready" : "missing"} key={model.id}><i>{model.optional ? "○" : model.ready ? "✓" : "!"}</i>{model.name}</span>)}</div>
           <p className="component-note">ASR、CosyVoice 与 GPT-SoVITS 为硬件可选能力，不阻塞文字聊天和云端 TTS。启动器会按 RAM/显存门槛禁用不适合本机的服务；已安装的可选包可在这里卸载释放空间。</p>
+          <div className="voice-subsection">
+            <div className="panel-heading"><h3>本地语音资源发现</h3><span className="voice-current">只检测受信目录，不会扫描磁盘、下载、复制或移动文件</span></div>
+            <div className="component-list grouped-list">
+              {localResources.map((resource) => <article className={`component-row ${resource.state === "ready" ? "ready" : ""} ${resource.state === "incompatible" ? "failed" : ""}`} key={resource.id}>
+                <span className="component-check">{resource.state === "ready" ? "✓" : resource.state === "attachable" ? "↗" : resource.state === "incompatible" ? "!" : "○"}</span>
+                <div className="component-copy">
+                  <strong>{resource.name} · {localResourceState(resource.state)}</strong>
+                  <small title={resource.path}>{resource.path}{resource.version ? ` · ${resource.version}` : ""}</small>
+                  <span>{resource.incompatibleReason || resource.missing.slice(0, 2).join("、") || (resource.state === "ready" ? "已通过本地锚点校验" : "未找到受信本地资源")}</span>
+                </div>
+                <div className="component-actions">
+                  {(resource.state === "ready" || resource.state === "attachable") && <><button disabled={Boolean(busy)} onClick={() => void attachLocalResource(resource, "register")}>选择并登记</button><button disabled={Boolean(busy)} onClick={() => void attachLocalResource(resource, "migrate")}>选择并迁入</button></>}
+                  {(resource.state === "partial" || resource.state === "incompatible") && <small>当前资源未通过校验，不能接入</small>}
+                </div>
+              </article>)}
+            </div>
+          </div>
           {renderComponents(capabilityItems)}
           <div className="voice-subsection">
             <div className="panel-heading"><h3>人物音色</h3><span className="voice-current">已下载 {installedVoices}/{voices.items.length} · {voices.provider === "gpt-sovits" ? `当前 ${voices.items.find((voice) => voice.id === voices.current)?.label || voices.current}` : "当前使用其他 TTS"}</span></div>
@@ -948,7 +1029,9 @@ function App() {
           <div className="update-row official"><span className="official-source"><i />Mindspace 官方签名更新源</span><select value={updateChannel} onChange={(event) => setUpdateChannel(event.target.value)}><option value="stable">稳定通道</option><option value="beta">测试通道</option></select><button onClick={() => updateAction("configure")} disabled={Boolean(busy)}>切换通道</button><button onClick={() => updateAction("check")} disabled={Boolean(busy)}>检查更新</button></div>
           {(update?.status === "downloading" || update?.progress) ? <div className="progress"><i style={{ width: `${update.progress}%` }} /></div> : null}
           <div className="update-status"><span>{update?.error || update?.message || "日常更新优先下载轻量 Core 包；环境和用户数据保持不变。"}{update?.status === "downloading" ? ` · ${formatBytes(update.speedBps)}/s · ${formatBytes(update.downloadedBytes)}/${formatBytes(update.totalBytes)}` : ""}</span><div>{update?.status === "available" && <button onClick={() => updateAction("download")} disabled={Boolean(busy)}>下载 v{update.latestVersion}</button>}{update?.status === "downloading" && <button onClick={() => updateAction("pause")}>暂停</button>}{update?.status === "paused" && <button onClick={() => updateAction("download")}>继续</button>}{update?.downloaded && <button className="primary" onClick={() => updateAction("install")} disabled={Boolean(busy)}>安装并重启</button>}{["paused", "error"].includes(update?.status || "") && <button onClick={() => updateAction("discard")}>清除下载</button>}{update?.rollbackAvailable && <button onClick={() => updateAction("rollback")} disabled={Boolean(busy)}>回滚上一版</button>}</div></div>
-          <div className="tool-actions"><button onClick={() => maintenance("verify", "完整验收")} disabled={Boolean(busy)}><i>✓</i><span>完整验收<small>环境、模型与服务</small></span></button><button onClick={() => maintenance("repair", "依赖修复")} disabled={Boolean(busy)}><i>↻</i><span>依赖修复<small>只补齐未通过项目</small></span></button><button onClick={() => window.launcher.open("logs")}><i>≡</i><span>运行日志<small>查看原始记录</small></span></button><button onClick={() => void exportDiagnostics()} disabled={Boolean(busy)}><i>⇩</i><span>诊断报告<small>脱敏状态与日志</small></span></button><button onClick={() => window.launcher.open("models")}><i>◇</i><span>模型目录<small>查看本地模型文件</small></span></button><button onClick={() => window.launcher.open("root")}><i>↗</i><span>应用目录<small>打开 Mindspace 根目录</small></span></button><button onClick={() => setOnboardingMode("open")} disabled={Boolean(busy)}><i>⚙</i><span>重新配置<small>声音、环境与模型</small></span></button></div>
+          {activeMaintenanceJob && <div className="update-status"><span>{activeMaintenanceJob.action === "verify" ? "完整验收" : "依赖修复"}正在执行 · PID {activeMaintenanceJob.pid || "启动中"} · 日志 {activeMaintenanceJob.log}</span></div>}
+          {maintenanceJobs.filter((job) => job.status !== "running").slice(0, 2).map((job) => <div className="update-status" key={job.id}><span>{job.action === "verify" ? "完整验收" : "依赖修复"}{job.status === "succeeded" ? "已通过" : `失败：${job.error || `退出码 ${job.exitCode ?? "未知"}`}`} · {job.log}</span></div>)}
+          <div className="tool-actions"><button onClick={() => maintenance("verify", "完整验收")} disabled={Boolean(busy) || Boolean(activeMaintenanceJob)}><i>✓</i><span>完整验收<small>环境、模型与服务</small></span></button><button onClick={() => maintenance("repair", "依赖修复")} disabled={Boolean(busy) || Boolean(activeMaintenanceJob)}><i>↻</i><span>依赖修复<small>只补齐未通过项目</small></span></button><button onClick={() => void openLauncherPath("logs", "运行日志")}><i>≡</i><span>运行日志<small>查看原始记录</small></span></button><button onClick={() => void exportDiagnostics()} disabled={Boolean(busy)}><i>⇩</i><span>诊断报告<small>脱敏状态与日志</small></span></button><button onClick={() => void openLauncherPath("models", "模型目录")}><i>◇</i><span>模型目录<small>查看本地模型文件</small></span></button><button onClick={() => void openLauncherPath("root", "应用目录")}><i>↗</i><span>应用目录<small>打开 Mindspace 根目录</small></span></button><button onClick={() => setOnboardingMode("open")} disabled={Boolean(busy)}><i>⚙</i><span>重新配置<small>声音、环境与模型</small></span></button></div>
         </div>}
       </section>
     </main>

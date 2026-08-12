@@ -75,7 +75,15 @@ export function CharacterLibrary({ characters, initialCharacterId, onBack, onRef
   const [removeArmed, setRemoveArmed] = useState(false);
   const [actionBusy, setActionBusy] = useState(false);
   const importRef = useRef<HTMLInputElement>(null);
-  useEffect(() => { if (!selectedId) { setRecord(null); return; } setError(""); setRemoveArmed(false); request<CharacterRecord>(`/api/v1/characters/${encodeURIComponent(selectedId)}`).then(setRecord).catch((reason: Error) => setError(reason.message)); }, [selectedId]);
+  const selectionRequest = useRef(0);
+  useEffect(() => {
+    const requestId = ++selectionRequest.current;
+    if (!selectedId) { setRecord(null); return; }
+    setRecord(null); setError(""); setRemoveArmed(false);
+    request<CharacterRecord>(`/api/v1/characters/${encodeURIComponent(selectedId)}`)
+      .then((next) => { if (selectionRequest.current === requestId) setRecord(next); })
+      .catch((reason: Error) => { if (selectionRequest.current === requestId) setError(reason.message); });
+  }, [selectedId]);
   useEffect(() => {
     if (!characters.length) { if (selectedId) setSelectedId(""); return; }
     if (!selectedId || !characters.some((item) => item.character_id === selectedId)) setSelectedId(characters[0].character_id);

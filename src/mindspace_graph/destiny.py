@@ -153,24 +153,28 @@ _INTERRUPTED_STAGE_STATUS = {
     "committing": "commit",
 }
 _WILLINGNESS_ALIASES = {
+    "0": "low",
     "low": "low",
     "降低": "low",
     "低": "low",
     "red": "low",
     "红": "low",
     "neutral": "neutral",
+    "1": "neutral",
     "不影响": "neutral",
     "无影响": "neutral",
     "中性": "neutral",
     "green": "neutral",
     "绿": "neutral",
     "normal": "normal",
+    "2": "normal",
     "常规": "normal",
     "普通": "normal",
     "稳定": "normal",
     "blue": "normal",
     "蓝": "normal",
     "high": "high",
+    "3": "high",
     "高": "high",
     "高亢": "high",
     "gold": "high",
@@ -783,6 +787,15 @@ class DestinyService:
                 "message": "现有命签的直接标签无效，请点击继续生成命签",
             }
             return result
+        if value.get("status") == "committed" and value.get("character_id"):
+            result["read_state"] = {
+                "state": "committed",
+                "can_continue": False,
+                "action": "resume_character",
+                "character_id": str(value["character_id"]),
+                "message": "角色已收入角色库，可以继续进入聊天或前往角色库。",
+            }
+            return result
         result["read_state"] = {
             "state": "ready",
             "can_continue": True,
@@ -790,6 +803,44 @@ class DestinyService:
             "message": "旅程数据可继续使用",
         }
         return result
+
+    def reset_seed(
+        self,
+        journey_id: str,
+        seed: DestinySeed,
+        *,
+        expected_revision: int | None = None,
+    ) -> dict[str, Any]:
+        """Atomically reuse an unfinished journey for a changed character seed."""
+        journey = self._get_mutable(journey_id)
+        if journey.get("status") == "committed" or journey.get("character_id"):
+            raise ValueError("已收入角色库的旅程不能修改种子")
+        if journey.get("status") in _INTERRUPTED_STAGE_STATUS:
+            raise ValueError("命格正在生成，暂时不能修改种子")
+        self._require_revision(journey, expected_revision)
+        return self._save(
+            journey,
+            status="seed_ready",
+            seed=seed.model_dump(mode="json"),
+            archetypes=[],
+            cards_by_slot={},
+            card_batches=_empty_card_batches(),
+            selections={},
+            final_card=None,
+            character_id="",
+            model_calls={"archetypes": 0, "cards": 0, "synthesis": 0},
+            fallbacks={"archetypes": False, "cards": False},
+            operation_id="",
+            stage_started_at="",
+            errors=[],
+            progress={
+                "stage": "seed",
+                "current": 0,
+                "total": 1,
+                "percent": 0,
+                "message": "角色种子已更新，等待创建 8 个角色方向",
+            },
+        )
 
     def _get_mutable(self, journey_id: str) -> dict[str, Any]:
         value = self.database.get_document(self._key(journey_id))
@@ -921,10 +972,9 @@ class DestinyService:
                 "role": "system",
                 "content": "\n".join(
                     (
-                        '你是聊天角色拆解器。只返回 JSON：{"cards":[[["慢热敏感","会先观察语气再回应","normal"]]]}',
-                        "cards 外层按 8 位人物排序，每个人内层按给定分类排序。",
-                        "每格依次是：[直接标签, 聊天中可见的表现, 互动意愿]。",
-                        "互动意愿只能是 low、neutral、normal、high。",
+                        '只返回 JSON：{"cards":[[["慢热","先观察再回应",2]]]}。',
+                        "cards 按人物顺序，内层按分类顺序。每格=[标签,表现,意愿码]。",
+                        "意愿码：0=low，1=neutral，2=normal，3=high。",
                     )
                 ),
             },
@@ -933,11 +983,8 @@ class DestinyService:
                 "content": "\n".join(
                     (
                         f"把下面 8 位聊天对象按顺序分别拆成 {len(selected_slots)} 个分类，共 {card_count} 张。",
-                        "每个人、每个分类各一张。直接标签写 2 到 8 个字的人物特征，"
-                        "例如“慢热敏感、温柔体贴、直率好奇”。",
-                        "直接标签不能重复分类名、分类 ID 或人物方向标签，不要诗化别名。",
-                        "表现只写用户在聊天中能观察到的行为和语气；每项只用一句短句，不超过 32 个汉字。",
-                        "互动意愿表示该特征会让角色主动聊天和回应的意愿降低、不受影响、保持常规或变得高亢。",
+                        "每人每类一张。标签 2-6 字，表现 6-16 字；只写聊天可见表现。",
+                        "不要重复分类名、ID 或人物方向标签，不要诗化，不要解释。",
                         _gender_instruction(gender),
                         "",
                         "人物：",
@@ -1024,7 +1071,7 @@ class DestinyService:
 
     @staticmethod
     def _normalize_willingness(value: Any) -> str:
-        key = _clean(value, 40).casefold().replace(" ", "")
+        key = ("" if value is None else str(value)).strip()[:40].casefold().replace(" ", "")
         normalized = _WILLINGNESS_ALIASES.get(key, key)
         if normalized not in _WILLINGNESS:
             raise ValueError("互动意愿只能是 low、neutral、normal 或 high")
@@ -1359,7 +1406,10 @@ class DestinyService:
                     await self._generate(
                         self._cards_messages(people, gender, slots),
                         request_kind="destiny_cards",
-                        max_tokens=8192,
+                        # Destiny cards are an isolated business response.  Keep the
+                        # chat context budget untouched while leaving enough room for
+                        # a compatible provider to finish a compact 48-card batch.
+                        max_tokens=12288,
                         timeout_seconds=180,
                         temperature=0.55,
                     ),
@@ -1381,9 +1431,19 @@ class DestinyService:
                 )
                 journey = self._save(
                     journey,
+                    status="cards_failed",
                     card_batches=batch_states,
                     cards_by_slot=cards_by_slot,
+                    operation_id="",
+                    stage_started_at="",
                     errors=errors[-20:],
+                    progress={
+                        "stage": "cards",
+                        "current": len(cards_by_slot) * ARCHETYPE_COUNT,
+                        "total": 96,
+                        "percent": round(len(cards_by_slot) * ARCHETYPE_COUNT / 96 * 100),
+                        "message": "部分命签生成失败，请点击继续生成命签",
+                    },
                 )
                 failures.append((batch_label, exc))
                 continue
@@ -1438,7 +1498,10 @@ class DestinyService:
             },
         )
         batch_label, first_error = failures[0]
-        message = f"{batch_label}命签未通过，已保留另一批结果；请点击继续生成命签：{first_error}"
+        message = (
+            f"{batch_label}命签未通过，当前已完成 {completed}/96 张，已保留成功批次；"
+            f"请点击继续生成命签：{first_error}"
+        )
         if isinstance(first_error, TimeoutError):
             raise TimeoutError(message) from first_error
         if isinstance(first_error, ValueError):

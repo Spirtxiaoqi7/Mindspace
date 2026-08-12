@@ -167,6 +167,9 @@ test("ASR runtime requires a completed dependency verification marker", (context
   const installer = fs.readFileSync(path.resolve(__dirname, "..", component.installScript), "utf8");
   assert.match(installer, /torch\.cuda\.is_available/);
   assert.match(installer, /\.mindspace-asr-ready\.json/);
+  assert.match(installer, /robocopy \$OriginalVenvRoot \$RebuildRoot/);
+  assert.match(installer, /Move-Item -LiteralPath \$RebuildRoot -Destination \$OriginalVenvRoot/);
+  assert.doesNotMatch(installer, /Remove-Item -LiteralPath \$resolvedTarget -Recurse/);
 });
 
 test("component downloader resumes, verifies and atomically installs a file", async (context) => {
@@ -235,6 +238,32 @@ test("component paths cannot escape their target directory", () => {
   const root = path.resolve(os.tmpdir(), "mindspace-safe-root");
   assert.throws(() => safeFile(root, "../outside.bin"), /不安全路径/);
   assert.equal(safeFile(root, "nested/model.bin"), path.join(root, "nested", "model.bin"));
+});
+
+test("complete discovered components are claimed and their marker follows the resolved path", (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-component-adopt-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const markerRoot = path.join(root, "state", "components");
+  const catalog = [{ id: "voice", name: "Voice", provider: "static", target: "voice", required: ["ready"], optional: true }];
+  const firstPath = path.join(root, "existing", "voice");
+  const secondPath = path.join(root, "moved", "voice");
+  for (const target of [firstPath, secondPath]) fs.mkdirSync(target, { recursive: true });
+
+  const first = createComponentManager({
+    rootPath: () => root, markerRoot, catalog,
+    inspectTarget: () => ({ ready: true, path: firstPath, selectedSource: "legacy-home", missing: [] }),
+  });
+  assert.equal(first.snapshot().items[0].ready, true);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(markerRoot, "voice.json"), "utf8")).path, firstPath);
+
+  const relocated = createComponentManager({
+    rootPath: () => root, markerRoot, catalog,
+    inspectTarget: () => ({ ready: true, path: secondPath, selectedSource: "registry", missing: [] }),
+  });
+  assert.equal(relocated.snapshot().items[0].ready, true);
+  const marker = JSON.parse(fs.readFileSync(path.join(markerRoot, "voice.json"), "utf8"));
+  assert.equal(marker.path, secondPath);
+  assert.equal(marker.adopted, true);
 });
 
 test("package manager removes an optional component without deleting a shared target", async (context) => {

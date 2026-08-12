@@ -11,7 +11,7 @@ const { createEnvironmentRegistry } = require("./environment-registry.cjs");
 const { createRuntimeManager } = require("./runtime-manager.cjs");
 const { evaluateHardwareAvailability } = require("./hardware-policy.cjs");
 const { LLM_PRESETS, isLoopbackUrl } = require("./onboarding-policy.cjs");
-const { createOnboardingController } = require("./onboarding-controller.cjs");
+const { createOnboardingController, createOpenAiCompatibleFetch } = require("./onboarding-controller.cjs");
 const { createQwenController } = require("./qwen-controller.cjs");
 const { createRuntimeController } = require("./runtime-controller.cjs");
 const { createVoiceController } = require("./voice-controller.cjs");
@@ -42,6 +42,28 @@ if (softwareDesktopRendering) {
   app.disableHardwareAcceleration();
 }
 
+function ensureElectronUserDataDirectory() {
+  // NSIS upgrades can remove Electron's roaming profile directory. Chromium
+  // creates its single-instance lock and network stores before `whenReady`, so
+  // recreate the directory before requesting that lock or no window can open.
+  // Some Windows profiles also contain a broken/unavailable Roaming redirect;
+  // keep the desktop shell usable by falling back to LocalAppData in that case.
+  let userData = app.getPath("userData");
+  try {
+    fs.mkdirSync(userData, { recursive: true });
+  } catch {
+    userData = path.join(process.env.LOCALAPPDATA || process.env.TEMP || process.cwd(), "Mindspace", "electron-profile");
+    fs.mkdirSync(userData, { recursive: true });
+    app.setPath("userData", userData);
+  }
+  const sessionData = path.join(userData, "session-data");
+  fs.mkdirSync(sessionData, { recursive: true });
+  app.setPath("sessionData", sessionData);
+}
+
+ensureElectronUserDataDirectory();
+app.setAppUserModelId("com.mindspace.desktop");
+
 function resolvePowerShell() {
   const privateMarker = layout && readJson(path.join(layout.state, "components", "powershell.json"));
   const candidates = [
@@ -68,6 +90,7 @@ const captureDashboardArg = process.argv.find((argument) => argument.startsWith(
 const captureArg = process.argv.find((argument) => argument.startsWith("--capture=")) || captureDashboardArg;
 const dashboardPreviewArg = process.argv.includes("--dashboard-preview");
 const captureAnnouncement = process.argv.includes("--capture-announcement");
+const sourceDeployment = process.env.MINDSPACE_SOURCE_DEPLOYMENT === "1";
 let launcherWindow;
 let productWindow;
 let companionController;
@@ -88,6 +111,7 @@ let voiceController;
 let productWindows;
 let updateController;
 let layout;
+const maintenanceJobs = new Map();
 
 function recordStabilityEvent(kind, details = {}) {
   try {
@@ -123,7 +147,7 @@ function serviceIdentityFile(name) {
   return path.join(serviceIdentityRoot(), `${name}.json`);
 }
 
-function writeServiceIdentity(name, child, executable, script) {
+function writeServiceIdentity(name, child, executable, script, nonce = crypto.randomUUID()) {
   writeJsonAtomic(serviceIdentityFile(name), {
     schema_version: "1.0.0",
     service: name,
@@ -133,7 +157,7 @@ function writeServiceIdentity(name, child, executable, script) {
     script: path.resolve(script),
     core_root: path.resolve(rootPath()),
     started_at: new Date().toISOString(),
-    nonce: crypto.randomUUID(),
+    nonce,
   });
 }
 
@@ -254,7 +278,10 @@ function initializeCredentialStore() {
   credentialStore = createSecretStore({
     file: path.join(currentLayout().state, "secrets", "product-secrets.json"),
     safeStorage,
+    scopeRoot: currentLayout().home,
   });
+  const scope = credentialStore.ensureScope();
+  if (!scope.ok) recordStabilityEvent("credentials-scope-mismatch");
   const migration = credentialStore.migrateProductConfig(productSettingsFile());
   if (migration.migrated.length) recordStabilityEvent("credentials-migrated", { fields: migration.migrated });
   const launcherConfig = readLauncherConfig();
@@ -379,11 +406,18 @@ function initializeHostControllers() {
   });
   onboardingController = createOnboardingController({
     configuredLlm,
-    fetch: (...args) => net.fetch(...args),
+    // Electron net.fetch is retained for the local Core. External OpenAI-compatible
+    // endpoints use Node's fetch so their connection does not inherit Electron's proxy stack.
+    fetch: createOpenAiCompatibleFetch({ externalFetch: globalThis.fetch, localFetch: (...args) => net.fetch(...args) }),
     getComponentManager: () => componentManager,
     getSettingsController: () => settingsController,
     getVoiceController: () => voiceController,
     normalizeLlmInput,
+    onCompleted: async () => {
+      const started = await startDefaultCore();
+      if (!started.ok) return started;
+      return openProductWindow();
+    },
     readLauncherConfig,
     runtimeAction,
     runtimeSnapshot: unifiedRuntimeSnapshot,
@@ -574,14 +608,27 @@ async function snapshot() {
   entries.push(["tts", ttsReport]);
   const reports = Object.fromEntries(entries);
   const storage = activeStorageController().snapshot();
+  const components = componentManager?.snapshot() || { active: "", items: [] };
+  const localResources = environmentRegistry?.discoverLocalResources(
+    components.items.filter((component) => [
+      "tts",
+      "tts-runtime",
+      "gpt-sovits-v4-base",
+      "gpt-sovits-runtime",
+      "qwen3-vllm-runtime",
+    ].includes(component.id)),
+    defaultComponentTarget,
+  ) || [];
   return {
     root, home: currentLayout().home, workspace: storage.workspace, ps7, ps7Ready: Boolean(ps7), ttsProvider,
     storage: storage.storage,
     services: reports, models: modelStatus(root, ttsProvider),
-    components: componentManager?.snapshot() || { active: "", items: [] },
+    components,
+    localResources,
     voices: ttsVoiceSnapshot(),
     runtime: unifiedRuntimeSnapshot(),
     onboarding: onboardingSnapshot(),
+    maintenance: maintenanceSnapshot(),
   };
 }
 
@@ -606,7 +653,7 @@ async function allServices(action) {
         if (!isLocalTtsProvider(current.ttsProvider)) {
           for (const name of ["tts", "qwenTts"]) {
             serviceSupervisor.setDesired(name, false);
-            if (serviceSupervisor.hasChild(name)) stopService(name);
+            if (serviceSupervisor.hasChild(name)) await stopService(name);
           }
           continue;
         }
@@ -632,9 +679,20 @@ async function allServices(action) {
   }
   if (action === "stop") {
     serviceSupervisor.clearDesired();
-    for (const name of new Set([...children.keys(), "tts", "qwenTts"])) stopService(name);
-    activeVoiceController().resetTransition();
-    return { ok: true };
+    const stopped = [];
+    for (const name of ["asr", "tts", "qwenTts", "api"]) {
+      try {
+        stopped.push(await stopService(name));
+      } catch (error) {
+        stopped.push({ ok: false, error: String(error.message || error), service: name });
+      }
+    }
+    try {
+      activeVoiceController().resetTransition();
+    } catch (error) {
+      stopped.push({ ok: false, error: String(error.message || error), service: "voice-transition" });
+    }
+    return { ok: stopped.every((item) => item.ok), stopped, error: stopped.find((item) => !item.ok)?.error || "" };
   }
   return { ok: false, error: "未知批量操作" };
 }
@@ -717,7 +775,56 @@ async function selectTtsVoice(id) { return activeVoiceController().selectVoice(i
 
 async function installTtsVoice(id) { return activeVoiceController().installVoice(id); }
 
+function maintenanceLog(action) {
+  return path.join(logRoot(), `maintenance-${action}.log`);
+}
+
+function maintenanceSnapshot() {
+  return {
+    jobs: [...maintenanceJobs.values()]
+      .sort((left, right) => String(right.startedAt).localeCompare(String(left.startedAt)))
+      .slice(0, 8)
+      .map((job) => ({ ...job })),
+  };
+}
+
+function writeMaintenanceEvent(log, event, details = {}) {
+  try {
+    fs.mkdirSync(path.dirname(log), { recursive: true });
+    fs.appendFileSync(log, `${JSON.stringify({ at: new Date().toISOString(), event, ...details })}\n`, "utf8");
+  } catch {
+    // A failed observability write must not hide the maintenance result.
+  }
+}
+
+function startMaintenanceJob(action, execute) {
+  const running = maintenanceJobs.get(action);
+  if (running?.status === "running") return { ok: true, job: { ...running }, alreadyRunning: true };
+  const log = maintenanceLog(action);
+  const job = {
+    id: crypto.randomUUID(), action, status: "running", pid: 0, exitCode: null,
+    signal: "", error: "", log, startedAt: new Date().toISOString(), finishedAt: "",
+  };
+  maintenanceJobs.set(action, job);
+  writeMaintenanceEvent(log, "maintenance.started", { id: job.id, action });
+  const finish = (patch) => {
+    if (job.status !== "running") return;
+    Object.assign(job, patch, { finishedAt: new Date().toISOString() });
+    writeMaintenanceEvent(log, "maintenance.finished", {
+      id: job.id, action, status: job.status, pid: job.pid,
+      exit_code: job.exitCode, signal: job.signal, error: job.error,
+    });
+  };
+  try {
+    execute(job, finish);
+  } catch (error) {
+    finish({ status: "failed", error: String(error.message || error) });
+  }
+  return { ok: true, job: { ...job } };
+}
+
 function runMaintenance(action) {
+  if (action === "snapshot") return { ok: true, ...maintenanceSnapshot() };
   if (action === "integrity" && app.isPackaged) {
     return { ok: false, error: "源码完整性校验仅能在权威开发源执行，已安装 runtime 不是开发源" };
   }
@@ -731,11 +838,42 @@ function runMaintenance(action) {
     prepareAsr: ["-File", path.join(root, "scripts", "prepare-asr.ps1")],
   };
   if (!commands[action]) return { ok: false, error: "未知维护命令" };
-  const logs = logRoot();
-  fs.mkdirSync(logs, { recursive: true });
-  const out = fs.openSync(path.join(logs, `maintenance-${action}.log`), "a");
-  const child = spawn(ps7, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", ...commands[action]], { cwd: root, env: serviceEnvironment(), windowsHide: true, stdio: ["ignore", out, out] });
-  return { ok: true, pid: child.pid, log: path.join(logs, `maintenance-${action}.log`) };
+  return startMaintenanceJob(action, (job, finish) => {
+    let out;
+    let settled = false;
+    const complete = (patch) => {
+      if (settled) return;
+      settled = true;
+      if (out !== undefined) {
+        try { fs.closeSync(out); } catch {}
+      }
+      finish(patch);
+    };
+    try {
+      out = fs.openSync(job.log, "a");
+      const child = spawn(ps7, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", ...commands[action]], {
+        cwd: root, env: serviceEnvironment(), windowsHide: true, stdio: ["ignore", out, out],
+      });
+      job.pid = child.pid || 0;
+      child.once("error", (error) => complete({ status: "failed", error: String(error.message || error) }));
+      child.once("close", (code, signal) => complete(code === 0
+        ? { status: "succeeded", exitCode: 0, signal: signal || "" }
+        : { status: "failed", exitCode: Number.isInteger(code) ? code : null, signal: signal || "", error: `维护命令退出码 ${code ?? "未知"}` }));
+    } catch (error) {
+      complete({ status: "failed", error: String(error.message || error) });
+    }
+  });
+}
+
+function runMaintenanceRepair() {
+  return startMaintenanceJob("repair", (job, finish) => {
+    Promise.resolve()
+      .then(() => runtimeAction("repair"))
+      .then((result) => result?.ok === false
+        ? finish({ status: "failed", exitCode: null, error: result.error || "依赖修复未完成" })
+        : finish({ status: "succeeded", exitCode: 0 }))
+      .catch((error) => finish({ status: "failed", error: String(error.message || error) }));
+  });
 }
 
 
@@ -763,11 +901,26 @@ async function migrateToStorageTarget(target) {
 }
 
 ipcMain.handle("launcher:snapshot", snapshot);
+ipcMain.handle("launcher:local-resource", async (_, { id, mode } = {}) => {
+  const component = componentManager?.snapshot().items.find((item) => item.id === id);
+  if (!component) throw new Error("未找到本地资源组件。");
+  const choice = await dialog.showOpenDialog({
+    title: `选择 ${component.name} 所在目录`,
+    properties: ["openDirectory"],
+  });
+  if (choice.canceled || !choice.filePaths?.[0]) return { ok: false, cancelled: true, snapshot: await snapshot() };
+  const result = environmentRegistry.attachSelectedResource(component, choice.filePaths[0], defaultComponentTarget(component), mode === "migrate" ? "migrate" : "register");
+  return { ...result, snapshot: await snapshot() };
+});
 ipcMain.handle("launcher:service", async (_, { service, action }) => {
   const name = service === "tts" ? ttsServiceName() : service;
   if (action === "start") return startService(name);
-  if (action === "stop") return stopService(name);
-  if (action === "restart") { stopService(name); return startService(name); }
+  if (action === "stop") return await stopService(name);
+  if (action === "restart") {
+    const stopped = await stopService(name);
+    if (!stopped.ok) return stopped;
+    return startService(name);
+  }
   return { ok: false, error: "未知操作" };
 });
 ipcMain.handle("launcher:all", (_, action) => allServices(action));
@@ -778,9 +931,9 @@ ipcMain.handle("launcher:open", async (_, kind) => {
   }
   const targets = { logs: logRoot(), models: modelRoot(), root: currentLayout().home };
   const target = targets[kind];
-  if (!target) return { ok: false };
-  await shell.openPath(target);
-  return { ok: true };
+  if (!target) return { ok: false, error: "未知目录" };
+  const error = await shell.openPath(target);
+  return error ? { ok: false, error: `无法打开目录：${error}`, path: target } : { ok: true, path: target };
 });
 ipcMain.handle("launcher:external", async (_, rawUrl) => {
   const result = await openExternalSafely(rawUrl, launcherWindow);
@@ -788,10 +941,7 @@ ipcMain.handle("launcher:external", async (_, rawUrl) => {
   return result;
 });
 ipcMain.handle("launcher:maintenance", async (_, action) => {
-  if (action === "repair") {
-    try { await runtimeAction("repair"); return { ok: true }; }
-    catch (error) { return { ok: false, error: String(error.message || error) }; }
-  }
+  if (action === "repair") return runMaintenanceRepair();
   return runMaintenance(action);
 });
 ipcMain.handle("launcher:shortcut", () => {
@@ -801,8 +951,8 @@ ipcMain.handle("launcher:shortcut", () => {
 });
 ipcMain.handle("runtime:diagnostics", async () => {
   const reportPath = diagnosticsController.createReport();
-  await shell.openPath(reportPath);
-  return { ok: true, path: reportPath };
+  const error = await shell.openPath(reportPath);
+  return error ? { ok: false, error: `诊断报告已生成，但无法打开目录：${error}`, path: reportPath } : { ok: true, path: reportPath };
 });
 const singleInstance = captureArg || isCompanionCaptureMode(process.argv) ? true : app.requestSingleInstanceLock();
 if (!singleInstance) app.quit();
@@ -862,21 +1012,41 @@ app.whenReady().then(async () => {
   if (!captureArg) createTray();
   // Text chat is the baseline product. Start Core immediately and leave ASR,
   // VAD and TTS opt-in so missing voice components cannot block entry.
-  if (!dashboardPreviewArg) setTimeout(() => { void startDefaultCore(); }, 250).unref();
+  if (sourceDeployment) {
+    setTimeout(() => { void openProductWindow(); }, 250).unref();
+  } else if (!dashboardPreviewArg) {
+    setTimeout(() => { void startDefaultCore(); }, 250).unref();
+  }
 });
 app.on("before-quit", (event) => {
   if (finalExit) return;
+  if (sourceDeployment) {
+    finalExit = true;
+    quitting = true;
+    tray?.destroy();
+    return;
+  }
   event.preventDefault();
   if (shutdownTask) return;
   quitting = true;
   companionController?.destroy();
   shutdownTask = (async () => {
     try {
-      await allServices("stop");
+      const stopped = await allServices("stop");
+      if (!stopped.ok) {
+        quitting = false;
+        launcherWindow?.show();
+        launcherWindow?.focus();
+        return;
+      }
       // Give child process trees a short, bounded period to release audio/GPU
       // handles. We never wait on an unmanaged WSL service during app exit.
       await new Promise((resolve) => setTimeout(resolve, 450));
     } finally {
+      if (!quitting) {
+        shutdownTask = null;
+        return;
+      }
       finalExit = true;
       tray?.destroy();
       app.exit(0);

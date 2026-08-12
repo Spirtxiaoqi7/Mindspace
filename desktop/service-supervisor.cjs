@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 const path = require("node:path");
 const tcp = require("node:net");
 const { spawn, spawnSync } = require("node:child_process");
@@ -17,6 +18,7 @@ function createServiceSupervisor(dependencies) {
   const serviceLaunchTimes = new Map();
   const desiredServices = new Set();
   const serviceRecovery = new Map();
+  const stops = new Map();
 
   async function probe(service) {
     const controller = new AbortController();
@@ -54,31 +56,31 @@ function createServiceSupervisor(dependencies) {
     const pid = String(readJson(pidPath, "") || fs.existsSync(pidPath) && fs.readFileSync(pidPath, "utf8") || "").trim();
     if (!/^\d+$/.test(pid)) return { running: false, pid: "" };
     const distro = process.env.MINDSPACE_QWEN3_WSL_DISTRO || "MindspaceVLLM";
-    const result = await runCommand("wsl.exe", ["--distribution", distro, "--", "bash", "-lc", 'kill -0 "$1" 2>/dev/null', "mindspace-qwen", pid], 5_000);
-    return { running: result.status === 0, pid };
+    const result = await runCommand("wsl.exe", ["--distribution", distro, "--", "bash", "-lc", 'kill -0 "$1" 2>/dev/null && tr "\\0" " " < "/proc/$1/cmdline" | grep -Eiq "mindspace|qwen|vllm"', "mindspace-qwen", pid], 5_000);
+    return { running: result.status === 0, pid, verified: result.status === 0 };
   }
 
-  function stopExternalQwenSupervisor() {
+  async function stopExternalQwenSupervisor() {
     const pidPath = path.join(qwenRuntimeRoot(), "qwen3-vllm.pid");
+    const ownerPath = path.join(qwenRuntimeRoot(), "qwen3-vllm.owner");
     let pid = "";
+    let owner = "";
     try { pid = fs.readFileSync(pidPath, "utf8").trim(); } catch {}
+    try { owner = fs.readFileSync(ownerPath, "utf8").trim(); } catch {}
     const distro = process.env.MINDSPACE_QWEN3_WSL_DISTRO || "MindspaceVLLM";
     let signalled = false;
-    if (/^\d+$/.test(pid)) {
-      const result = spawnSync(
+    if (/^\d+$/.test(pid) && /^[a-f0-9-]{16,}$/i.test(owner)) {
+      const result = await runCommand(
         "wsl.exe",
-        ["--distribution", distro, "--", "bash", "-lc", 'kill -TERM "$1" 2>/dev/null', "mindspace-qwen", pid],
-        { windowsHide: true, timeout: 5_000 },
+        ["--distribution", distro, "--", "bash", "-lc", 'tr "\\0" "\\n" < "/proc/$1/environ" 2>/dev/null | grep -Fxq "MINDSPACE_QWEN_OWNER=$2" || exit 42; kill -TERM "$1" 2>/dev/null; for _ in $(seq 1 120); do kill -0 "$1" 2>/dev/null || exit 0; sleep 0.25; done; exit 43', "mindspace-qwen", pid, owner],
+        35_000,
       );
       signalled = result.status === 0;
     }
-    // MindspaceVLLM is a dedicated application distro. The Windows wrapper can
-    // disappear while its Linux model server survives, so the PID file alone is
-    // not authoritative. Terminating the distro is the final ownership-safe
-    // cleanup and releases GPU memory before another voice service starts.
-    const terminated = spawnSync("wsl.exe", ["--terminate", distro], { windowsHide: true, timeout: 15_000 });
-    try { fs.rmSync(pidPath, { force: true }); } catch {}
-    return signalled || terminated.status === 0;
+    // Never terminate the entire WSL distro. Abruptly tearing down a CUDA-backed
+    // distro can reset the display driver. Only the verified model PID is owned.
+    if (signalled) try { fs.rmSync(pidPath, { force: true }); } catch {}
+    return signalled;
   }
 
   function recordServiceEvent(event, details = {}) {
@@ -207,8 +209,9 @@ function createServiceSupervisor(dependencies) {
     fs.mkdirSync(logRoot(), { recursive: true });
     const out = fs.openSync(path.join(logRoot(), `${name}.launcher.log`), "a");
     const cwd = name === "qwenTts" ? qwenRuntimeRoot() : name === "api" ? root : currentLayout().home;
-    const child = spawn(ps7, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], { cwd, env: serviceEnvironment(), windowsHide: true, detached: false, stdio: ["ignore", out, out] });
-    writeServiceIdentity(name, child, ps7, script);
+    const shutdownToken = crypto.randomUUID();
+    const child = spawn(ps7, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script], { cwd, env: serviceEnvironment({ MINDSPACE_SERVICE_SHUTDOWN_TOKEN: shutdownToken }), windowsHide: true, detached: false, stdio: ["ignore", out, out] });
+    writeServiceIdentity(name, child, ps7, script, shutdownToken);
     const startedAt = Date.now();
     children.set(name, child); serviceLaunchTimes.set(name, startedAt);
     child.once("exit", (code, signal) => {
@@ -251,17 +254,56 @@ function createServiceSupervisor(dependencies) {
     timer.unref?.();
   }
 
-  function stopService(name) {
+  async function waitForChildExit(child, timeoutMs) {
+    if (!child || child.exitCode !== null || child.killed) return true;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (child.exitCode !== null || child.killed) return true;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    return child.exitCode !== null || child.killed;
+  }
+
+  async function stopServiceInternal(name) {
     desiredServices.delete(name); clearServiceRecovery(name);
     startGenerations.set(name, (startGenerations.get(name) || 0) + 1);
     const child = children.get(name);
-    if (child) {
-      spawnSync("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
+    const identityPath = path.join(serviceIdentityRoot(), `${name}.json`);
+    const hasIdentity = fs.existsSync(identityPath);
+    let ownedStopped = false;
+    if (child || hasIdentity) {
+      const ps7 = resolvePowerShell();
+      const script = path.join(rootPath(), "scripts", "stop-services.ps1");
+      if (!ps7 || !fs.existsSync(script)) return { ok: false, error: "安全停止脚本不可用；未强制结束服务", service: name };
+      const result = spawnSync(ps7, ["-NoProfile", "-File", script, "-ProjectRoot", rootPath(), "-IdentityRoot", serviceIdentityRoot(), "-Services", name], { cwd: rootPath(), env: serviceEnvironment(), encoding: "utf8", windowsHide: true, timeout: 45_000 });
+      if (result.status !== 0 || result.error) {
+        const error = String(result.stderr || result.stdout || result.error?.message || "服务未能安全退出").trim();
+        recordServiceEvent("service.stop_failed", { service: name, pid: child?.pid || 0, error });
+        return { ok: false, error: `${name} 未能安全退出；未执行强制结束。${error}`, service: name };
+      }
+      const budget = name === "asr" ? 35_000 : 15_000;
+      const offline = await waitForServiceOffline(name, budget);
+      const exited = await waitForChildExit(child, budget);
+      if (!offline || !exited) {
+        const error = `${name} 停止超时；为保护音频和 GPU，未强制结束进程`;
+        recordServiceEvent("service.stop_timeout", { service: name, pid: child?.pid || 0 });
+        return { ok: false, error, service: name };
+      }
+      ownedStopped = true;
+      recordServiceEvent("service.stopped", { service: name, mode: "graceful", pid: child?.pid || 0 });
       clearServiceIdentity(name); children.delete(name); serviceLaunchTimes.delete(name);
     }
-    const external = name === "qwenTts" && stopExternalQwenSupervisor();
-    if (!child && !external) return { ok: false, error: "该服务不是由当前 Launcher 启动" };
-    return { ok: true, external: Boolean(external) };
+    const external = name === "qwenTts" && await stopExternalQwenSupervisor();
+    if (!ownedStopped && !external) return { ok: true, skipped: true, message: "该服务未运行或不属于当前 Mindspace" };
+    return { ok: true, external: Boolean(external), stopped: ownedStopped };
+  }
+
+  function stopService(name) {
+    if (stops.has(name)) return stops.get(name);
+    const task = stopServiceInternal(name);
+    stops.set(name, task);
+    task.finally(() => { if (stops.get(name) === task) stops.delete(name); });
+    return task;
   }
 
   async function waitForServiceOffline(name, timeoutMs = 9_000) {
@@ -279,9 +321,9 @@ function createServiceSupervisor(dependencies) {
     const ps7 = resolvePowerShell();
     const script = path.join(rootPath(), "scripts", "stop-services.ps1");
     if (!ps7 || !fs.existsSync(script)) return fallback();
-    const result = spawnSync(ps7, ["-NoProfile", "-File", script, "-ProjectRoot", rootPath(), "-IdentityRoot", serviceIdentityRoot(), "-IncludeQwen"], { cwd: rootPath(), env: serviceEnvironment(), encoding: "utf8", windowsHide: true, timeout: 30_000 });
-    children.clear();
+    const result = spawnSync(ps7, ["-NoProfile", "-File", script, "-ProjectRoot", rootPath(), "-IdentityRoot", serviceIdentityRoot(), "-IncludeQwen"], { cwd: rootPath(), env: serviceEnvironment(), encoding: "utf8", windowsHide: true, timeout: 45_000 });
     if (result.status !== 0) throw new Error((result.stderr || result.stdout || "停止服务失败").trim());
+    children.clear();
     return { ok: true };
   }
 

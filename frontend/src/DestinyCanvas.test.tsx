@@ -148,6 +148,16 @@ it("keeps the persistent uploaded avatar URL while preserving crop adjustments",
   });
 });
 
+it("accepts a common JPEG filename even when Windows does not provide a MIME type", async () => {
+  const user = userEvent.setup();
+  render(<DestinyCanvas defaultUserName="测试用户" onBack={vi.fn()} />);
+
+  const file = new File(["jpeg"], "portrait.jfif", { type: "" });
+  await user.upload(screen.getByLabelText("上传头像"), file);
+
+  expect(screen.queryByText(/头像格式不受支持/)).not.toBeInTheDocument();
+});
+
 it("keeps the V7 resume key when a temporary journey restore request fails", async () => {
   window.localStorage.setItem("mindspace.destiny.v7.active", "journey-test");
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
@@ -223,4 +233,61 @@ it("refreshes a failed stage revision and carries the default template through b
   await waitFor(() => expect(document.querySelectorAll(".destiny-slip")).toHaveLength(3));
   expect(requestedUrls.some((url) => url.includes("/archetypes") && url.includes("use_default=true"))).toBe(true);
   expect(requestedUrls.some((url) => url.includes("/cards") && url.includes("use_default=true"))).toBe(true);
+});
+
+it("recovers a committed journey from its server character_id when the pending-chat cache is absent", async () => {
+  const onCommitted = vi.fn(async () => undefined);
+  const onBack = vi.fn();
+  journey = {
+    ...journey,
+    status: "committed",
+    character_id: "character-1",
+    seed: { ...journey.seed, ai_name: "林见月", ai_gender: "女", user_name: "测试用户", relationship: "陪伴者" },
+    selections: Object.fromEntries(slots.map((slot) => [slot.id, { card_id: `p1:${slot.id}`, label: "稳定", slot_id: slot.id }])),
+    read_state: { state: "committed", action: "resume_character", character_id: "character-1" },
+  };
+  window.localStorage.setItem("mindspace.destiny.v7.active", "journey-test");
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/destiny/definition")) return response({ slots, interaction_willingness: {} });
+    if (url.endsWith("/api/v1/destiny/journeys/journey-test")) return response(journey);
+    if (url.endsWith("/api/v1/characters/character-1")) return response({ character_id: "character-1", display_name: "林见月" });
+    throw new Error(`Unexpected request: ${url}`);
+  }));
+
+  const user = userEvent.setup();
+  render(<DestinyCanvas defaultUserName="测试用户" onBack={onBack} onCommitted={onCommitted} />);
+
+  expect(await screen.findByRole("dialog", { name: "角色已入库" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "前往角色库" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "开始聊天" }));
+  await waitFor(() => expect(onCommitted).toHaveBeenCalledWith(expect.objectContaining({ character_id: "character-1" })));
+  expect(window.localStorage.getItem("mindspace.destiny.v7.active")).toBeNull();
+});
+
+it("stops the 96-card loading state when the persisted half-batch failed", async () => {
+  const firstSix = Object.fromEntries(slots.slice(0, 6).map((slot) => [slot.id, archetypes.map((person) => ({
+    card_id: `${person.id}:${slot.id}`, source_id: person.id, source_label: person.label,
+    slot_id: slot.id, slot_name: slot.axis, label: "慢热", summary: "先观察再回应", interaction_willingness: "normal",
+  }))]));
+  journey = {
+    ...journey,
+    status: "cards_failed",
+    archetypes,
+    cards_by_slot: firstSix,
+    card_batches: { first: { status: "ready" }, second: { status: "failed" } },
+    errors: [{ message: "后 6 类命签未通过，当前已完成 48/96 张，已保留成功批次；请点击继续生成命签。" }],
+  };
+  window.localStorage.setItem("mindspace.destiny.v7.active", "journey-test");
+  vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/api/v1/destiny/definition")) return response({ slots, interaction_willingness: {} });
+    if (url.endsWith("/api/v1/destiny/journeys/journey-test")) return response(journey);
+    throw new Error(`Unexpected request: ${url}`);
+  }));
+
+  render(<DestinyCanvas defaultUserName="测试用户" onBack={vi.fn()} />);
+
+  expect(await screen.findByRole("button", { name: "继续生成命签（48/96）" })).toBeInTheDocument();
+  expect(screen.getByRole("alert")).toHaveTextContent("后 6 类命签未通过，当前已完成 48/96 张");
 });

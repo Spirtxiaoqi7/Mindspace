@@ -239,3 +239,16 @@ def test_launcher_environment_secret_reaches_model_adapter_without_disk_copy(tmp
     assert "launcher-adapter-secret" not in json.dumps(disk)
     assert "launcher-asr-adapter-secret" not in json.dumps(disk)
     assert "launcher-tts-adapter-secret" not in json.dumps(disk)
+
+
+def test_runtime_injected_secret_survives_public_settings_patch_without_disk_copy(tmp_path) -> None:
+    settings = _settings(tmp_path, llm_api_key="desktop-secure-store-secret")
+    store = ProductConfigStore(_config_path(settings), settings)
+
+    result = store.update({"llm": {"base_url": "https://provider.example/v1", "model": "configured-model"}})
+
+    assert settings.llm_api_key == "desktop-secure-store-secret"
+    assert result["llm"]["credentials_configured"] is True
+    disk = _disk_config(settings)
+    _assert_no_secret_fields(disk)
+    assert "desktop-secure-store-secret" not in json.dumps(disk)

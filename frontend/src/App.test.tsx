@@ -56,3 +56,19 @@ it("selects the first character when the library data arrives asynchronously", a
   expect(await screen.findByRole("heading", { name: "林见月" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "新建会话" })).toBeEnabled();
 });
+
+it("does not render a stale character detail after the selection changes", async () => {
+  let resolveFirst: ((value: Response) => void) | undefined;
+  const second = { ...record, character_id: "character-2", display_name: "顾清歌", card: { ...record.card, data: { ...record.card.data, name: "顾清歌" } } };
+  const secondSummary = { ...summary, character_id: "character-2", display_name: "顾清歌", latest_session_id: "" };
+  vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+    if (String(input).includes("character-1")) return new Promise<Response>((resolve) => { resolveFirst = resolve; });
+    return Promise.resolve(new Response(JSON.stringify(second), { status: 200, headers: { "Content-Type": "application/json" } }));
+  }));
+  const user = userEvent.setup();
+  render(<CharacterLibrary characters={[summary, secondSummary]} onBack={vi.fn()} onRefresh={async () => undefined} onChat={vi.fn()} onNewChat={vi.fn()} onDraw={vi.fn()} />);
+  await user.click(screen.getByRole("button", { name: /顾清歌/ }));
+  expect(await screen.findByRole("heading", { name: "顾清歌" })).toBeInTheDocument();
+  resolveFirst?.(new Response(JSON.stringify(record), { status: 200, headers: { "Content-Type": "application/json" } }));
+  await waitFor(() => expect(screen.getByRole("heading", { name: "顾清歌" })).toBeInTheDocument());
+});

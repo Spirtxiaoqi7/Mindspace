@@ -9,6 +9,7 @@ const ACTIVE_STATUSES = new Set(["checking", "downloading", "verifying", "instal
 const DOMESTIC_PYPI_INDEX = "https://mirrors.aliyun.com/pypi/simple/";
 const OFFICIAL_PYPI_INDEX = "https://pypi.org/simple/";
 const PYTHON_VALIDATION_REVISION = 1;
+const MAX_COMPONENT_DISCOVERY_DIRECTORIES = 24;
 const PYTHON_RUNTIME_PROBE = [
   "-c",
   "import encodings, ensurepip, venv; print('mindspace-python-ready')",
@@ -251,7 +252,7 @@ function createRuntimeManager(options) {
   }
 
   function componentSnapshot(component) {
-    const currentMarker = markerFor(component);
+    const currentMarker = reconcileMarker(component);
     const marker = currentMarker || markerFor(component, true);
     const state = stateFor(component.id);
     const ready = Boolean(marker);
@@ -493,15 +494,65 @@ function createRuntimeManager(options) {
     return String(result.stdout || result.stderr || "").trim();
   }
 
-  function adoptExisting(component, executable, probeArguments, environment, details = {}) {
-    if (!fs.existsSync(executable)) return false;
+  function discoveryRoot(component) {
+    if (component.kind === "archive") return safeTarget(paths.tools, component.id);
+    if (component.kind === "python") return path.resolve(paths.python);
+    if (component.kind === "venv") return safeTarget(paths.venvs, component.environment);
+    return "";
+  }
+
+  function discoverySuffix(component) {
+    if (component.kind === "archive") return component.executable;
+    if (component.kind === "python") return "python.exe";
+    return path.join("Scripts", "python.exe");
+  }
+
+  function discoverableExecutables(component, expected = "") {
+    const root = discoveryRoot(component);
+    const candidates = expected ? [path.resolve(expected)] : [];
+    if (!root) return candidates;
     try {
-      const probe = runProbe(executable, probeArguments, environment, 120_000);
-      writeMarker(component, executable, { adopted: true, probe, ...details });
-      return true;
-    } catch {
-      return false;
+      const directories = fs.readdirSync(root, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && !entry.name.startsWith(".staging-"))
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .slice(0, MAX_COMPONENT_DISCOVERY_DIRECTORIES);
+      for (const entry of directories) candidates.push(safeTarget(root, entry.name, discoverySuffix(component)));
+    } catch {}
+    return [...new Set(candidates.map((candidate) => path.resolve(candidate).toLowerCase()))]
+      .map((candidate) => candidates.find((item) => path.resolve(item).toLowerCase() === candidate));
+  }
+
+  function defaultProbeArguments(component) {
+    if (component.kind === "python") return PYTHON_RUNTIME_PROBE;
+    if (component.kind === "venv") return ["-c", "import fastapi, langgraph, sentence_transformers; print('mindspace-runtime-ready')"];
+    return component.probe || ["--version"];
+  }
+
+  function adoptExisting(component, executable, probeArguments, environment, details = {}) {
+    for (const candidate of discoverableExecutables(component, executable)) {
+      if (!fs.existsSync(candidate)) continue;
+      if (component.kind === "python" && !pythonRuntimeLooksComplete(candidate)) continue;
+      try {
+        const probe = runProbe(candidate, probeArguments, environment, 120_000);
+        writeMarker(component, candidate, {
+          adopted: true,
+          relocated_from: executable && path.resolve(candidate) !== path.resolve(executable) ? path.resolve(executable) : "",
+          probe,
+          ...details,
+        });
+        return candidate;
+      } catch {}
     }
+    return "";
+  }
+
+  function reconcileMarker(component) {
+    const current = markerFor(component);
+    if (current) return current;
+    const adopted = adoptExisting(component, "", defaultProbeArguments(component), privateEnvironment(), {
+      python_validation: component.kind === "python" ? PYTHON_VALIDATION_REVISION : undefined,
+    });
+    return adopted ? markerFor(component) : null;
   }
 
   function promoteStaging(staging, target) {
@@ -569,8 +620,9 @@ function createRuntimeManager(options) {
     const staging = safeTarget(parent, `.staging-${component.version}-${process.pid}-${Date.now()}`);
     fs.mkdirSync(parent, { recursive: true });
     const installedExecutable = safeTarget(target, component.executable);
-    if (adoptExisting(component, installedExecutable, component.probe || ["--version"], privateEnvironment())) {
-      writeCurrentPointer(parent, component, installedExecutable);
+    const adopted = adoptExisting(component, installedExecutable, component.probe || ["--version"], privateEnvironment());
+    if (adopted) {
+      writeCurrentPointer(parent, component, adopted);
       return;
     }
     for (const entry of fs.readdirSync(parent, { withFileTypes: true })) {
@@ -643,11 +695,12 @@ function createRuntimeManager(options) {
       const staging = safeTarget(paths.python, `.staging-${component.version}-${process.pid}-${Date.now()}`);
       const target = safeTarget(paths.python, path.basename(bundled));
       const installedExecutable = path.join(target, "python.exe");
-      if (adoptExisting(component, installedExecutable, PYTHON_RUNTIME_PROBE, environment, {
+      const adopted = adoptExisting(component, installedExecutable, PYTHON_RUNTIME_PROBE, environment, {
         bundled: true,
         python_validation: PYTHON_VALIDATION_REVISION,
-      })) {
-        writeCurrentPointer(paths.python, component, installedExecutable);
+      });
+      if (adopted) {
+        writeCurrentPointer(paths.python, component, adopted);
         return;
       }
       try {
@@ -828,13 +881,14 @@ function createRuntimeManager(options) {
     const staging = safeTarget(parent, `.staging-${component.version}-${process.pid}-${Date.now()}`);
     fs.mkdirSync(parent, { recursive: true });
     const installedExecutable = path.join(target, "Scripts", "python.exe");
-    if (adoptExisting(
+    const adopted = adoptExisting(
       component,
       installedExecutable,
       ["-c", "import fastapi, langgraph, sentence_transformers; print('mindspace-runtime-ready')"],
       privateEnvironment(),
-    )) {
-      writeCurrentPointer(parent, component, installedExecutable);
+    );
+    if (adopted) {
+      writeCurrentPointer(parent, component, adopted);
       return;
     }
     fs.rmSync(staging, { recursive: true, force: true });
@@ -904,11 +958,11 @@ function createRuntimeManager(options) {
     const component = componentFor(id);
     if (!component) throw new Error(`未知运行时组件：${id}`);
     if (active && active !== id) throw new Error(`正在安装 ${active}`);
-    if (markerFor(component)) return snapshot();
+    if (reconcileMarker(component)) return snapshot();
     if (!active) {
       for (const dependency of component.dependencies || []) {
         const required = componentFor(dependency);
-        if (!markerFor(required)) await install(dependency);
+        if (!reconcileMarker(required)) await install(dependency);
       }
     }
     active = id;

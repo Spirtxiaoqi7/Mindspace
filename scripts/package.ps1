@@ -5,7 +5,7 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $DistRoot = Join-Path $ProjectRoot 'dist'
-$BundleRoot = Join-Path $DistRoot 'mindspace-graph-portable'
+$BundleRoot = Join-Path $DistRoot 'mindspace-graph-portable-core'
 
 & (Join-Path $PSScriptRoot 'build.ps1')
 npm --prefix (Join-Path $ProjectRoot 'desktop') run dist
@@ -31,7 +31,7 @@ Copy-Item -LiteralPath (Join-Path (Resolve-Path (Join-Path $PSScriptRoot '..')).
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'config\.env.example') -Destination (Join-Path $BundleRoot '.env.example')
 Copy-Item -LiteralPath (Join-Path $ProjectRoot 'README.md') -Destination $BundleRoot
 
-$zipPath = Join-Path $DistRoot 'mindspace-graph-portable.zip'
+$zipPath = Join-Path $DistRoot 'mindspace-graph-portable-core.zip'
 if (Test-Path -LiteralPath $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force
 }

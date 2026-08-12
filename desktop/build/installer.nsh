@@ -47,6 +47,9 @@
       ${endIf}
   ${endIf}
   !ifndef BUILD_UNINSTALLER
+    !insertmacro mindspacePreserveInstallHome Upgrade
+  !endif
+  !ifndef BUILD_UNINSTALLER
     ; electron-builder's --updated removal performs an atomic directory rename.
     ; On real user machines that path can spend about a minute retrying a file
     ; handle retained by Defender/indexers. Our mutable data is outside
@@ -62,6 +65,41 @@
       ${endIf}
     mindspacePreUpgradeDone:
   !endif
+!macroend
+
+!macro mindspacePreserveInstallHome LABEL_SUFFIX
+  ; NSIS removes $INSTDIR during an upgrade or a normal uninstall. Preserve
+  ; the mutable portion beside it first, so the next installation can restore
+  ; it without depending on LocalAppData or changing the selected Home.
+  IfFileExists "$INSTDIR\environment\*" mindspacePreserveStart_${LABEL_SUFFIX} 0
+  IfFileExists "$INSTDIR\models\*" mindspacePreserveStart_${LABEL_SUFFIX} 0
+  IfFileExists "$INSTDIR\data\*" mindspacePreserveStart_${LABEL_SUFFIX} 0
+  IfFileExists "$INSTDIR\downloads\*" mindspacePreserveStart_${LABEL_SUFFIX} 0
+  IfFileExists "$INSTDIR\logs\*" mindspacePreserveStart_${LABEL_SUFFIX} 0
+  IfFileExists "$INSTDIR\backups\*" mindspacePreserveStart_${LABEL_SUFFIX} mindspacePreserveDone_${LABEL_SUFFIX}
+  mindspacePreserveStart_${LABEL_SUFFIX}:
+    IfFileExists "$INSTDIR.mindspace-preserve\*" 0 mindspacePreserveCreate_${LABEL_SUFFIX}
+      Abort "检测到上次安装保留的 Mindspace 数据。为避免覆盖，请先重新运行该安装包完成恢复。"
+    mindspacePreserveCreate_${LABEL_SUFFIX}:
+      CreateDirectory "$INSTDIR.mindspace-preserve"
+      IfFileExists "$INSTDIR\environment\*" 0 mindspacePreserveModels_${LABEL_SUFFIX}
+        Rename "$INSTDIR\environment" "$INSTDIR.mindspace-preserve\environment"
+      mindspacePreserveModels_${LABEL_SUFFIX}:
+      IfFileExists "$INSTDIR\models\*" 0 mindspacePreserveData_${LABEL_SUFFIX}
+        Rename "$INSTDIR\models" "$INSTDIR.mindspace-preserve\models"
+      mindspacePreserveData_${LABEL_SUFFIX}:
+      IfFileExists "$INSTDIR\data\*" 0 mindspacePreserveDownloads_${LABEL_SUFFIX}
+        Rename "$INSTDIR\data" "$INSTDIR.mindspace-preserve\data"
+      mindspacePreserveDownloads_${LABEL_SUFFIX}:
+      IfFileExists "$INSTDIR\downloads\*" 0 mindspacePreserveLogs_${LABEL_SUFFIX}
+        Rename "$INSTDIR\downloads" "$INSTDIR.mindspace-preserve\downloads"
+      mindspacePreserveLogs_${LABEL_SUFFIX}:
+      IfFileExists "$INSTDIR\logs\*" 0 mindspacePreserveBackups_${LABEL_SUFFIX}
+        Rename "$INSTDIR\logs" "$INSTDIR.mindspace-preserve\logs"
+      mindspacePreserveBackups_${LABEL_SUFFIX}:
+      IfFileExists "$INSTDIR\backups\*" 0 mindspacePreserveDone_${LABEL_SUFFIX}
+        Rename "$INSTDIR\backups" "$INSTDIR.mindspace-preserve\backups"
+  mindspacePreserveDone_${LABEL_SUFFIX}:
 !macroend
 
 !macro mindspaceRetryOldUninstall LABEL_SUFFIX
@@ -104,15 +142,45 @@
 !macro customInstall
   ; Recovery for installers released before 0.4.7 that could leave the private
   ; runtime in environment.upgrade-preserve after a failed finalization step.
-  IfFileExists "$LOCALAPPDATA\Mindspace\environment.upgrade-preserve\*" 0 restoreEnvironmentDone
-  IfFileExists "$LOCALAPPDATA\Mindspace\environment\*" restoreEnvironmentDone 0
-  Rename "$LOCALAPPDATA\Mindspace\environment.upgrade-preserve" "$LOCALAPPDATA\Mindspace\environment"
+  ; Packaged Home now lives inside $INSTDIR, never under LocalAppData.
+  IfFileExists "$INSTDIR\environment.upgrade-preserve\*" 0 restoreEnvironmentDone
+  IfFileExists "$INSTDIR\environment\*" restoreEnvironmentDone 0
+  Rename "$INSTDIR\environment.upgrade-preserve" "$INSTDIR\environment"
   IfErrors 0 restoreEnvironmentDone
     Abort "Mindspace 应用已更新，但私有环境恢复失败。请重新运行安装器执行修复。"
   restoreEnvironmentDone:
+  ; Restore whole directories only when the new package did not create a
+  ; destination. If it did, desktop/storage-location.cjs imports the preserved
+  ; files one by one and records every conflict without overwriting either side.
+  IfFileExists "$INSTDIR.mindspace-preserve\environment\*" 0 restoreModelsDone
+  IfFileExists "$INSTDIR\environment\*" restoreModelsDone 0
+  Rename "$INSTDIR.mindspace-preserve\environment" "$INSTDIR\environment"
+  restoreModelsDone:
+  IfFileExists "$INSTDIR.mindspace-preserve\models\*" 0 restoreDataDone
+  IfFileExists "$INSTDIR\models\*" restoreDataDone 0
+  Rename "$INSTDIR.mindspace-preserve\models" "$INSTDIR\models"
+  restoreDataDone:
+  IfFileExists "$INSTDIR.mindspace-preserve\data\*" 0 restoreDownloadsDone
+  IfFileExists "$INSTDIR\data\*" restoreDownloadsDone 0
+  Rename "$INSTDIR.mindspace-preserve\data" "$INSTDIR\data"
+  restoreDownloadsDone:
+  IfFileExists "$INSTDIR.mindspace-preserve\downloads\*" 0 restoreLogsDone
+  IfFileExists "$INSTDIR\downloads\*" restoreLogsDone 0
+  Rename "$INSTDIR.mindspace-preserve\downloads" "$INSTDIR\downloads"
+  restoreLogsDone:
+  IfFileExists "$INSTDIR.mindspace-preserve\logs\*" 0 restoreBackupsDone
+  IfFileExists "$INSTDIR\logs\*" restoreBackupsDone 0
+  Rename "$INSTDIR.mindspace-preserve\logs" "$INSTDIR\logs"
+  restoreBackupsDone:
+  IfFileExists "$INSTDIR.mindspace-preserve\backups\*" 0 restorePreservedDone
+  IfFileExists "$INSTDIR\backups\*" restorePreservedDone 0
+  Rename "$INSTDIR.mindspace-preserve\backups" "$INSTDIR\backups"
+  restorePreservedDone:
+  RMDir "$INSTDIR.mindspace-preserve"
 !macroend
 
 !macro customUnInstall
+  !insertmacro mindspacePreserveInstallHome Uninstall
   ${ifNot} ${isUpdated}
     ; The application directory and shortcuts are owned by NSIS, but the
     ; Mindspace Home is user-selected and may contain conversations, profiles,

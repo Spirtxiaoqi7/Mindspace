@@ -60,7 +60,9 @@
 .model-quick-menu > div small, .model-quick-menu > div span { padding: 7px 8px; color: var(--dim); font-size: 0.5625rem; }
 .model-quick-menu > div button { padding: 9px; overflow: hidden; color: var(--muted); text-align: left; border: 0; border-radius: 9px; background: transparent; font-size: 0.625rem; text-overflow: ellipsis; white-space: nowrap; }
 .model-quick-menu > div button:hover, .model-quick-menu > div button.active { color: var(--text); background: var(--panel-3); }
-.composer-row .send.voice { color: #315f58; border: 1px solid rgba(78,138,144,.28); background: rgba(218,237,227,.82); box-shadow: none; font-size: 0.6875rem; }
+.composer-row .send.voice, .composer-row .send.voice-disabled { color: #315f58; border: 1px solid rgba(78,138,144,.28); background: rgba(218,237,227,.82); box-shadow: none; }
+.composer-row .send.voice-disabled { color: var(--dim); border-color: var(--line); background: var(--panel-3); }
+.composer-action-icon { display: block; width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .interaction-canvas { position: absolute; z-index: 32; right: 10px; bottom: calc(100% + 10px); width: min(440px, calc(100vw - 32px)); padding: 15px; border: 1px solid var(--line-strong); border-radius: 20px; background: color-mix(in srgb, var(--panel) 98%, transparent); box-shadow: 0 24px 72px rgba(84,55,36,.2); }
 .interaction-canvas header { display: flex; align-items: start; justify-content: space-between; margin-bottom: 14px; }
 .interaction-canvas header div { display: grid; gap: 4px; }
@@ -279,7 +281,7 @@ kbd { margin-left: auto; padding: 2px 6px; color: var(--dim); border: 1px solid 
 .composer-menu[open] > summary { color: var(--text); background: var(--panel-3); }
 .composer-menu > div { position: absolute; z-index: 30; left: 0; bottom: calc(100% + 8px); display: grid!important; min-width: 158px; padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--panel) 97%, transparent); box-shadow: var(--shadow); }
 .composer-menu > div button { display: flex; width: 100%; align-items: center; justify-content: flex-start; white-space: nowrap; font-size: 0.6875rem; }
-.composer-row .send { width: 44px; min-width: 44px; min-height: 44px; margin-left: auto; padding: 0; color: #fffaf2; border-radius: 12px; background: linear-gradient(135deg, var(--accent), var(--teal)); font-size: 1.125rem; font-weight: 800; box-shadow: 0 8px 20px rgba(78, 138, 144, 0.2); }
+.composer-row .send { display: inline-flex; width: 44px; min-width: 44px; height: 44px; min-height: 44px; margin-left: auto; padding: 0; overflow: hidden; align-items: center; justify-content: center; color: #fffaf2; border-radius: 12px; background: linear-gradient(135deg, var(--accent), var(--teal)); font-size: 1.125rem; font-weight: 800; line-height: 1; white-space: nowrap; box-shadow: 0 8px 20px rgba(78, 138, 144, 0.2); }
 .composer-row .send:disabled { color: var(--dim); background: var(--panel-3); box-shadow: none; }
 .composer-meta { display: flex; justify-content: space-between; padding: 7px 4px 0; color: var(--dim); font-size: 0.5rem; }
 .composer-meta button { color: var(--dim); border: 0; background: transparent; font-size: 0.5rem; }

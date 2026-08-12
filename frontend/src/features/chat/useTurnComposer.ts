@@ -316,13 +316,17 @@ export function useTurnComposer({
 
   const handleAttachmentFiles = useCallback(async (files: FileList | null) => {
     if (!files?.length) return;
-    const result = await mergeAttachmentFiles(
-      pendingAttachments,
-      Array.from(files),
-      Boolean(regenerationDraft),
-    );
-    setPendingAttachments(result.attachments);
-    if (result.feedback.length) notify(result.feedback.join("；"));
+    try {
+      const result = await mergeAttachmentFiles(
+        pendingAttachments,
+        Array.from(files),
+        Boolean(regenerationDraft),
+      );
+      setPendingAttachments(result.attachments);
+      if (result.feedback.length) notify(result.feedback.join("；"));
+    } catch (error) {
+      notify(`附件处理失败：${(error as Error).message || "无法读取所选文件"}`);
+    }
   }, [notify, pendingAttachments, regenerationDraft]);
 
   const removeAttachment = useCallback((attachment: ChatAttachment) => {
@@ -404,7 +408,7 @@ export function useTurnComposer({
     cancelRegenerationDraft,
     customInteraction,
     handleAttachmentFiles,
-    hasPayload: Boolean(input.trim() || pendingInteractions.length || pendingAttachments.length),
+    hasPayload: Boolean(input.length || pendingInteractions.length || pendingAttachments.length),
     input,
     inputRef,
     interactionBranch,

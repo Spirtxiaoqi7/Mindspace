@@ -2,13 +2,21 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const MOVABLE_PATHS = [
-  ["application", "core"],
   ["environment"],
   ["models"],
   ["data"],
   ["downloads"],
   ["logs"],
   ["backups"],
+];
+
+// Only these roots are user-owned and may ever cross an installation boundary.
+// The Core itself is immutable application code and is always replaced through
+// the signed/bootstrap package path, never copied from an old installation.
+const LEGACY_LAYOUT_PATHS = [
+  ["runtime", "data"],
+  ["runtime", "config"],
+  ["assets", "models"],
 ];
 
 function locationFile(app) {
@@ -20,34 +28,34 @@ function legacyLocalHome(app, environment = process.env) {
   return path.resolve(local, "Mindspace");
 }
 
-function installAlignedHome(app) {
+function installationDirectory(app) {
   if (!app?.isPackaged) return "";
   let executable = "";
   try { executable = app.getPath("exe"); } catch {}
   if (!executable || !path.isAbsolute(executable)) return "";
-  const installDirectory = path.dirname(path.resolve(executable));
-  const parent = path.dirname(installDirectory);
-  const candidate = path.resolve(parent, "MindspaceData");
-  if (
-    candidate.toLowerCase() === installDirectory.toLowerCase()
-    || candidate.toLowerCase().startsWith(`${installDirectory}${path.sep}`.toLowerCase())
-    || candidate.toLowerCase() === path.parse(candidate).root.toLowerCase()
-  ) return "";
-  try {
-    fs.accessSync(parent, fs.constants.W_OK);
-    return candidate;
-  } catch {
-    return "";
-  }
+  return path.dirname(path.resolve(executable));
+}
+
+function legacySiblingHome(app) {
+  const installDirectory = installationDirectory(app);
+  if (!installDirectory) return "";
+  return path.resolve(path.dirname(installDirectory), "MindspaceData");
+}
+
+function preservedInstallHome(app) {
+  const installDirectory = installationDirectory(app);
+  return installDirectory ? `${installDirectory}.mindspace-preserve` : "";
+}
+
+function installAlignedHome(app) {
+  // A portable Mindspace installation owns its complete Home. Keeping this
+  // derived exclusively from the executable makes upgrades and reinstalls
+  // resolve to the same directory on every drive.
+  return installationDirectory(app);
 }
 
 function packagedInstallHome(app) {
-  if (!app?.isPackaged) return "";
-  let executable = "";
-  try { executable = app.getPath("exe"); } catch {}
-  if (!executable || !path.isAbsolute(executable)) return "";
-  const installDirectory = path.dirname(path.resolve(executable));
-  return homeHasUserPayload(installDirectory) ? installDirectory : "";
+  return installationDirectory(app);
 }
 
 function homeHasUserPayload(home) {
@@ -56,6 +64,9 @@ function homeHasUserPayload(home) {
     path.join(home, "environment"),
     path.join(home, "models"),
     path.join(home, "data"),
+    path.join(home, "downloads"),
+    path.join(home, "logs"),
+    path.join(home, "backups"),
   ];
   const stack = roots.filter((item) => fs.existsSync(item));
   let inspected = 0;
@@ -74,17 +85,49 @@ function homeHasUserPayload(home) {
 }
 
 function defaultHome(app, environment = process.env) {
-  // Portable and previously deployed desktop builds keep the executable and
-  // the complete Mindspace payload in one directory. Prefer that authoritative
-  // deployment over stale LocalAppData remnants from older launchers.
+  // Packaged installations always keep both application files and mutable
+  // user content below the selected installation directory. Legacy locations
+  // are imported later without changing this authoritative destination.
   const packaged = packagedInstallHome(app);
   if (packaged) return packaged;
-  const legacy = legacyLocalHome(app, environment);
-  const aligned = installAlignedHome(app);
-  // Existing installations without an explicit location file used LocalAppData.
-  // Preserve that data and offer a transactional migration in the launcher.
-  if (homeHasUserPayload(legacy)) return legacy;
-  return aligned || legacy;
+  return legacyLocalHome(app, environment);
+}
+
+function treeHasFiles(root, { skip = () => false } = {}) {
+  if (!fs.existsSync(root)) return false;
+  const pending = [root];
+  let inspected = 0;
+  while (pending.length && inspected < 1024) {
+    const current = pending.pop();
+    let entries = [];
+    try { entries = fs.readdirSync(current, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      inspected += 1;
+      const target = path.join(current, entry.name);
+      if (skip(target, entry)) continue;
+      if (entry.isFile()) return true;
+      if (entry.isDirectory()) pending.push(target);
+      if (inspected >= 1024) break;
+    }
+  }
+  return false;
+}
+
+function homeHasMutablePayload(home) {
+  for (const parts of MOVABLE_PATHS) {
+    const root = path.join(home, ...parts);
+    if (parts[0] === "environment") {
+      if (treeHasFiles(root, { skip: (target) => path.relative(root, target).split(path.sep)[0] === "state" })) return true;
+    } else if (treeHasFiles(root)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function legacyHomeHasImportablePayload(home) {
+  if (homeHasMutablePayload(home)) return true;
+  return LEGACY_LAYOUT_PATHS.some((parts) => treeHasFiles(path.join(home, ...parts)));
 }
 
 function readHomeLocation(app, environment = process.env) {
@@ -109,11 +152,42 @@ function writeHomeLocation(app, home) {
   return target;
 }
 
+function storedHomeLocation(app) {
+  try {
+    const stored = JSON.parse(fs.readFileSync(locationFile(app), "utf8"));
+    return stored?.home && path.isAbsolute(stored.home) ? path.resolve(stored.home) : "";
+  } catch {
+    return "";
+  }
+}
+
+function legacyStorageHomes(app, environment = process.env, destination = "") {
+  const installHome = packagedInstallHome(app);
+  const stored = storedHomeLocation(app);
+  const target = path.resolve(destination || installHome || ".");
+  if (!installHome || environment.MINDSPACE_HOME || stored || target.toLowerCase() !== installHome.toLowerCase()) {
+    return [];
+  }
+  const seen = new Set();
+  let legacyWorkspace = "";
+  try { legacyWorkspace = path.join(app.getPath("userData"), "app"); } catch {}
+  return [legacySiblingHome(app), preservedInstallHome(app), legacyLocalHome(app, environment), legacyWorkspace]
+    .filter(Boolean)
+    .map((item) => path.resolve(item))
+    .filter((item) => item.toLowerCase() !== target.toLowerCase())
+    .filter((item) => {
+      const normalized = item.toLowerCase();
+      if (seen.has(normalized) || !legacyHomeHasImportablePayload(item)) return false;
+      seen.add(normalized);
+      return true;
+    });
+}
+
 function inspectStorageAlignment(app, environment = process.env, currentHome = readHomeLocation(app, environment)) {
   const current = path.resolve(currentHome);
   const recommended = installAlignedHome(app);
   const explicitEnvironment = Boolean(environment.MINDSPACE_HOME);
-  const stored = fs.existsSync(locationFile(app));
+  const stored = Boolean(storedHomeLocation(app));
   const aligned = Boolean(recommended && current.toLowerCase() === recommended.toLowerCase());
   const userSelected = explicitEnvironment || stored;
   return {
@@ -128,8 +202,8 @@ function inspectStorageAlignment(app, environment = process.env, currentHome = r
       : userSelected
         ? "正在使用用户指定的统一存储目录"
         : recommended
-          ? `检测到旧版 C 盘目录；可安全迁移到 ${recommended}`
-          : "安装目录不可写，已使用本机用户数据目录",
+        ? `检测到旧版存储目录；可安全迁移到 ${recommended}`
+          : "正在使用本机用户数据目录",
   };
 }
 
@@ -221,10 +295,6 @@ async function migrateStorage({ app, sourceHome, targetHome, onProgress = () => 
     }
     onProgress(84, "正在改写私有环境路径");
     await rewriteMovedPaths(staging, source, target);
-    const core = path.join(staging, "application", "core", "pyproject.toml");
-    if (fs.existsSync(path.join(source, "application", "core", "pyproject.toml")) && !fs.existsSync(core)) {
-      throw new Error("核心程序迁移校验失败");
-    }
     await fs.promises.rename(staging, target);
     promoted = true;
     const marker = path.join(target, "environment", "state", "storage-migration.json");
@@ -241,6 +311,88 @@ async function migrateStorage({ app, sourceHome, targetHome, onProgress = () => 
     if (promoted) await fs.promises.rm(target, { recursive: true, force: true });
     throw error;
   }
+}
+
+function copyLegacyTree(source, target, report) {
+  if (!fs.existsSync(source)) return;
+  const pending = [[source, target]];
+  while (pending.length) {
+    const [from, to] = pending.pop();
+    let entries;
+    try { entries = fs.readdirSync(from, { withFileTypes: true }); } catch (error) {
+      report.errors.push({ source: from, error: String(error.message || error) });
+      continue;
+    }
+    for (const entry of entries) {
+      const fromEntry = path.join(from, entry.name);
+      const toEntry = path.join(to, entry.name);
+      if (entry.isDirectory()) {
+        if (fs.existsSync(toEntry) && !fs.statSync(toEntry).isDirectory()) {
+          report.conflicts.push({ source: fromEntry, target: toEntry, reason: "target-is-file" });
+        } else {
+          fs.mkdirSync(toEntry, { recursive: true });
+          pending.push([fromEntry, toEntry]);
+        }
+        continue;
+      }
+      if (!entry.isFile()) {
+        report.skipped.push({ source: fromEntry, reason: "unsupported-entry" });
+        continue;
+      }
+      if (fs.existsSync(toEntry)) {
+        report.conflicts.push({ source: fromEntry, target: toEntry, reason: "target-exists" });
+        continue;
+      }
+      try {
+        fs.mkdirSync(path.dirname(toEntry), { recursive: true });
+        fs.copyFileSync(fromEntry, toEntry, fs.constants.COPYFILE_EXCL);
+        report.copied += 1;
+      } catch (error) {
+        report.errors.push({ source: fromEntry, target: toEntry, error: String(error.message || error) });
+      }
+    }
+  }
+}
+
+function migrateLegacyStorage(paths) {
+  const marker = path.join(paths.state, "legacy-storage-import-v1.json");
+  if (fs.existsSync(marker)) return JSON.parse(fs.readFileSync(marker, "utf8"));
+  const report = {
+    schema_version: "1.0.0",
+    completed_at: new Date().toISOString(),
+    sources: [],
+    copied: 0,
+    conflicts: [],
+    skipped: [],
+    errors: [],
+  };
+  // The first-launch migration is intentionally all-or-nothing. An existing
+  // installation may contain a newer session, model marker or private venv;
+  // merging old AppData into it makes the authoritative data root ambiguous.
+  if (homeHasMutablePayload(paths.home)) {
+    report.skipped = true;
+    report.reason = "target-not-empty";
+    report.sources = [...(paths.legacyStorageHomes || [])].map((source) => path.resolve(source));
+    fs.writeFileSync(marker, `${JSON.stringify(report, null, 2)}\n`);
+    return report;
+  }
+  for (const sourceHome of paths.legacyStorageHomes || []) {
+    const source = path.resolve(sourceHome);
+    if (!fs.existsSync(source)) continue;
+    report.sources.push(source);
+    for (const parts of MOVABLE_PATHS) {
+      const from = path.join(source, ...parts);
+      if (fs.existsSync(from)) copyLegacyTree(from, path.join(paths.home, ...parts), report);
+    }
+    const legacyData = path.join(source, "runtime", "data");
+    if (fs.existsSync(legacyData)) copyLegacyTree(legacyData, paths.data, report);
+    const legacyConfig = path.join(source, "runtime", "config");
+    if (fs.existsSync(legacyConfig)) copyLegacyTree(legacyConfig, path.join(paths.data, "config"), report);
+    const legacyModels = path.join(source, "assets", "models");
+    if (fs.existsSync(legacyModels)) copyLegacyTree(legacyModels, paths.models, report);
+  }
+  fs.writeFileSync(marker, `${JSON.stringify(report, null, 2)}\n`);
+  return report;
 }
 
 async function cleanupMigratedSource(paths) {
@@ -265,7 +417,8 @@ async function cleanupMigratedSource(paths) {
 
 module.exports = {
   MOVABLE_PATHS, assertStorageTarget, cleanupMigratedSource, defaultHome,
-  homeHasUserPayload, inspectStorageAlignment, installAlignedHome, legacyLocalHome,
-  locationFile, migrateStorage, packagedInstallHome, readHomeLocation, replacePrefix, rewriteMovedPaths,
-  writeHomeLocation,
+  homeHasMutablePayload, homeHasUserPayload, inspectStorageAlignment, installAlignedHome, installationDirectory, legacyLocalHome,
+  legacySiblingHome, legacyStorageHomes, locationFile, migrateLegacyStorage, migrateStorage,
+  packagedInstallHome, readHomeLocation, replacePrefix, rewriteMovedPaths, storedHomeLocation,
+  preservedInstallHome, writeHomeLocation,
 };

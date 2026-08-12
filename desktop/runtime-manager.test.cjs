@@ -415,6 +415,44 @@ test("runtime Python processes prefer the selected source and expose bounded off
   assert.match(initializer, /bundledRoot: app\.isPackaged/);
 });
 
+test("bounded runtime discovery adopts a moved complete component without downloading", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "mindspace-runtime-discovery-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const component = {
+    id: "tool", name: "Tool", description: "fixture", version: "2.0.0", kind: "archive",
+    required: true, dependencies: [], size: 1, sha256: "a".repeat(64), executable: "tool.exe",
+    probe: ["--version"], urls: ["https://example.invalid/tool.zip"],
+  };
+  const { manifest, publicKey } = signedManifest(component);
+  const manifestPath = path.join(root, "manifest.json");
+  const publicKeyPath = path.join(root, "public.pem");
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+  fs.writeFileSync(publicKeyPath, publicKey.export({ type: "spki", format: "pem" }));
+  const paths = {};
+  for (const name of ["home", "environment", "tools", "python", "venvs", "cache", "state", "models", "data", "downloads", "logs"]) {
+    paths[name] = name === "home" ? root : path.join(root, name);
+    fs.mkdirSync(paths[name], { recursive: true });
+  }
+  const moved = path.join(paths.tools, "tool", "previous-location", "tool.exe");
+  fs.mkdirSync(path.dirname(moved), { recursive: true });
+  fs.writeFileSync(moved, "fixture");
+  let fetched = false;
+  const manager = createRuntimeManager({
+    paths, corePath: () => root, manifestPath, publicKeyPath,
+    fetch: async () => { fetched = true; throw new Error("network must not be used"); },
+    extract: async () => {}, osRelease: () => "10.0.22621",
+    spawnSync: (executable) => executable === "nvidia-smi.exe"
+      ? { status: 1, stdout: "", stderr: "" }
+      : { status: 0, stdout: "tool 1.0.0", stderr: "" },
+  });
+  assert.equal(manager.snapshot().items[0].ready, true);
+  await manager.install("tool");
+  assert.equal(fetched, false);
+  const marker = JSON.parse(fs.readFileSync(path.join(paths.state, "components", "tool.json"), "utf8"));
+  assert.equal(marker.executable, moved);
+  assert.equal(marker.adopted, true);
+});
+
 test("launcher creates its window only after update and runtime managers are ready", () => {
   const main = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
   const startup = main.slice(main.indexOf("app.whenReady()"), main.indexOf("app.on(\"before-quit\""));

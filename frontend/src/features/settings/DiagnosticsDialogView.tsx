@@ -19,6 +19,7 @@ export function DiagnosticsDialog({
 }: DiagnosticsDialogProps) {
   const [report, setReport] = useState<DiagnosticReport | null>(null);
   const [loading, setLoading] = useState(true);
+  const [clearing, setClearing] = useState<"knowledge" | "sessions" | "all" | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -33,6 +34,7 @@ export function DiagnosticsDialog({
   }, [load]);
 
   const clear = async (scope: "knowledge" | "sessions" | "all") => {
+    if (clearing) return;
     const phrase = {
       knowledge: "CLEAR KNOWLEDGE",
       sessions: "CLEAR SESSIONS",
@@ -45,13 +47,20 @@ export function DiagnosticsDialog({
       confirmLabel: "确认清除",
       danger: true,
     }))) return;
-    await request("/api/v1/data/clear", {
-      method: "POST",
-      body: JSON.stringify({ scope, confirmation: phrase }),
-    });
-    notify("数据清理完成");
-    onCleared();
-    load();
+    setClearing(scope);
+    try {
+      await request("/api/v1/data/clear", {
+        method: "POST",
+        body: JSON.stringify({ scope, confirmation: phrase }),
+      });
+      notify("数据清理完成");
+      onCleared();
+      load();
+    } catch (error) {
+      notify(`数据清理失败：${(error as Error).message}`);
+    } finally {
+      setClearing(null);
+    }
   };
 
   return (
@@ -74,9 +83,9 @@ export function DiagnosticsDialog({
             <h3>危险数据操作</h3>
             <p>这些操作只影响当前新项目的 runtime，不会修改原 Mindscape 数据。</p>
             <div>
-              <button onClick={() => void clear("knowledge")}>清空知识库</button>
-              <button onClick={() => void clear("sessions")}>清空会话</button>
-              <button className="danger" onClick={() => void clear("all")}>清空全部运行数据</button>
+              <button disabled={Boolean(clearing)} onClick={() => void clear("knowledge")}>{clearing === "knowledge" ? "正在清空…" : "清空知识库"}</button>
+              <button disabled={Boolean(clearing)} onClick={() => void clear("sessions")}>{clearing === "sessions" ? "正在清空…" : "清空会话"}</button>
+              <button className="danger" disabled={Boolean(clearing)} onClick={() => void clear("all")}>{clearing === "all" ? "正在清空…" : "清空全部运行数据"}</button>
             </div>
           </section>
         </>

@@ -30,6 +30,7 @@
     "config\\service-ports.json",
     "config\\core-release-allowlist.json",
     "pyproject.toml",
+    "README.md",
     "uv.lock"
   ],
   "schema_version": "1.0.0",

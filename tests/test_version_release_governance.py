@@ -71,7 +71,7 @@ def test_sync_generates_source_tree_paths_and_independent_verifier_accepts_them(
 
     verified = run_node(VERIFY_SCRIPT, target)
     assert verified.returncode == 0, verified.stderr
-    assert "release targets=31" in verified.stdout
+    assert "release targets=32" in verified.stdout
 
 
 @pytest.mark.parametrize(

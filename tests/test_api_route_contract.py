@@ -169,6 +169,11 @@ EXPECTED_OPERATIONS = [
         "rewind_destiny_archetypes_api_v1_destiny_journeys__journey_id__rewind_archetypes_post",
     ),
     (
+        "/api/v1/destiny/journeys/{journey_id}/seed",
+        "put",
+        "reset_destiny_seed_api_v1_destiny_journeys__journey_id__seed_put",
+    ),
+    (
         "/api/v1/destiny/journeys/{journey_id}/selections",
         "delete",
         "clear_destiny_selections_api_v1_destiny_journeys__journey_id__selections_delete",

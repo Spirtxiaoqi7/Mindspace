@@ -3,6 +3,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
 
+test("desktop assembly imports every helper used while creating host controllers", () => {
+  const source = fs.readFileSync(path.join(__dirname, "main.cjs"), "utf8");
+  assert.match(source, /const \{ createOnboardingController, createOpenAiCompatibleFetch \} = require\("\.\/onboarding-controller\.cjs"\)/);
+  assert.match(source, /fetch: createOpenAiCompatibleFetch\(/);
+});
+
 const desktop = __dirname;
 const productionFiles = fs.readdirSync(desktop).filter((name) => name.endsWith(".cjs") && !name.endsWith(".test.cjs"));
 const sources = Object.fromEntries(productionFiles.map((name) => [name, fs.readFileSync(path.join(desktop, name), "utf8")]));
@@ -74,4 +80,15 @@ test("local production requires are acyclic and every new controller is called",
   for (const call of ["initializeServiceSupervisor()", "initializeSettingsController()", "initializeProductWindows()", "initializeUpdateManager()"]) {
     assert.ok(sources["main.cjs"].split(call).length >= 3, `${call} is declared but not invoked`);
   }
+});
+
+test("GPU service shutdown is graceful and never terminates an entire WSL distro", () => {
+  const supervisor = sources["service-supervisor.cjs"];
+  const stopScript = fs.readFileSync(path.resolve(__dirname, "..", "scripts", "stop-services.ps1"), "utf8");
+  const main = sources["main.cjs"];
+  assert.doesNotMatch(supervisor, /\["--terminate",\s*distro\]/);
+  assert.doesNotMatch(stopScript, /wsl\.exe\s+--terminate/);
+  assert.match(stopScript, /X-Mindspace-Service-Token/);
+  assert.match(stopScript, /\/shutdown/);
+  assert.doesNotMatch(main, /new Set\(\[\.\.\.children\.keys\(\),\s*"tts",\s*"qwenTts"\]\)/);
 });

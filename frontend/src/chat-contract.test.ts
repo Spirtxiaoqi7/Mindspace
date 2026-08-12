@@ -15,7 +15,6 @@ import {
   recoveredUserMessage,
   saveTurnRequestSnapshot,
   shouldRenderToolExecution,
-  shouldShowComposerAction,
   writeActiveRun,
 } from "./chat-contract";
 import type { ChatTurnRequest, ModelDiagnostics, ProviderHttpAttempt } from "./types";
@@ -139,8 +138,8 @@ describe("execution details and product gates", () => {
     expect(shouldRenderToolExecution({} as never)).toBe(false);
   });
 
-  it("uses live ASR readiness and renders only backend-probed provider capability", () => {
-    expect(shouldShowComposerAction(false, false, false)).toBe(false);
+  it("keeps the composer action available and distinguishes ASR readiness", () => {
+    expect(composerAction(false, false, false)).toBe("voice-disabled");
     expect(composerAction(false, true, false)).toBe("send");
     expect(composerAction(false, false, true)).toBe("voice");
     expect(providerToolCapability("supported")).toMatchObject({ native: true, state: "supported" });

@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("launcher", {
   snapshot: () => ipcRenderer.invoke("launcher:snapshot"),
+  localResource: (id, mode) => ipcRenderer.invoke("launcher:local-resource", { id, mode }),
   action: (service, action) => ipcRenderer.invoke("launcher:service", { service, action }),
   all: (action) => ipcRenderer.invoke("launcher:all", action),
   open: (kind) => ipcRenderer.invoke("launcher:open", kind),

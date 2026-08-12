@@ -112,6 +112,9 @@ if ($linuxLauncher.Contains("'") -or $linuxRuntimeRoot.Contains("'")) {
 $escapedLauncher = $linuxLauncher
 $escapedRuntime = $linuxRuntimeRoot
 $wrapperPath = Join-Path $runtimeRoot "start-qwen3-tts.sh"
+$ownerPath = Join-Path $runtimeRoot "qwen3-vllm.owner"
+$ownerToken = [Guid]::NewGuid().ToString('N')
+Set-Content -LiteralPath $ownerPath -Value $ownerToken -Encoding ascii
 $wrapper = @'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -119,6 +122,7 @@ source_launcher='__SOURCE_LAUNCHER__'
 runtime_root='__RUNTIME_ROOT__'
 qwen_port="${MINDSPACE_QWEN3_PORT:?MINDSPACE_QWEN3_PORT is required}"
 pid_path="$runtime_root/qwen3-vllm.pid"
+owner_path="$runtime_root/qwen3-vllm.owner"
 lock_path="$runtime_root/qwen3-vllm.lock"
 exec 9>"$lock_path"
 # A Launcher restart while vLLM is still compiling must never start a second
@@ -138,6 +142,7 @@ cleanup() {
   rm -f "$pid_path"
 }
 trap cleanup EXIT INT TERM
+export MINDSPACE_QWEN_OWNER="$(tr -d '\r\n' < "$owner_path")"
 "$source_launcher" &
 server_pid=$!
 printf '%s\n' "$server_pid" > "$pid_path"

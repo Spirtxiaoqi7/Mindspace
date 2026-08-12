@@ -20,9 +20,12 @@ test("application upgrades never remove the private environment or user data", (
   assert.match(source, /\/SD IDOK/);
   assert.doesNotMatch(source, /DeleteRegValue HKCU "\$\{UNINSTALL_REGISTRY_KEY\}" "UninstallString"/);
   assert.match(source, /!macro customInstall/);
-  assert.match(source, /IfFileExists "\$LOCALAPPDATA\\Mindspace\\environment\\\*" restoreEnvironmentDone/);
-  assert.doesNotMatch(source, /RMDir \/r "\$LOCALAPPDATA\\Mindspace\\environment\.upgrade-preserve"/);
-  assert.match(source, /Rename "\$LOCALAPPDATA\\Mindspace\\environment\.upgrade-preserve" "\$LOCALAPPDATA\\Mindspace\\environment"/);
+  assert.match(source, /!macro mindspacePreserveInstallHome LABEL_SUFFIX/);
+  assert.match(source, /Rename "\$INSTDIR\\environment" "\$INSTDIR\.mindspace-preserve\\environment"/);
+  assert.match(source, /Rename "\$INSTDIR\.mindspace-preserve\\environment" "\$INSTDIR\\environment"/);
+  assert.match(source, /Rename "\$INSTDIR\.mindspace-preserve\\data" "\$INSTDIR\\data"/);
+  assert.match(source, /Rename "\$INSTDIR\.mindspace-preserve\\models" "\$INSTDIR\\models"/);
+  assert.doesNotMatch(source, /\$LOCALAPPDATA\\Mindspace\\environment/);
 });
 
 test("all runtime policy modules are included in the packaged application", () => {

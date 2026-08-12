@@ -11,9 +11,11 @@ $ModelRoot = Join-Path $ProjectRoot 'assets\models\asr'
 $LogRoot = Join-Path $ProjectRoot 'artifacts\asr-final-e2e'
 $Stdout = Join-Path $LogRoot 'worker.stdout.log'
 $Stderr = Join-Path $LogRoot 'worker.stderr.log'
+$ShutdownToken = [Guid]::NewGuid().ToString('N')
 
 New-Item -ItemType Directory -Path $LogRoot -Force | Out-Null
 $env:PYTHONPATH = Join-Path $ProjectRoot 'src'
+$env:MINDSPACE_SERVICE_SHUTDOWN_TOKEN = $ShutdownToken
 $Worker = Start-Process -FilePath $PythonExe -ArgumentList @(
     '-m', 'mindspace_graph.asr_worker',
     '--host', '127.0.0.1',
@@ -55,7 +57,12 @@ try {
 }
 finally {
     if (-not $Worker.HasExited) {
-        Stop-Process -Id $Worker.Id
+        try {
+            Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$Port/shutdown" -Headers @{ 'X-Mindspace-Service-Token' = $ShutdownToken } -TimeoutSec 3 | Out-Null
+            if (-not $Worker.WaitForExit(30000)) { throw 'ASR worker did not exit gracefully within 30 seconds' }
+        } catch {
+            Write-Error "ASR graceful shutdown failed; process was left intact for diagnosis: $($_.Exception.Message)"
+        }
     }
     Start-Sleep -Milliseconds 500
     Write-Output 'ASR_E2E_WORKER_STDERR_TAIL'

@@ -171,6 +171,37 @@ def create_app(
             if not destiny_avatar_is_referenced(candidate.name):
                 candidate.unlink(missing_ok=True)
 
+    def bind_destiny_avatar(journey: dict[str, Any]) -> dict[str, Any]:
+        """Turn an upload preview into a journey-owned immutable snapshot."""
+        seed = journey.get("seed") if isinstance(journey.get("seed"), dict) else {}
+        avatar = deepcopy(seed.get("avatar") or {})
+        src = str(avatar.get("src") or "")
+        prefix = f"{destiny_avatar_prefix}destiny-upload-"
+        if not src.startswith(prefix):
+            return journey
+        filename = src.removeprefix(destiny_avatar_prefix)
+        if Path(filename).name != filename:
+            raise ValueError("命格头像地址无效，请重新上传头像。")
+        source = (avatar_root / filename).resolve()
+        if source.parent != avatar_root.resolve() or not source.is_file():
+            raise ValueError("命格头像暂存已失效，请重新上传头像。")
+        journey_id = str(journey["journey_id"])
+        target_name = f"destiny-journey-{journey_id}-{uuid4().hex}{source.suffix.lower()}"
+        target = avatar_root / target_name
+        temporary = target.with_name(f".{target.name}.{uuid4().hex}.tmp")
+        try:
+            temporary.write_bytes(source.read_bytes())
+            temporary.replace(target)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
+        source.unlink(missing_ok=True)
+        avatar["src"] = f"{destiny_avatar_prefix}{target_name}"
+        updated = deepcopy(journey)
+        updated.setdefault("seed", {})["avatar"] = avatar
+        container.database.put_document(destiny._key(journey_id), updated)
+        return updated
+
     def promote_destiny_avatar(record: dict[str, Any]) -> dict[str, Any]:
         """Move a committed journey avatar into its character-owned directory."""
         avatar = deepcopy(record.get("avatar") or {})
@@ -237,6 +268,7 @@ def create_app(
         recover_settings_transaction=recover_settings_transaction,
         destiny_avatar_is_referenced=destiny_avatar_is_referenced,
         cleanup_unreferenced_destiny_avatars=cleanup_unreferenced_destiny_avatars,
+        bind_destiny_avatar=bind_destiny_avatar,
         promote_destiny_avatar=promote_destiny_avatar,
     )
     register_system_routes(app, context)

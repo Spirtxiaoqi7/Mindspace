@@ -68,6 +68,21 @@ $StagedPyproject = Join-Path $Payload 'pyproject.toml'
 $PyprojectText = Get-Content -LiteralPath $StagedPyproject -Raw
 $PyprojectText = [regex]::Replace($PyprojectText, '(?m)^version\s*=\s*"[^"]+"', "version = `"$Version`"", 1)
 Set-Content -LiteralPath $StagedPyproject -Value $PyprojectText -Encoding utf8
+
+# Hatchling reads project metadata while uv installs the bundled Core as an
+# editable project. Validate every metadata file declared by pyproject before
+# an archive is created, so a broken package cannot trigger a futile runtime
+# rebuild on an end-user machine.
+$MetadataFiles = @()
+if ($PyprojectText -match '(?m)^readme\s*=\s*["'']([^"'']+)["'']') { $MetadataFiles += $Matches[1] }
+if ($PyprojectText -match '(?m)^license\s*=\s*\{\s*file\s*=\s*["'']([^"'']+)["'']\s*\}') { $MetadataFiles += $Matches[1] }
+if ($PyprojectText -match '(?m)^license-file\s*=\s*["'']([^"'']+)["'']') { $MetadataFiles += $Matches[1] }
+foreach ($relative in $MetadataFiles | Select-Object -Unique) {
+    if ([IO.Path]::IsPathRooted($relative) -or $relative -match '(^|[\\/])\.\.([\\/]|$)') { throw "Invalid Core metadata path: $relative" }
+    if (-not (Test-Path -LiteralPath (Join-Path $Payload $relative) -PathType Leaf)) {
+        throw "Core package metadata file is missing: $relative"
+    }
+}
 Set-Content -LiteralPath (Join-Path $Payload 'src\mindspace_graph\version.py') -Encoding utf8 -Value @"
 `"`"`"Build version synchronized from the project release source.`"`"`"
 

@@ -1,8 +1,12 @@
 import { useEffect, useRef } from "react";
-import { closeOpenMenusOutside, composerAction, shouldShowComposerAction } from "../chat-contract";
+import { closeOpenMenusOutside, composerAction } from "../chat-contract";
 import type { ChatAttachment, InteractionTag, Message } from "../types";
 
 type InteractionBranch = "root" | "touch" | "kiss";
+
+function MicrophoneIcon() {
+  return <svg className="composer-action-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.25a4 4 0 0 0 4-4V6a4 4 0 1 0-8 0v5.25a4 4 0 0 0 4 4Z" /><path d="M5.5 10.75v.5a6.5 6.5 0 0 0 13 0v-.5M12 17.75V21M9 21h6" /></svg>;
+}
 
 export interface ComposerProps {
   generating: boolean;
@@ -58,6 +62,7 @@ export function Composer(props: ComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const interactionCanvasRef = useRef<HTMLDivElement>(null);
   const actionKind = composerAction(props.generating, props.hasPayload, props.asrReady);
+  const actionDisabled = actionKind === "voice-disabled";
   const gradedInteraction = props.interactionBranch === "touch" ? "touch" : "kiss";
 
   useEffect(() => {
@@ -88,7 +93,7 @@ export function Composer(props: ComposerProps) {
           <details className="composer-menu composer-add-menu"><summary aria-label="更多对话功能"><span className="visually-hidden">更多</span><b aria-hidden="true">＋</b></summary><div><button onClick={() => fileInputRef.current?.click()}>上传文件</button><button onClick={props.onOpenScenes}>场景 · {props.sceneTitle || "未选择"}</button><button onClick={props.onShowFlow}>会话流程与执行详情</button><button onClick={props.onShowContext}>RAG 引用 <b>{props.retrievalCount}</b></button><button onClick={props.onExportSession}>导出当前会话</button><button className={`adult-entry${props.adultMode ? " active" : ""}`} aria-label="NSFW" aria-pressed={props.adultMode} onClick={props.onToggleAdultMode}>NSFW <span>{props.adultMode ? "已开启" : "已关闭"}</span></button>{props.adultMode && <label className="r18-style-menu-label"><span>成人模式风格</span><select className="r18-style-select" value={props.r18StyleId} aria-label="R18 风格包" onChange={(event) => props.onR18StyleId(event.target.value)}><option value="high_intensity">高强度推进</option><option value="immersive_narrative">叙事沉浸</option><option value="dialogue_led">台词主导</option></select></label>}<button className="composer-clear-action" onClick={props.onClearCurrent}>清空当前上下文</button></div></details>
         </div>
         <details className="model-quick-menu" onToggle={(event) => { if (event.currentTarget.open) props.onLoadModels(); }}><summary title={props.modelBaseUrl}>{props.model || "选择模型"}</summary><div><small>当前 API URL 可用模型</small><small>{props.modelToolLabel}</small>{props.modelsLoading && <span>正在读取…</span>}{props.availableModels.map((model) => <button className={model === props.model ? "active" : ""} key={model} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); props.onChooseModel(model); }}>{model}</button>)}</div></details>
-        {shouldShowComposerAction(props.generating, props.hasPayload, props.asrReady) && <button className={`send${actionKind === "voice" ? " voice" : ""}`} onClick={actionKind === "cancel" ? props.onCancel : actionKind === "send" ? (props.regenerationDraft ? props.onSendRegeneration : props.onSend) : props.onOpenVoice} aria-label={actionKind === "cancel" ? "停止生成" : actionKind === "send" ? "发送消息" : "开始语音"}>{actionKind === "cancel" ? "■" : actionKind === "send" ? "↑" : "●"}</button>}
+        <button className={`send${actionKind === "voice" ? " voice" : ""}${actionDisabled ? " voice-disabled" : ""}`} disabled={actionDisabled} onClick={actionKind === "cancel" ? props.onCancel : actionKind === "send" ? (props.regenerationDraft ? props.onSendRegeneration : props.onSend) : props.onOpenVoice} aria-label={actionKind === "cancel" ? "停止生成" : actionKind === "send" ? "发送消息" : actionKind === "voice" ? "开始语音" : "语音未启用，请先配置"} title={actionDisabled ? "语音未启用，请先在设置中配置 ASR" : undefined}>{actionKind === "cancel" ? "■" : actionKind === "send" ? "↑" : <MicrophoneIcon />}</button>
       </div>
     </div>
     <div className="composer-meta"><span>Enter 发送 · Shift+Enter 换行 · Esc 打断</span><span>{props.adultMode ? "NSFW 已开启" : "表达方式自动适配"}</span></div>

@@ -1,6 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
-const { readHomeLocation } = require("./storage-location.cjs");
+const { legacyStorageHomes, migrateLegacyStorage, readHomeLocation } = require("./storage-location.cjs");
 
 function mindspaceHome(app, environment = process.env) {
   return readHomeLocation(app, environment);
@@ -10,6 +10,7 @@ function appPaths(app, environment = process.env) {
   const home = mindspaceHome(app, environment);
   return {
     home,
+    legacyStorageHomes: legacyStorageHomes(app, environment, home),
     application: path.join(home, "application"),
     core: path.join(home, "application", "core"),
     environment: path.join(home, "environment"),
@@ -31,6 +32,7 @@ function ensureAppPaths(paths) {
     "home", "application", "environment", "tools", "python", "venvs", "cache",
     "state", "models", "data", "downloads", "logs", "backups",
   ]) fs.mkdirSync(paths[key], { recursive: true });
+  migrateLegacyStorage(paths);
   return paths;
 }
 

@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 
 const SETTINGS_SECRET_FIELDS = Object.freeze([
   ["llm", "api_key", "llm_api_key"],
@@ -19,26 +20,44 @@ function writeJsonAtomic(file, value) {
   }
 }
 
-function createSecretStore({ file, safeStorage }) {
+function createSecretStore({ file, safeStorage, scopeRoot = "" }) {
+  const scope = scopeRoot
+    ? crypto.createHash("sha256").update(path.resolve(scopeRoot).toLowerCase(), "utf8").digest("hex")
+    : "";
   function assertAvailable() {
     if (!safeStorage?.isEncryptionAvailable?.()) throw new Error("Windows secure storage is unavailable; API credentials were not saved");
   }
   function readDocument() {
     try {
       const value = JSON.parse(fs.readFileSync(file, "utf8"));
-      return value.schema_version === "1.0.0" ? value : { schema_version: "1.0.0", secrets: {} };
-    } catch { return { schema_version: "1.0.0", secrets: {} }; }
+      if (!value || typeof value !== "object" || !value.secrets || typeof value.secrets !== "object") return { schema_version: "1.1.0", scope, secrets: {} };
+      if (scope && value.scope && value.scope !== scope) return { schema_version: "1.1.0", scope, secrets: {}, scopeMismatch: true };
+      return { schema_version: "1.1.0", scope, secrets: value.secrets };
+    } catch { return { schema_version: "1.1.0", scope, secrets: {} }; }
+  }
+  function ensureScope() {
+    const document = readDocument();
+    if (document.scopeMismatch) return { ok: false, reason: "scope_mismatch" };
+    if (scope && (!fs.existsSync(file) || readJsonScope() !== scope)) writeJsonAtomic(file, document);
+    return { ok: true };
+  }
+  function readJsonScope() {
+    try { return String(JSON.parse(fs.readFileSync(file, "utf8")).scope || ""); } catch { return ""; }
   }
   function get(name) {
-    const encoded = readDocument().secrets?.[name];
+    const document = readDocument();
+    if (document.scopeMismatch) return "";
+    const encoded = document.secrets?.[name];
     if (!encoded) return "";
     assertAvailable();
     return safeStorage.decryptString(Buffer.from(encoded, "base64"));
   }
   function status(name) {
     if (!SETTINGS_SECRET_FIELDS.some((entry) => entry[2] === name)) throw new Error(`Unsupported secret field: ${name}`);
-    const encoded = readDocument().secrets?.[name];
+    const document = readDocument();
+    const encoded = document.secrets?.[name];
     const available = Boolean(safeStorage?.isEncryptionAvailable?.());
+    if (document.scopeMismatch) return { configured: false, persisted: false, source: "secure_storage_scope_mismatch", available };
     if (!encoded) return {
       configured: false,
       persisted: false,
@@ -61,6 +80,7 @@ function createSecretStore({ file, safeStorage }) {
   function apply(changes) {
     assertAvailable();
     const document = readDocument();
+    if (document.scopeMismatch) throw new Error("Encrypted credentials belong to a different Mindspace installation");
     document.secrets ||= {};
     for (const [name, value] of Object.entries(changes || {})) {
       if (!SETTINGS_SECRET_FIELDS.some((entry) => entry[2] === name)) throw new Error(`Unsupported secret field: ${name}`);
@@ -69,6 +89,18 @@ function createSecretStore({ file, safeStorage }) {
       else delete document.secrets[name];
     }
     writeJsonAtomic(file, document);
+  }
+  function snapshot() {
+    if (!fs.existsSync(file)) return { exists: false, contents: "" };
+    return { exists: true, contents: fs.readFileSync(file, "utf8") };
+  }
+  function restore(snapshot) {
+    if (!snapshot?.exists) {
+      fs.rmSync(file, { force: true });
+      return;
+    }
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, snapshot.contents, { encoding: "utf8", mode: 0o600 });
   }
   function migrateProductConfig(settingsFile) {
     if (!fs.existsSync(settingsFile)) return { migrated: [] };
@@ -85,7 +117,7 @@ function createSecretStore({ file, safeStorage }) {
     if (migrated.length) writeJsonAtomic(settingsFile, config);
     return { migrated };
   }
-  return { apply, get, migrateProductConfig, set, status };
+  return { apply, ensureScope, get, migrateProductConfig, restore, set, snapshot, status };
 }
 
 function enhanceCredentialStatus(payload, secretStore) {
@@ -149,12 +181,8 @@ function createSettingsSaveCoordinator({ secretStore, patchCore }) {
       } catch (error) {
         return { ok: false, status: 400, phase: "validation", core_applied: false, secret_persisted: false, error: String(error.message || error) };
       }
-      let corePayload;
-      try {
-        corePayload = await patchCore(prepared.corePatch);
-      } catch (error) {
-        return { ok: false, status: Number(error.status || 502), phase: "core", core_applied: false, secret_persisted: false, error: String(error.message || error) };
-      }
+      const secretSnapshot = prepared.secretChanges && Object.keys(prepared.secretChanges).length
+        ? secretStore.snapshot?.() : null;
       const hasSecretChanges = Object.keys(prepared.secretChanges).length > 0;
       if (hasSecretChanges) {
         try {
@@ -164,12 +192,31 @@ function createSettingsSaveCoordinator({ secretStore, patchCore }) {
             ok: false,
             status: 500,
             phase: "secret_store",
-            core_applied: true,
+            core_applied: false,
             secret_persisted: false,
             retryable: true,
-            error: `Core 已应用设置，但 Windows 安全存储失败；旧密钥仍保留，请重试：${String(error.message || error)}`,
+            error: `Windows 安全存储失败，API 密钥未保存：${String(error.message || error)}`,
           };
         }
+      }
+      let corePayload;
+      try {
+        corePayload = await patchCore(prepared.corePatch);
+      } catch (error) {
+        try {
+          if (secretSnapshot) secretStore.restore(secretSnapshot);
+        } catch (rollbackError) {
+          return {
+            ok: false,
+            status: 500,
+            phase: "rollback",
+            core_applied: false,
+            secret_persisted: false,
+            retryable: true,
+            error: `Core 未应用设置且安全凭据回滚失败：${String(rollbackError.message || rollbackError)}`,
+          };
+        }
+        return { ok: false, status: Number(error.status || 502), phase: "core", core_applied: false, secret_persisted: false, error: String(error.message || error) };
       }
       return {
         ok: true,

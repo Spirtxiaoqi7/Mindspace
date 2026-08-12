@@ -57,17 +57,27 @@ function props(overrides: Partial<ComposerProps> = {}): ComposerProps {
   };
 }
 
-it("shows voice only when live ASR is ready and switches to send for payload", async () => {
+it("keeps the voice action visible when ASR is unavailable and switches on raw input", async () => {
   const user = userEvent.setup();
   const openVoice = vi.fn();
-  const { rerender } = render(<Composer {...props({ asrReady: true, onOpenVoice: openVoice })} />);
-  await user.click(screen.getByRole("button", { name: "开始语音" }));
-  expect(openVoice).toHaveBeenCalledOnce();
+  const { rerender } = render(<Composer {...props({ onOpenVoice: openVoice })} />);
+  const disabledVoice = screen.getByRole("button", { name: "语音未启用，请先配置" });
+  expect(disabledVoice).toBeDisabled();
+  expect(disabledVoice.querySelector("svg")).toBeInTheDocument();
 
   const send = vi.fn();
-  rerender(<Composer {...props({ asrReady: true, hasPayload: true, input: "你好", onSend: send })} />);
+  rerender(<Composer {...props({ input: " ", hasPayload: true, onSend: send })} />);
   await user.click(screen.getByRole("button", { name: "发送消息" }));
   expect(send).toHaveBeenCalledOnce();
+
+  const readyVoice = vi.fn();
+  rerender(<Composer {...props({ asrReady: true, onOpenVoice: readyVoice })} />);
+  await user.click(screen.getByRole("button", { name: "开始语音" }));
+  expect(readyVoice).toHaveBeenCalledOnce();
+
+  rerender(<Composer {...props({ asrReady: true, hasPayload: true, input: "你好", onSend: send })} />);
+  await user.click(screen.getByRole("button", { name: "发送消息" }));
+  expect(send).toHaveBeenCalledTimes(2);
 });
 
 it("keeps missing attachment metadata visible and removable before regeneration", async () => {

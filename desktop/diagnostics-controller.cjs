@@ -35,16 +35,20 @@ function createDiagnosticsController({ app, currentLayout, downloadSource, logRo
     };
     writeJsonAtomic(path.join(folder, "diagnostic-report.json"), report);
     const diagnosticLogs = new Set([
+      "environment-registry.jsonl",
       "runtime-manager.jsonl",
       "component-download.log",
-      "maintenance-verify.log",
+      "update-controller.jsonl",
       "api.launcher.log",
       "asr.launcher.log",
       "tts.launcher.log",
     ]);
     try {
       for (const entry of fs.readdirSync(logs, { withFileTypes: true })) {
-        if (entry.isFile() && /^[a-z0-9._-]+\.install\.log$/i.test(entry.name)) diagnosticLogs.add(entry.name);
+        if (entry.isFile() && (
+          /^[a-z0-9._-]+\.install\.log$/i.test(entry.name)
+          || /^(?:maintenance|update)[a-z0-9._-]*\.(?:log|jsonl)$/i.test(entry.name)
+        )) diagnosticLogs.add(entry.name);
       }
     } catch {
       // A fresh install legitimately has no log directory yet.
@@ -53,6 +57,9 @@ function createDiagnosticsController({ app, currentLayout, downloadSource, logRo
       const content = tailLog(path.join(logs, name));
       if (content) fs.writeFileSync(path.join(folder, name), `${content}\n`, "utf8");
     }
+    const stabilityLog = path.join(app.getPath("userData"), "mindspace-stability.log");
+    const stabilityContent = tailLog(stabilityLog);
+    if (stabilityContent) fs.writeFileSync(path.join(folder, "mindspace-stability.log"), `${stabilityContent}\n`, "utf8");
     return folder;
   }
 

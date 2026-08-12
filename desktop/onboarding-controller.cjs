@@ -1,8 +1,22 @@
-const { ONBOARDING_VERSION, deriveOnboardingSnapshot, normalizeVoicePreference, voicePreferenceFromProvider } = require("./onboarding-policy.cjs");
+const { ONBOARDING_VERSION, deriveOnboardingSnapshot, isLoopbackUrl, normalizeVoicePreference, voicePreferenceFromProvider } = require("./onboarding-policy.cjs");
+
+function createOpenAiCompatibleFetch({ externalFetch, localFetch }) {
+  return (input, init) => (isLoopbackUrl(input) ? localFetch : externalFetch)(input, init);
+}
+
+function modelConnectionError(error) {
+  const code = String(error?.cause?.code || error?.code || "").toUpperCase();
+  const message = String(error?.message || "");
+  if (["ECONNREFUSED", "ECONNRESET", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT"].includes(code)
+    || /ERR_CONNECTION_REFUSED|ECONNREFUSED/i.test(message)) {
+    return new Error("无法连接模型服务，请检查网络、API 地址或系统代理");
+  }
+  return error;
+}
 
 function createOnboardingController({
   configuredLlm, fetch, getComponentManager, getSettingsController, getVoiceController,
-  normalizeLlmInput, readLauncherConfig, runtimeAction, runtimeSnapshot, writeLauncherConfig,
+  normalizeLlmInput, onCompleted, readLauncherConfig, runtimeAction, runtimeSnapshot, writeLauncherConfig,
 }) {
   function snapshot() {
     const launcherConfig = readLauncherConfig();
@@ -40,7 +54,7 @@ function createOnboardingController({
       return { ok: true, llm };
     } catch (error) {
       if (controller.signal.aborted) throw new Error("连接模型服务超时，请检查网络或 API 地址");
-      throw error;
+      throw modelConnectionError(error);
     } finally { clearTimeout(timer); }
   }
 
@@ -50,7 +64,16 @@ function createOnboardingController({
     if (!saved.ok) throw new Error(saved.error || "设置保存失败");
     const current = snapshot();
     update({ llmConfiguredAt: new Date().toISOString(), ...(current.baseReady ? { completedAt: new Date().toISOString() } : {}) });
-    return { ok: true, warning: "", onboarding: snapshot() };
+    let warning = "";
+    if (snapshot().complete && onCompleted) {
+      try {
+        const result = await onCompleted();
+        if (result?.ok === false && !result.skipped) warning = result.error || "模型配置已保存，但 Mindspace Core 尚未就绪";
+      } catch (error) {
+        warning = error?.message || "模型配置已保存，但 Mindspace Core 尚未就绪";
+      }
+    }
+    return { ok: true, warning, onboarding: snapshot() };
   }
 
   function registerIpc(ipcMain) {
@@ -99,4 +122,4 @@ function createOnboardingController({
   return { registerIpc, snapshot, update };
 }
 
-module.exports = { createOnboardingController };
+module.exports = { createOnboardingController, createOpenAiCompatibleFetch };

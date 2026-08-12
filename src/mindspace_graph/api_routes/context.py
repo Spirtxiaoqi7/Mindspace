@@ -133,18 +133,16 @@ def _character_summary(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def _avatar_suffix(filename: str, data: bytes) -> str:
-    suffix = Path(filename or "").suffix.lower()
-    if suffix not in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
-        raise ValueError("unsupported avatar format")
-    valid = (
-        data.startswith(b"\x89PNG\r\n\x1a\n")
-        or data.startswith(b"\xff\xd8\xff")
-        or (data.startswith(b"RIFF") and data[8:12] == b"WEBP")
-        or data.startswith((b"GIF87a", b"GIF89a"))
-    )
-    if not valid:
-        raise ValueError("avatar content does not match a supported image")
-    return ".jpg" if suffix == ".jpeg" else suffix
+    del filename  # The file signature, not a browser MIME type or suffix, is authoritative.
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return ".webp"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return ".gif"
+    raise ValueError("头像文件已损坏或格式不受支持。请上传 PNG、JPEG、WebP 或 GIF 图片。")
 
 
 def _safe_archive_name(value: str) -> str:
@@ -268,6 +266,7 @@ class ApiContext:
     recover_settings_transaction: Any
     destiny_avatar_is_referenced: Any
     cleanup_unreferenced_destiny_avatars: Any
+    bind_destiny_avatar: Any
     promote_destiny_avatar: Any
 
 

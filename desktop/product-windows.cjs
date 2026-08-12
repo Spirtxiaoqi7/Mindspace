@@ -63,6 +63,7 @@ function createProductWindows(dependencies) {
       width: 1180, height: 760, minWidth: 920, minHeight: 620,
       show: !captureArg || Boolean(captureDashboardArg), backgroundColor: "#0b0d11", titleBarStyle: "hidden",
       titleBarOverlay: { color: "#0b0d11", symbolColor: "#bbc4d0", height: 40 },
+      icon: path.join(dirname, "assets", "mindspace-icon.ico"),
       webPreferences: { preload: path.join(dirname, "preload.cjs"), contextIsolation: true, nodeIntegration: false },
     });
     setLauncher(win);
