@@ -359,6 +359,60 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
     }
   }
 
+  function isStaleJourneyRevision(reason: unknown): boolean {
+    return reason instanceof HttpError
+      && reason.status === 409
+      && /stale destiny journey revision/i.test(reason.message);
+  }
+
+  async function recoverStaleJourney(current: Journey): Promise<Journey | null> {
+    try {
+      const recovered = await apiV1Request<Journey>(`/destiny/journeys/${current.journey_id}`);
+      const generatedCards = Object.values(recovered.cards_by_slot || {}).reduce((total, cards) => total + cards.length, 0);
+      setJourney(recovered);
+      window.localStorage.setItem(RESUME_KEY, recovered.journey_id);
+      setError("");
+
+      if (recovered.status === "archetypes_generating") {
+        setModelState("archetypes");
+        setFallbackStage("");
+        setSeedOpen(true);
+        setStageOpen(false);
+        setNotice("角色方向仍在生成，已同步服务器进度。完成后可继续下一步。");
+      } else if (recovered.status === "cards_generating") {
+        setModelState("cards");
+        setFallbackStage("");
+        setSeedOpen(true);
+        setStageOpen(false);
+        setNotice("命签仍在生成，已同步服务器进度。完成后会恢复到画布。");
+      } else if (generatedCards === 96) {
+        const next = slots.find((slot) => !recovered.selections?.[slot.id]) || slots[0];
+        setModelState("idle");
+        setFallbackStage("");
+        setSeedOpen(false);
+        setStageOpen(true);
+        setActiveSlotId(next?.id || "");
+        setPreviewCardId(recovered.selections?.[next?.id || ""]?.card_id || "");
+        setNotice("检测到命格状态已更新，已恢复最新的 96 张命签与选择进度。");
+      } else if (recovered.archetypes.length === 8) {
+        setModelState("cards_failed");
+        setFallbackStage("cards");
+        setSeedOpen(true);
+        setStageOpen(false);
+        setNotice(`检测到命格状态已更新，8 个角色方向和 ${generatedCards}/96 张命签已保留，请继续生成命签。`);
+      } else {
+        setModelState("archetypes_failed");
+        setFallbackStage("archetypes");
+        setSeedOpen(true);
+        setStageOpen(false);
+        setNotice("检测到命格状态已更新，请重新生成角色方向。");
+      }
+      return recovered;
+    } catch {
+      return null;
+    }
+  }
+
   async function runCards(current: Journey, useDefault = false) {
     setModelState("cards");
     setError("");
@@ -390,6 +444,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
         if (next) focusNode(next);
       }, 420);
     } catch (reason) {
+      if (isStaleJourneyRevision(reason) && await recoverStaleJourney(current)) return;
       let recovered: Journey | null = null;
       try {
         recovered = await apiV1Request<Journey>(`/destiny/journeys/${current.journey_id}`);
@@ -417,6 +472,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
       setJourney(directions);
       await runCards(directions, useDefault);
     } catch (reason) {
+      if (isStaleJourneyRevision(reason) && await recoverStaleJourney(current)) return;
       try {
         setJourney(await apiV1Request<Journey>(`/destiny/journeys/${current.journey_id}`));
       } catch {
@@ -454,6 +510,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
       window.localStorage.setItem(RESUME_KEY, created.journey_id);
       await runArchetypes(created);
     } catch (reason) {
+      if (journey && isStaleJourneyRevision(reason) && await recoverStaleJourney(journey)) return;
       setModelState("idle");
       setError(reason instanceof Error ? reason.message : "角色种子创建失败");
     }
@@ -488,6 +545,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
       setActiveSlotId(""); setPreviewCardId(""); setRotation(0);
       setNotice("已撤回 8 个角色方向和 96 张命签；种子仍保留，可以重新生成或使用默认模板。");
     } catch (reason) {
+      if (isStaleJourneyRevision(reason) && await recoverStaleJourney(journey)) return;
       setError(reason instanceof Error ? reason.message : "回退角色方向失败");
     } finally {
       setSavingSelection(false);
@@ -552,6 +610,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
         }
       }, 620);
     } catch (reason) {
+      if (isStaleJourneyRevision(reason) && await recoverStaleJourney(journey)) return;
       setError(reason instanceof Error ? reason.message : "保存选择失败");
     } finally {
       setSavingSelection(false);
@@ -577,6 +636,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
       setCompletionOpen(false);
       setNotice("十二项选择已清空，角色方向和 96 张命签仍被保留。");
     } catch (reason) {
+      if (isStaleJourneyRevision(reason) && await recoverStaleJourney(journey)) return;
       setError(reason instanceof Error ? reason.message : "解契失败");
     } finally {
       setSavingSelection(false);
@@ -598,6 +658,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
       setPreviewCardId(""); setRotation(0); setStageOpen(true);
       setNotice(`已回退到 ${previous.axis}，请重新选择。`); focusNode(previous);
     } catch (reason) {
+      if (isStaleJourneyRevision(reason) && await recoverStaleJourney(journey)) return;
       setError(reason instanceof Error ? reason.message : "回退上一步失败");
     } finally {
       setSavingSelection(false);
@@ -616,6 +677,8 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
       setModelState("idle");
       return updated;
     } catch (reason) {
+      const recovered = isStaleJourneyRevision(reason) ? await recoverStaleJourney(current) : null;
+      if (recovered) return recovered.final_card ? recovered : null;
       setModelState("synthesis_failed");
       setError(reason instanceof Error ? reason.message : "V2 合成失败");
       return null;
@@ -633,6 +696,7 @@ export default function DestinyCanvas({ defaultUserName, onBack, onCancel, onCom
       window.localStorage.setItem(PENDING_CHAT_KEY, JSON.stringify(character));
       setJourney((saved) => saved ? { ...saved, status: "committed", character_id: character?.character_id } : saved);
     } catch (reason) {
+      if (isStaleJourneyRevision(reason) && await recoverStaleJourney(current)) return;
       setModelState("commit_failed");
       setError(reason instanceof Error ? reason.message : "角色入库失败");
       return;

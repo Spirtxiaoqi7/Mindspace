@@ -27,6 +27,13 @@ DESTINY_SCHEMA_VERSION = "7.0.0"
 JOURNEY_SCHEMA_VERSION = "3.0.0"
 ARCHETYPE_COUNT = 8
 
+# Destiny generation is an isolated JSON workflow. These budgets deliberately
+# do not inherit the conversational reply budget: every stage needs enough
+# room to close its structured response without truncation.
+DESTINY_ARCHETYPES_MAX_TOKENS = 4096
+DESTINY_CARD_BATCH_MAX_TOKENS = 16384
+DESTINY_SYNTHESIS_MAX_TOKENS = 4096
+
 
 DESTINY_SLOTS: tuple[dict[str, Any], ...] = (
     {
@@ -945,9 +952,10 @@ class DestinyService:
                 "role": "user",
                 "content": "\n".join(
                     (
-                        "根据下面的输入，创作 8 位风格明显不同的聊天对象。",
+                        "严格创作 8 位贴合下面角色种子的聊天对象，全部符合指定性别，且彼此风格明显不同。",
                         f"label 使用“{examples}”这类直接标签，不另起人物姓名。",
-                        "summary 用 1 到 2 句话概括性格、说话方式和相处感觉。",
+                        "summary 用 1 到 2 句话写清性格、说话方式和相处感觉；每人约 150-190 个中文字符。",
+                        "8 人的 label 与 summary 中文内容总量严格控制在 1400-1600 字，目标约 1500 字。",
                         _gender_instruction(gender),
                         "不要编造职业、创伤、前任或共同经历。",
                         "",
@@ -1323,7 +1331,7 @@ class DestinyService:
                 await self._generate(
                     self._archetype_messages(journey["seed"]),
                     request_kind="destiny_archetypes",
-                    max_tokens=1200,
+                    max_tokens=DESTINY_ARCHETYPES_MAX_TOKENS,
                     timeout_seconds=120,
                     temperature=0.8,
                 ),
@@ -1409,7 +1417,7 @@ class DestinyService:
                         # Destiny cards are an isolated business response.  Keep the
                         # chat context budget untouched while leaving enough room for
                         # a compatible provider to finish a compact 48-card batch.
-                        max_tokens=12288,
+                        max_tokens=DESTINY_CARD_BATCH_MAX_TOKENS,
                         timeout_seconds=180,
                         temperature=0.55,
                     ),
@@ -1765,7 +1773,7 @@ class DestinyService:
                 await self._generate(
                     self._synthesis_messages(journey),
                     request_kind="destiny_synthesis",
-                    max_tokens=2600,
+                    max_tokens=DESTINY_SYNTHESIS_MAX_TOKENS,
                     timeout_seconds=180,
                     temperature=0.35,
                 ),

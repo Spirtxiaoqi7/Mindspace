@@ -158,6 +158,38 @@ def test_full_destiny_journey_uses_two_card_calls_inside_three_visible_stages(tm
     assert journey["model_calls"] == {"archetypes": 1, "cards": 2, "synthesis": 1}
 
 
+def test_destiny_generation_uses_stage_specific_json_budgets(tmp_path, monkeypatch):
+    app = create_app(make_settings(tmp_path))
+    model_results = [people_payload(), cards_payload(0, 6), cards_payload(6, 6), card_payload()]
+    budgets: list[tuple[str, int]] = []
+
+    async def scripted_model(messages, **kwargs):  # noqa: ANN001, ARG001
+        budgets.append((kwargs["request_kind"], kwargs["max_tokens"]))
+        return json.dumps(deepcopy(model_results[len(budgets) - 1]), ensure_ascii=False)
+
+    monkeypatch.setattr(app.state.destiny, "_generate", scripted_model)
+    client = TestClient(app)
+    journey = client.post("/api/v1/destiny/journeys", json=seed_payload()).json()
+    journey_id = journey["journey_id"]
+    journey = client.post(f"/api/v1/destiny/journeys/{journey_id}/archetypes").json()
+    journey = client.post(f"/api/v1/destiny/journeys/{journey_id}/cards").json()
+    for slot in public_destiny_definition()["slots"]:
+        journey = client.put(
+            f"/api/v1/destiny/journeys/{journey_id}/selections/{slot['id']}",
+            json={"card_id": journey["cards_by_slot"][slot["id"]][0]["card_id"], "expected_revision": journey["revision"]},
+        ).json()
+    assert client.post(
+        f"/api/v1/destiny/journeys/{journey_id}/synthesize",
+        params={"expected_revision": journey["revision"]},
+    ).status_code == 200
+    assert budgets == [
+        ("destiny_archetypes", 4096),
+        ("destiny_cards", 16384),
+        ("destiny_cards", 16384),
+        ("destiny_synthesis", 4096),
+    ]
+
+
 def test_failed_first_half_preserves_successful_second_half_and_retries_only_first(tmp_path, monkeypatch):
     app = create_app(make_settings(tmp_path))
     first_half = cards_payload(0, 6)
@@ -372,6 +404,9 @@ def test_destiny_prompts_keep_the_simple_character_creation_contract():
     assert "6 个分类，共 48 张" in cards[1]["content"]
     assert "分类名、ID 或人物方向标签" in cards[1]["content"]
     assert "表现 6-16 字" in cards[1]["content"]
+    assert "严格创作 8 位贴合下面角色种子的聊天对象" in archetypes[1]["content"]
+    assert "全部符合指定性别，且彼此风格明显不同" in archetypes[1]["content"]
+    assert "1400-1600 字，目标约 1500 字" in archetypes[1]["content"]
     assert not any(
         word in "\n".join(message["content"] for message in [*archetypes, *cards])
         for word in ("玄学", "命宫", "宿", "推演", "阴阳")
